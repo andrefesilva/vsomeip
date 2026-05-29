@@ -26,24 +26,71 @@ struct command_header {
     uint32_t length_; // Payload length (bytes following the header).
 };
 
+struct simple_command_data {
+    auto operator<=>(simple_command_data const&) const = default;
+    static simple_command_data create(id_e _id, client_t _client) { return {.header_ = command_header::create(_id, 0, _client)}; }
+
+    command_header header_;
+};
+
+struct service_data {
+    auto operator<=>(service_data const&) const = default;
+
+    service_t service_;
+    instance_t instance_;
+    major_version_t major_version_;
+    minor_version_t minor_version_;
+};
+
+struct service_command_data {
+    auto operator<=>(service_command_data const&) const = default;
+
+    command_header header_;
+    service_data service_data_;
+};
+
+// Wire-size helpers (sum of field sizes, no padding)
+constexpr uint32_t wire_size(command_header const&) {
+    return sizeof(id_e) + sizeof(version_t) + sizeof(client_t) + sizeof(uint32_t);
+}
+
+constexpr uint32_t wire_size(service_data const&) {
+    return sizeof(service_t) + sizeof(instance_t) + sizeof(major_version_t) + sizeof(minor_version_t);
+}
+
 template<typename T>
-inline id_e get_id(T const& _cmd) {
-    if constexpr (std::is_same_v<T, command_header>) {
-        return _cmd.id_;
-    } else {
-        return _cmd.header_.id_;
-    }
+uint32_t wire_size(T const& _in) {
+    return wire_size(_in.header_) + _in.header_.length_;
+}
+
+// Factory helpers
+inline service_command_data create_service_cmd(id_e _id, client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                               minor_version_t _minor) {
+    return {.header_ = command_header::create(_id, wire_size(service_data{}), _client),
+            .service_data_ = {.service_ = _service, .instance_ = _instance, .major_version_ = _major, .minor_version_ = _minor}};
 }
 
 // Factory functions
-inline command_header create_ping_cmd(client_t _sender_id) {
-    return command_header::create(id_e::PING_ID, 0, _sender_id);
+inline simple_command_data create_ping_cmd(client_t _client) {
+    return simple_command_data::create(id_e::PING_ID, _client);
 }
-inline command_header create_pong_cmd(client_t _sender_id) {
-    return command_header::create(id_e::PONG_ID, 0, _sender_id);
+
+inline simple_command_data create_pong_cmd(client_t _client) {
+    return simple_command_data::create(id_e::PONG_ID, _client);
 }
-inline command_header create_suspend_cmd(client_t _sender_id) {
-    return command_header::create(id_e::SUSPEND_ID, 0, _sender_id);
+
+inline simple_command_data create_suspend_cmd(client_t _client) {
+    return simple_command_data::create(id_e::SUSPEND_ID, _client);
+}
+
+inline service_command_data create_offer_service_cmd(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                     minor_version_t _minor) {
+    return create_service_cmd(id_e::OFFER_SERVICE_ID, _client, _service, _instance, _major, _minor);
+}
+
+inline service_command_data create_stop_offer_service_cmd(client_t _client, service_t _service, instance_t _instance,
+                                                          major_version_t _major, minor_version_t _minor) {
+    return create_service_cmd(id_e::STOP_OFFER_SERVICE_ID, _client, _service, _instance, _major, _minor);
 }
 
 } // namespace vsomeip_v3::protocol

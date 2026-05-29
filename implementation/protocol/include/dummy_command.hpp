@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class dummy_command : public simple_command {
+class [[deprecated("dummy_command is deprecated, use simple_command_data instead")]] dummy_command : public simple_command {
 public:
     dummy_command();
 };

@@ -190,7 +190,8 @@ template<typename T>
 bool local_endpoint::send(T const& _in) {
     std::scoped_lock const lock{mutex_};
     auto const wire_size = protocol::wire_size(_in);
-    auto const id = protocol::get_id(_in);
+    auto const id = _in.header_.id_;
+
     if (is_flushing_) {
         VSOMEIP_WARNING_P << "Dropping message type: " << id << " and size: " << wire_size
                           << ", due to the current state: " << status_unlock();
@@ -218,8 +219,6 @@ bool local_endpoint::send(T const& _in) {
     send_unlock();
     return true;
 }
-
-template bool local_endpoint::send<protocol::command_header>(protocol::command_header const&);
 
 void local_endpoint::connect_unlock() {
     if (state_ != state_e::INIT) {
@@ -631,4 +630,7 @@ client_t local_endpoint::connected_client() const {
 std::string const& local_endpoint::name() const {
     return socket_->to_string();
 }
+
+template bool local_endpoint::send<protocol::service_command_data>(protocol::service_command_data const&);
+template bool local_endpoint::send<protocol::simple_command_data>(protocol::simple_command_data const&);
 }

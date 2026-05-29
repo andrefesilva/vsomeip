@@ -116,7 +116,7 @@ public:
     void send_suspend() const;
 
 private:
-    void broadcast(protocol::command_header const& _command) const;
+    void broadcast(protocol::simple_command_data const& _command) const;
 
     void on_deregister_application(client_t _client);
 

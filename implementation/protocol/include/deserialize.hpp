@@ -38,8 +38,12 @@ uint32_t parse(unsigned char const* _mem, uint32_t _size, Ts&... _ts) {
     return (checked_parse(_ts) && ...) ? parsed : 0;
 }
 
-inline uint32_t deserialize(const byte_t* _data, uint32_t _size, command_header& _out) {
-    return parse(_data, _size, _out.id_, _out.version_, _out.client_, _out.length_);
+inline uint32_t deserialize(command_header& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.id_, _out.version_, _out.client_, _out.length_);
+}
+
+inline uint32_t deserialize(service_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.service_, _out.instance_, _out.major_version_, _out.minor_version_);
 }
 
 } // namespace vsomeip_v3::protocol

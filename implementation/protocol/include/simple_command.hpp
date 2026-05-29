@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class simple_command : public command {
+class [[deprecated("simple_command is deprecated, use simple_command_data instead")]] simple_command : public command {
 public:
     void serialize(std::vector<byte_t>& _buffer) const;
     void deserialize(const std::vector<byte_t>& _buffer, error_e& _error);
