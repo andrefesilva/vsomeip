@@ -25,8 +25,6 @@ public:
         service_info_(_service_info) { }
 
     bool init() {
-        std::scoped_lock its_lock(mutex_);
-
         if (!app_->init()) {
             std::cerr << "Couldn't initialize application" << std::endl;
             return false;
@@ -44,12 +42,13 @@ public:
         app_->offer_event(service_info_.service_id, service_info_.instance_id, service_info_.event_id, its_groups,
                           vsomeip::event_type_e::ET_FIELD, std::chrono::milliseconds::zero(), false, true, nullptr,
                           vsomeip::reliability_type_e::RT_UNKNOWN);
-        {
-            std::scoped_lock its_lock(payload_mutex_);
-            payload_ = vsomeip::runtime::get()->create_payload();
-        }
 
-        blocked_ = true;
+        payload_ = vsomeip::runtime::get()->create_payload();
+
+        {
+            std::scoped_lock its_lock(mutex_);
+            blocked_ = true;
+        }
         condition_.notify_one();
         return true;
     }
@@ -58,37 +57,32 @@ public:
 
     void stop() {
         {
-            std::scoped_lock its_lock_notify(notify_mutex_);
+            std::scoped_lock its_lock(mutex_);
             running_ = false;
-            notify_condition_.notify_one();
         }
+        notify_condition_.notify_one();
         app_->clear_all_handler();
-        if (std::this_thread::get_id() != offer_thread_.get_id()) {
-            if (offer_thread_.joinable()) {
-                offer_thread_.join();
-            }
-        } else {
-            offer_thread_.detach();
+
+        if (offer_thread_.joinable()) {
+            offer_thread_.join();
         }
-        if (std::this_thread::get_id() != notify_thread_.get_id()) {
-            if (notify_thread_.joinable()) {
-                notify_thread_.join();
-            }
-        } else {
-            notify_thread_.detach();
+
+        if (notify_thread_.joinable()) {
+            notify_thread_.join();
         }
+
         app_->stop();
     }
 
     void offer() {
-        std::scoped_lock its_lock(notify_mutex_);
+        std::scoped_lock its_lock(mutex_);
         app_->offer_service(service_info_.service_id, service_info_.instance_id);
         is_offered_ = true;
         notify_condition_.notify_one();
     }
 
     void stop_offer() {
-        std::scoped_lock its_lock(notify_mutex_);
+        std::scoped_lock its_lock(mutex_);
         app_->stop_offer_service(service_info_.service_id, service_info_.instance_id);
         is_offered_ = false;
         notify_condition_.notify_one();
@@ -100,11 +94,11 @@ public:
     }
 
     void on_message(const std::shared_ptr<vsomeip::message>& _message) {
-        // Triger second part of the test, offer and stop offer service
+        // Trigger second part of the test, offer and stop offer service
         (void)_message;
         stop_offer();
         std::this_thread::sleep_for(climate_test::OFFER_CYCLE_INTERVAL);
-        std::scoped_lock its_lock(message_mutex_);
+        std::scoped_lock its_lock(mutex_);
         is_second_ = true;
         notify_condition_.notify_one();
     }
@@ -117,12 +111,17 @@ public:
     }
 
     void run() {
-        std::unique_lock its_lock(mutex_);
-        condition_.wait(its_lock, [this] { return blocked_; });
+        {
+            std::unique_lock its_lock(mutex_);
+            condition_.wait(its_lock, [this] { return blocked_; });
+        }
 
         offer();
-        std::unique_lock its_lock_message(message_mutex_);
-        notify_condition_.wait(its_lock_message, [this] { return !running_ || is_second_; });
+
+        {
+            std::unique_lock its_lock(mutex_);
+            notify_condition_.wait(its_lock, [this] { return !running_ || is_second_; });
+        }
 
         // Offer and stop offer service with 1 second interval
         bool is_offer(true);
@@ -143,18 +142,15 @@ public:
         uint32_t its_size = 5;
 
         while (running_) {
-            std::unique_lock its_lock(notify_mutex_);
+            std::unique_lock its_lock(mutex_);
             notify_condition_.wait(its_lock, [this] { return is_offered_ || !running_; });
             while (is_offered_ && running_) {
-                {
-                    std::scoped_lock its_lock(payload_mutex_);
-                    payload_->set_data(its_data, its_size);
+                payload_->set_data(its_data, its_size);
 
-                    VSOMEIP_INFO << "\nSERVICE SIDE -> " << "Setting event (Length=" << std::dec << its_size << ")." << std::endl;
-                    app_->notify(service_info_.service_id, service_info_.instance_id, service_info_.event_id, payload_);
-                }
+                VSOMEIP_INFO << "\nSERVICE SIDE -> " << "Setting event (Length=" << std::dec << its_size << ")." << std::endl;
+                app_->notify(service_info_.service_id, service_info_.instance_id, service_info_.event_id, payload_);
 
-                notify_condition_.wait_for(its_lock, std::chrono::seconds(climate_test::OFFER_CYCLE_INTERVAL));
+                notify_condition_.wait_for(its_lock, climate_test::OFFER_CYCLE_INTERVAL);
             }
         }
     }
@@ -166,15 +162,10 @@ private:
     std::condition_variable condition_;
     bool blocked_;
     bool running_;
-
-    std::mutex notify_mutex_;
     std::condition_variable notify_condition_;
     bool is_offered_;
-
-    std::mutex message_mutex_;
     bool is_second_;
 
-    std::mutex payload_mutex_;
     std::shared_ptr<vsomeip::payload> payload_;
 
     // blocked_ / is_offered_ must be initialized before starting the threads!
