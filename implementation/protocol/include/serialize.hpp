@@ -9,8 +9,7 @@
 
 #include <cstring> // memcpy
 
-namespace vsomeip_v3 {
-namespace protocol {
+namespace vsomeip_v3::protocol {
 
 template<typename T>
 uint32_t write_field(unsigned char* _mem, T const& _value) {
@@ -25,13 +24,21 @@ uint32_t write_fields(unsigned char* _mem, Ts const&... _fields) {
     return written;
 }
 
-constexpr uint32_t wire_size(command_header const&) {
-    return sizeof(id_e) + sizeof(version_t) + sizeof(client_t) + sizeof(uint32_t);
-}
-
 inline uint32_t serialize(command_header const& _in, unsigned char* _mem) {
     return write_fields(_mem, _in.id_, _in.version_, _in.client_, _in.length_);
 }
 
-} // namespace protocol
-} // namespace vsomeip_v3
+inline uint32_t serialize(service_command_data const& _in, unsigned char* _mem) {
+    return write_fields(_mem, _in.header_.id_, _in.header_.version_, _in.header_.client_, _in.header_.length_, _in.service_data_.service_,
+                        _in.service_data_.instance_, _in.service_data_.major_version_, _in.service_data_.minor_version_);
+}
+
+// Generic serialize for header-only composite commands (ping, pong, suspend, etc.).
+// Non-template overloads (e.g. service_command_data) are preferred by overload resolution.
+template<typename T>
+    requires requires(T const& _t) { _t.header_; }
+uint32_t serialize(T const& _in, unsigned char* _mem) {
+    return serialize(_in.header_, _mem);
+}
+
+} // namespace vsomeip_v3::protocol

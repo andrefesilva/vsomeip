@@ -41,7 +41,6 @@
 #include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/distribute_security_policies_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
-#include "../../protocol/include/offer_service_command.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/offered_services_response_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
@@ -53,7 +52,6 @@
 #include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
-#include "../../protocol/include/stop_offer_service_command.hpp"
 #include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/subscribe_nack_command.hpp"
@@ -63,6 +61,8 @@
 #include "../../protocol/include/update_security_credentials_command.hpp"
 #include "../../protocol/include/update_security_policy_command.hpp"
 #include "../../protocol/include/update_security_policy_response_command.hpp"
+#include "../../protocol/include/command_types.hpp"
+#include "../../protocol/include/serialize.hpp"
 #include "../../service_discovery/include/runtime.hpp"
 #include "../../security/include/policy.hpp"
 #include "../../security/include/policy_manager_impl.hpp"
@@ -295,18 +295,8 @@ bool routing_manager_client::send_offer_service(client_t _client, service_t _ser
 
     (void)_client;
 
-    protocol::offer_service_command its_offer;
-    its_offer.set_client(get_client());
-    its_offer.set_service(_service);
-    its_offer.set_instance(_instance);
-    its_offer.set_major(_major);
-    its_offer.set_minor(_minor);
-
-    std::vector<byte_t> its_buffer;
-    its_offer.serialize(its_buffer);
-
     std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_ && sender_->send(&its_buffer[0], uint32_t(its_buffer.size()))) {
+    if (sender_ && sender_->send(protocol::create_offer_service_cmd(get_client(), _service, _instance, _major, _minor))) {
         return true;
     }
 
@@ -344,20 +334,9 @@ void routing_manager_client::stop_offer_service(client_t _client, service_t _ser
         }
     }
     if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
-
-        protocol::stop_offer_service_command its_command;
-        its_command.set_client(get_client());
-        its_command.set_service(_service);
-        its_command.set_instance(_instance);
-        its_command.set_major(_major);
-        its_command.set_minor(_minor);
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
-
         std::scoped_lock its_sender_lock{sender_mutex_};
         if (sender_) {
-            sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            sender_->send(protocol::create_stop_offer_service_cmd(get_client(), _service, _instance, _major, _minor));
         } else {
             VSOMEIP_ERROR_P << "Failed due to a missing sender";
         }
@@ -840,7 +819,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     protocol::error_e its_error;
 
     protocol::command_header its_header{};
-    if (protocol::deserialize(_data, _size, its_header)) {
+    if (protocol::deserialize(its_header, _data, _size)) {
         its_id = its_header.id_;
         its_client = its_header.client_;
 

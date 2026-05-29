@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // ============================================================================
-// Round-trip tests for the struct-based command_header serialize/deserialize.
+// Round-trip tests for the struct-based simple commands serialize/deserialize.
 // ============================================================================
 
 #include <gtest/gtest.h>
@@ -15,47 +15,47 @@
 
 namespace vsomeip_v3::protocol {
 
-TEST(ut_command_header_roundtrip, ping_roundtrip) {
+TEST(ut_simple_commands_roundtrip, ping_roundtrip) {
     auto cmd = create_ping_cmd(0x1234);
 
     std::vector<uint8_t> buf(wire_size(cmd));
     serialize(cmd, buf.data());
 
     command_header out{};
-    ASSERT_TRUE(deserialize(buf.data(), static_cast<uint32_t>(buf.size()), out));
-    EXPECT_EQ(out, cmd);
+    ASSERT_TRUE(deserialize(out, buf.data(), static_cast<uint32_t>(buf.size())));
+    EXPECT_EQ(out, cmd.header_);
 }
 
-TEST(ut_command_header_roundtrip, pong_roundtrip) {
+TEST(ut_simple_commands_roundtrip, pong_roundtrip) {
     auto cmd = create_pong_cmd(0xABCD);
 
     std::vector<uint8_t> buf(wire_size(cmd));
     serialize(cmd, buf.data());
 
     command_header out{};
-    ASSERT_TRUE(deserialize(buf.data(), static_cast<uint32_t>(buf.size()), out));
-    EXPECT_EQ(out, cmd);
+    ASSERT_TRUE(deserialize(out, buf.data(), static_cast<uint32_t>(buf.size())));
+    EXPECT_EQ(out, cmd.header_);
 }
 
-TEST(ut_command_header_roundtrip, suspend_roundtrip) {
+TEST(ut_simple_commands_roundtrip, suspend_roundtrip) {
     auto cmd = create_suspend_cmd(0x00FF);
 
     std::vector<uint8_t> buf(wire_size(cmd));
     serialize(cmd, buf.data());
 
     command_header out{};
-    ASSERT_TRUE(deserialize(buf.data(), static_cast<uint32_t>(buf.size()), out));
-    EXPECT_EQ(out, cmd);
+    ASSERT_TRUE(deserialize(out, buf.data(), static_cast<uint32_t>(buf.size())));
+    EXPECT_EQ(out, cmd.header_);
 }
 
-TEST(ut_command_header_roundtrip, deserialize_rejects_truncated_input) {
+TEST(ut_simple_commands_roundtrip, deserialize_rejects_truncated_input) {
     auto cmd = create_ping_cmd(0x04CF);
 
     std::vector<uint8_t> buf(wire_size(cmd));
     serialize(cmd, buf.data());
 
     command_header out{};
-    EXPECT_FALSE(deserialize(buf.data(), static_cast<uint32_t>(buf.size()) - 1, out));
+    EXPECT_FALSE(deserialize(out, buf.data(), static_cast<uint32_t>(buf.size()) - 1));
 }
 
 } // namespace vsomeip_v3::protocol

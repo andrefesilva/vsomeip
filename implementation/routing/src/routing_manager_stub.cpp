@@ -28,7 +28,6 @@
 #include "../../protocol/include/distribute_security_policies_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
 #include "../../protocol/include/logging.hpp"
-#include "../../protocol/include/offer_service_command.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/offered_services_response_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
@@ -40,7 +39,6 @@
 #include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
-#include "../../protocol/include/stop_offer_service_command.hpp"
 #include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/subscribe_nack_command.hpp"
@@ -51,6 +49,8 @@
 #include "../../protocol/include/update_security_policy_command.hpp"
 #include "../../protocol/include/update_security_policy_response_command.hpp"
 #include "../../protocol/include/config_command.hpp"
+#include "../../protocol/include/command_types.hpp"
+#include "../../protocol/include/serialize.hpp"
 #include "../../security/include/policy_manager_impl.hpp"
 #include "../../security/include/security.hpp"
 #include "../../utility/include/bithelper.hpp"
@@ -162,9 +162,9 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     protocol::error_e its_error;
 
     protocol::command_header its_header{};
-    if (!protocol::deserialize(_data, _size, its_header)) {
-
-        VSOMEIP_ERROR_P << "Deserialization of command and client identifier failed";
+    uint32_t parsed_hdr_bytes = 0;
+    if (parsed_hdr_bytes = protocol::deserialize(its_header, _data, _size); !parsed_hdr_bytes) {
+        VSOMEIP_ERROR_P << "Deserialization of command header failed, memory: " << utility::dump(_data, _size);
         return;
     }
 
@@ -192,44 +192,31 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
         break;
     }
 
-    case protocol::id_e::OFFER_SERVICE_ID: {
-        protocol::offer_service_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
-
-            its_client = its_command.get_client();
-            its_service = its_command.get_service();
-            its_instance = its_command.get_instance();
-            its_major = its_command.get_major();
-            its_minor = its_command.get_minor();
-
-            if (VSOMEIP_SEC_OK
-                == configuration_->get_security()->is_client_allowed_to_offer(&_peer_data.sec_client_, its_service, its_instance)) {
-                host_->offer_service(its_client, its_service, its_instance, its_major, its_minor);
-            } else {
-                VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_client)
-                                << " : routing_manager_stub::on_message: isn't allowed to offer the following service / instance "
-                                << hex4(its_service) << " / " << hex4(its_instance) << " ~ > Skip offer !";
-            }
-        } else
-            VSOMEIP_ERROR_P << "Deserializing offer service failed (" << static_cast<int>(its_error) << ")";
-        break;
-    }
-
+    case protocol::id_e::OFFER_SERVICE_ID:
     case protocol::id_e::STOP_OFFER_SERVICE_ID: {
-        protocol::stop_offer_service_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        if (protocol::service_data its_service_data;
+            protocol::deserialize(its_service_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            its_client = its_command.get_client();
-            its_service = its_command.get_service();
-            its_instance = its_command.get_instance();
-            its_major = its_command.get_major();
-            its_minor = its_command.get_minor();
+            its_service = its_service_data.service_;
+            its_instance = its_service_data.instance_;
+            its_major = its_service_data.major_version_;
+            its_minor = its_service_data.minor_version_;
 
-            host_->stop_offer_service(its_client, its_service, its_instance, its_major, its_minor);
-        } else
-            VSOMEIP_ERROR_P << "Deserializing stop offer service failed (" << static_cast<int>(its_error) << ")";
+            if (its_id == protocol::id_e::OFFER_SERVICE_ID) {
+                if (VSOMEIP_SEC_OK
+                    == configuration_->get_security()->is_client_allowed_to_offer(&_peer_data.sec_client_, its_service, its_instance)) {
+                    host_->offer_service(its_client, its_service, its_instance, its_major, its_minor);
+                } else {
+                    VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_client)
+                                    << " : routing_manager_stub::on_message: isn't allowed to offer the following service / instance "
+                                    << hex4(its_service) << " / " << hex4(its_instance) << " ~ > Skip offer !";
+                }
+            } else {
+                host_->stop_offer_service(its_client, its_service, its_instance, its_major, its_minor);
+            }
+        } else {
+            VSOMEIP_ERROR_P << "Deserializing offer/stop offer service command failed, memory: " << utility::dump(_data, _size);
+        }
         break;
     }
 
@@ -843,7 +830,7 @@ bool routing_manager_stub::has_client_requested(client_t _client, service_t _ser
     return false;
 }
 
-void routing_manager_stub::broadcast(protocol::command_header const& _command) const {
+void routing_manager_stub::broadcast(protocol::simple_command_data const& _command) const {
     if (auto epm = host_->get_endpoint_manager(); epm) {
         epm->broadcast_locally(_command);
     }
