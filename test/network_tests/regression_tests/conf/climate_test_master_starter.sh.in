@@ -22,8 +22,6 @@ export VSOMEIP_APPLICATION_NAME=service-sample
 export VSOMEIP_CONFIGURATION=climate_test_master.json
 ./climate_test_service &
 
-sleep 1
-
 exec_slave "./climate_test_slave_starter.sh"
 
 # Wait until client and service are finished
