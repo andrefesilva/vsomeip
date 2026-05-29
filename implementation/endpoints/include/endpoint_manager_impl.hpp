@@ -16,6 +16,7 @@
 #include "../include/local_endpoint.hpp"
 #include "../include/endpoint_definition.hpp"
 #include "../../utility/include/service_instance_map.hpp"
+#include "../../protocol/include/command_types.hpp"
 
 namespace vsomeip_v3 {
 
@@ -105,7 +106,7 @@ public:
 
     bool get_guest(client_t _client, boost::asio::ip::address& _address, port_t& _port) const;
 
-    void broadcast_locally(protocol::command_header const& _command);
+    void broadcast_locally(protocol::simple_command_data const& _command);
 
 private:
     std::shared_ptr<boardnet_endpoint> find_remote_client(service_t _service, instance_t _instance, bool _reliable);

@@ -58,7 +58,7 @@ TEST(ut_compatibility_simple_commands, ping_old_serialize_new_deserialize) {
     auto bytes = old_to_wire(old_cmd);
 
     command_header result{};
-    ASSERT_TRUE(deserialize(bytes.data(), static_cast<uint32_t>(bytes.size()), result));
+    ASSERT_TRUE(deserialize(result, bytes.data(), static_cast<uint32_t>(bytes.size())));
     EXPECT_EQ(result.id_, old_cmd.get_id());
     EXPECT_EQ(result.client_, old_cmd.get_client());
     EXPECT_EQ(result.length_, old_cmd.get_size());
@@ -87,7 +87,7 @@ TEST(ut_compatibility_simple_commands, pong_old_serialize_new_deserialize) {
     auto bytes = old_to_wire(old_cmd);
 
     command_header result{};
-    ASSERT_TRUE(deserialize(bytes.data(), static_cast<uint32_t>(bytes.size()), result));
+    ASSERT_TRUE(deserialize(result, bytes.data(), static_cast<uint32_t>(bytes.size())));
     EXPECT_EQ(result.id_, old_cmd.get_id());
     EXPECT_EQ(result.client_, old_cmd.get_client());
     EXPECT_EQ(result.length_, old_cmd.get_size());
@@ -116,7 +116,7 @@ TEST(ut_compatibility_simple_commands, suspend_old_serialize_new_deserialize) {
     auto bytes = old_to_wire(old_cmd);
 
     command_header result{};
-    ASSERT_TRUE(deserialize(bytes.data(), static_cast<uint32_t>(bytes.size()), result));
+    ASSERT_TRUE(deserialize(result, bytes.data(), static_cast<uint32_t>(bytes.size())));
     EXPECT_EQ(result.id_, old_cmd.get_id());
     EXPECT_EQ(result.client_, old_cmd.get_client());
     EXPECT_EQ(result.length_, old_cmd.get_size());

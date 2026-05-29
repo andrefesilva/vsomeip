@@ -22,6 +22,7 @@
 #include "../include/endpoint_definition.hpp"
 #include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/logging.hpp"
+#include "../../protocol/include/command_types.hpp"
 #include "../../routing/include/routing_manager_base.hpp"
 #include "../../routing/include/routing_manager_impl.hpp"
 #include "../../routing/include/routing_host.hpp"
@@ -1530,7 +1531,7 @@ bool endpoint_manager_impl::get_guest(client_t _client, boost::asio::ip::address
     return false;
 }
 
-void endpoint_manager_impl::broadcast_locally(protocol::command_header const& _command) {
+void endpoint_manager_impl::broadcast_locally(protocol::simple_command_data const& _command) {
     std::scoped_lock its_lock{routing_endpoint_mtx_};
     for (auto const& [id, ep] : routing_endpoints_) {
         ep->send(_command);
