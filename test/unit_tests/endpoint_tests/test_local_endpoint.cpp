@@ -92,13 +92,9 @@ struct test_uds_local_endpoint : base_endpoint_fixture {
         return msg;
     }
     void add_offer_service_command(std::vector<std::vector<byte_t>>& _queue) {
-        std::vector<byte_t> msg;
-        protocol::offer_service_command command;
-        command.set_service(2222);
-        command.set_instance(1);
-        command.set_major(1);
-        command.set_minor(0);
-        command.serialize(msg);
+        auto cmd = protocol::create_offer_service_cmd(client_, 2222, 1, 1, 0);
+        std::vector<byte_t> msg(protocol::wire_size(cmd));
+        protocol::serialize(cmd, msg.data());
         _queue.push_back(std::move(msg));
     }
     std::shared_ptr<stub_factory> factory_;
