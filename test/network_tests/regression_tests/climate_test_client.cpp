@@ -3,6 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#include <atomic>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -69,7 +70,6 @@ public:
     void on_availability(vsomeip::service_t _service, vsomeip::instance_t _instance, bool _is_available) {
         VSOMEIP_INFO << "Service [" << std::hex << std::setfill('0') << std::setw(4) << _service << "." << _instance << "] is "
                      << (_is_available ? "available." : "NOT available.") << std::endl;
-
         std::scoped_lock lock{mutex_};
         availability_handler_calls++;
     }
@@ -89,7 +89,7 @@ public:
         }
         VSOMEIP_INFO << its_message.str();
 
-        std::scoped_lock lock{mutex_};
+        std::unique_lock lock{mutex_};
         if ((its_payload->get_length() % 5) == 0) {
             notifications_received++;
             if (notifications_received == 2) {
@@ -109,13 +109,16 @@ public:
             }
 
             if (notifications_received < 3) {
+                lock.unlock();
                 request_release();
             } else if (notifications_received == 4) {
                 // All expected notifications received, stop the client and send shutdown message to
                 // service
                 // due to double initial notifications, might be stopping a "bit" early, hence the different number of
                 // expected availability callbacks
+                VSOMEIP_INFO << "availability_handler_calls: " << static_cast<int>(availability_handler_calls);
                 EXPECT_TRUE(availability_handler_calls == 5 || availability_handler_calls == 7);
+                lock.unlock();
 
                 std::shared_ptr<vsomeip::message> its_set = vsomeip::runtime::get()->create_message();
                 its_set->set_message_type(vsomeip_v3::message_type_e::MT_REQUEST_NO_RETURN);
@@ -155,7 +158,6 @@ private:
 
 TEST(someip_subscribe_notify_test_example, stop_without_unregister) {
     client_sample its_sample(climate_test::service);
-
     if (its_sample.init()) {
         its_sample.start();
     }
