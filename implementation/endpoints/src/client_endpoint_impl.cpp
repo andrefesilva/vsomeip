@@ -67,6 +67,14 @@ bool client_endpoint_impl<Protocol>::is_closed() const {
 }
 
 template<typename Protocol>
+void client_endpoint_impl<Protocol>::start_if_closed() {
+    std::scoped_lock its_lock{mutex_};
+    if (is_closed()) {
+        this->start();
+    }
+}
+
+template<typename Protocol>
 bool client_endpoint_impl<Protocol>::is_established() const {
 
     return state_ == cei_state_e::ESTABLISHED;
