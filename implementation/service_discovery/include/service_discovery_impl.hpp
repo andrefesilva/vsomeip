@@ -203,7 +203,7 @@ private:
 
     bool check_ipv4_address(const boost::asio::ip::address& its_address) const;
 
-    bool check_static_header_fields(const std::shared_ptr<const message>& _message) const;
+    bool check_static_header_fields(const std::shared_ptr<const message>& _message, const boost::asio::ip::address& _sender) const;
     bool check_layer_four_protocol(const std::shared_ptr<const ip_option_impl>& _ip_option) const;
 
     void get_subscription_endpoints(service_t _service, instance_t _instance, std::shared_ptr<boardnet_endpoint>& _reliable,
