@@ -28,6 +28,7 @@ public:
      */
     virtual void stop(bool _due_to_error) = 0;
     virtual void restart(bool _force = false) = 0;
+    virtual void start_if_closed() = 0;
 
     virtual bool send(const byte_t* _data, uint32_t _size) = 0;
     virtual bool send_to(const std::shared_ptr<endpoint_definition> _target, const byte_t* _data, uint32_t _size) = 0;

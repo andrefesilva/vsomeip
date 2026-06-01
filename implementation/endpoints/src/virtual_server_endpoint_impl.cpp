@@ -27,6 +27,12 @@ bool virtual_server_endpoint_impl::is_closed() const {
     return false;
 }
 
+void virtual_server_endpoint_impl::start_if_closed() {
+    if (is_closed()) {
+        start();
+    }
+}
+
 bool virtual_server_endpoint_impl::is_established() const {
     return false;
 }
