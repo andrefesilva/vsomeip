@@ -61,6 +61,13 @@ bool server_endpoint_impl<Protocol>::is_closed() const {
 }
 
 template<typename Protocol>
+void server_endpoint_impl<Protocol>::start_if_closed() {
+    if (is_closed()) {
+        this->start();
+    }
+}
+
+template<typename Protocol>
 bool server_endpoint_impl<Protocol>::is_established() const {
     return true;
 }
