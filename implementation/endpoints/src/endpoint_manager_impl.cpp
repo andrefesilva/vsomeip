@@ -151,7 +151,7 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_or_create_remote_
         }
     }
     if (start_endpoint && its_endpoint && configuration_->is_someip(_service, _instance) && !router_->is_suspended()) {
-        its_endpoint->start();
+        its_endpoint->start_if_closed();
     }
     return its_endpoint;
 }
@@ -161,6 +161,7 @@ void endpoint_manager_impl::find_or_create_remote_client(service_t _service, ins
     std::shared_ptr<boardnet_endpoint> its_unreliable_endpoint;
     bool start_reliable_endpoint(false);
     bool start_unreliable_endpoint(false);
+
     {
         std::scoped_lock its_lock(endpoint_mutex_);
         its_reliable_endpoint = find_remote_client(_service, _instance, true);
@@ -174,14 +175,15 @@ void endpoint_manager_impl::find_or_create_remote_client(service_t _service, ins
             start_unreliable_endpoint = true;
         }
     }
+
     const bool is_someip{configuration_->is_someip(_service, _instance)};
     const bool is_suspended{router_->is_suspended()};
 
     if (start_reliable_endpoint && its_reliable_endpoint && is_someip && !is_suspended) {
-        its_reliable_endpoint->start();
+        its_reliable_endpoint->start_if_closed();
     }
     if (start_unreliable_endpoint && its_unreliable_endpoint && is_someip && !is_suspended) {
-        its_unreliable_endpoint->start();
+        its_unreliable_endpoint->start_if_closed();
     }
 }
 
