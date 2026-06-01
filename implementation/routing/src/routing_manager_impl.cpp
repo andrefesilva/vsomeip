@@ -689,6 +689,9 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
             trace::header its_header;
             if (its_header.prepare(its_local_target, true, _instance))
                 tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data, _size);
+        } else if (!is_sent) {
+            VSOMEIP_WARNING_P << "Failed to send message to local client: 0x" << hex4(its_target_client) << ": [" << hex4(its_service)
+                              << "." << hex4(_instance) << "." << hex4(its_method) << "]";
         }
         return is_sent;
     }
@@ -837,7 +840,6 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
             }
         }
     }
-
     return is_sent;
 }
 
@@ -1062,7 +1064,6 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
 
     uint8_t its_check_status = e2e::profile_interface::generic_check_status::E2E_OK;
     instance_t its_instance(0x0);
-    bool is_forwarded(true);
     // message is at least 16-bytes, see also PRS_SOMEIP_00910
     if (_length < VSOMEIP_FULL_HEADER_SIZE) {
         VSOMEIP_ERROR_P << "Dropped message with invalid length " << _length;
@@ -1102,6 +1103,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
             if (configuration_->get_sd_port() == _remote_port) {
                 // ACL check SD message
                 if (!is_acl_message_allowed(_receiver, its_service, ANY_INSTANCE, _remote_address)) {
+                    // Note: acl check already logs failure
                     return;
                 }
                 discovery_->on_message(_data, _length, _remote_address, _is_multicast);
@@ -1124,6 +1126,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
             }
 
             // ignore request no response message if an error occurred
+            // Note: No log needed here, as each error case is already logged in check_error
             return;
         }
 
@@ -1174,31 +1177,29 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
 
         // ACL check message
         if (!is_acl_message_allowed(_receiver, its_service, its_instance, _remote_address)) {
+            // Note: acl check already logs failure
             return;
         }
 
         // Common way of message handling
-        is_forwarded = on_message(its_service, its_instance, _data, _length, _receiver->is_reliable(), VSOMEIP_ROUTING_CLIENT, nullptr,
-                                  its_check_status, true);
+        on_message(its_service, its_instance, _data, _length, _receiver->is_reliable(), VSOMEIP_ROUTING_CLIENT, nullptr, its_check_status,
+                   true);
     }
 
-    if (is_forwarded) {
-        trace::header its_header;
-        const boost::asio::ip::address_v4 its_remote_address =
-                _remote_address.is_v4() ? _remote_address.to_v4() : boost::asio::ip::make_address_v4("6.6.6.6");
-        trace::protocol_e its_protocol = _receiver->is_local() ? trace::protocol_e::local
-                : _receiver->is_reliable()                     ? trace::protocol_e::tcp
-                                                               : trace::protocol_e::udp;
-        its_header.prepare(its_remote_address, _remote_port, its_protocol, false, its_instance);
-        tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data, _length);
-    }
+    trace::header its_header;
+    const boost::asio::ip::address_v4 its_remote_address =
+            _remote_address.is_v4() ? _remote_address.to_v4() : boost::asio::ip::make_address_v4("6.6.6.6");
+    trace::protocol_e its_protocol = _receiver->is_local() ? trace::protocol_e::local
+            : _receiver->is_reliable()                     ? trace::protocol_e::tcp
+                                                           : trace::protocol_e::udp;
+    its_header.prepare(its_remote_address, _remote_port, its_protocol, false, its_instance);
+    tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data, _length);
 }
 
-bool routing_manager_impl::on_message(service_t _service, instance_t _instance, const byte_t* _data, length_t _size, bool _reliable,
+void routing_manager_impl::on_message(service_t _service, instance_t _instance, const byte_t* _data, length_t _size, bool _reliable,
                                       client_t _bound_client, const vsomeip_sec_client_t* _sec_client, uint8_t _check_status,
                                       bool _is_from_remote) {
     client_t its_client;
-    bool is_forwarded(true);
 
     if (utility::is_request(_data[VSOMEIP_MESSAGE_TYPE_POS])) {
         its_client = find_local_client(_service, _instance);
@@ -1207,13 +1208,11 @@ bool routing_manager_impl::on_message(service_t _service, instance_t _instance, 
     }
 
     if (utility::is_notification(_data[VSOMEIP_MESSAGE_TYPE_POS])) {
-        is_forwarded = deliver_notification(_service, _instance, _data, _size, _reliable, _bound_client, _sec_client, _check_status,
-                                            _is_from_remote);
+        deliver_notification(_service, _instance, _data, _size, _reliable, _bound_client, _sec_client, _check_status, _is_from_remote);
     } else {
         send(its_client, _data, _size, _instance, _reliable, _bound_client, _sec_client, _check_status, _is_from_remote,
              false); // send to proxy
     }
-    return is_forwarded;
 }
 
 void routing_manager_impl::on_notification(client_t _client, service_t _service, instance_t _instance, const byte_t* _data, length_t _size,
@@ -1352,7 +1351,7 @@ bool routing_manager_impl::has_subscribed_eventgroup(service_t _service, instanc
     return false;
 }
 
-bool routing_manager_impl::deliver_notification(service_t _service, instance_t _instance, const byte_t* _data, length_t _length,
+void routing_manager_impl::deliver_notification(service_t _service, instance_t _instance, const byte_t* _data, length_t _length,
                                                 bool _reliable, [[maybe_unused]] client_t _bound_client,
                                                 [[maybe_unused]] const vsomeip_sec_client_t* _sec_client, uint8_t _status_check,
                                                 bool _is_from_remote) {
@@ -1385,7 +1384,7 @@ bool routing_manager_impl::deliver_notification(service_t _service, instance_t _
                 if (!cache_event) {
                     VSOMEIP_WARNING_P << "Dropping [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(its_event_id)
                                       << "]. No subscription to corresponding eventgroup.";
-                    return true; // as there is nothing to do
+                    return; // as there is nothing to do
                 }
             }
         }
@@ -1408,15 +1407,27 @@ bool routing_manager_impl::deliver_notification(service_t _service, instance_t _
         if (its_event->get_type() != event_type_e::ET_SELECTIVE_EVENT) {
             for (const auto its_local_client : its_subscribers) {
                 if (std::shared_ptr<local_endpoint> its_local_target = find_routing_endpoint(its_local_client); its_local_target) {
-                    send_local(its_local_target, VSOMEIP_ROUTING_CLIENT, _data, _length, _instance, _reliable, protocol::id_e::SEND_ID,
-                               _status_check, VSOMEIP_ROUTING_CLIENT);
+                    if (!send_local(its_local_target, VSOMEIP_ROUTING_CLIENT, _data, _length, _instance, _reliable, protocol::id_e::SEND_ID,
+                                    _status_check, VSOMEIP_ROUTING_CLIENT)) {
+                        VSOMEIP_WARNING_P << "Failed to send event [" << hex4(_service) << "." << hex4(_instance) << "."
+                                          << hex4(its_event_id) << "] to local client 0x" << hex4(its_local_client);
+                    }
+                } else {
+                    VSOMEIP_ERROR_P << "Failed to find local endpoint for client 0x" << hex4(its_local_client) << " to send event ["
+                                    << hex4(_service) << "." << hex4(_instance) << "." << hex4(its_event_id) << "]";
                 }
             }
         } else {
             if (its_subscribers.contains(its_client_id)) {
                 if (std::shared_ptr<local_endpoint> its_local_target = find_routing_endpoint(its_client_id); its_local_target) {
-                    send_local(its_local_target, VSOMEIP_ROUTING_CLIENT, _data, _length, _instance, _reliable, protocol::id_e::SEND_ID,
-                               _status_check, VSOMEIP_ROUTING_CLIENT);
+                    if (!send_local(its_local_target, VSOMEIP_ROUTING_CLIENT, _data, _length, _instance, _reliable, protocol::id_e::SEND_ID,
+                                    _status_check, VSOMEIP_ROUTING_CLIENT)) {
+                        VSOMEIP_WARNING_P << "Failed to send selective event [" << hex4(_service) << "." << hex4(_instance) << "."
+                                          << hex4(its_event_id) << "] to local client 0x" << hex4(its_client_id);
+                    }
+                } else {
+                    VSOMEIP_ERROR_P << "Failed to find local endpoint for client 0x" << hex4(its_client_id) << " to send selective event ["
+                                    << hex4(_service) << "." << hex4(_instance) << "." << hex4(its_event_id) << "]";
                 }
             }
         }
@@ -1436,15 +1447,16 @@ bool routing_manager_impl::deliver_notification(service_t _service, instance_t _
                 auto its_length = utility::get_payload_size(_data, _length);
                 auto its_payload = runtime::get()->create_payload(&_data[VSOMEIP_PAYLOAD_POS], its_length);
                 its_event->set_payload(its_payload, true);
-            } else
+            } else {
                 VSOMEIP_ERROR_P << "Event registration failed [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(its_event_id)
                                 << "]";
+            }
         } else if (!is_suppress_event(_service, _instance, its_event_id)) {
             VSOMEIP_WARNING_P << "Dropping unregistered event [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(its_event_id)
                               << "] Service has no subscribed eventgroup.";
         }
     }
-    return true;
+    return;
 }
 
 bool routing_manager_impl::is_suppress_event(service_t _service, instance_t _instance, event_t _event) const {
