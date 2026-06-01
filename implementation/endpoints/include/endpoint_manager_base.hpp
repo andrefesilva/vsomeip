@@ -88,7 +88,8 @@ private:
     std::shared_ptr<local_endpoint> create_local_client_endpoint(client_t _client, client_t _own_id,
                                                                  boost::asio::ip::address const& _remote_address, port_t _remote_port,
                                                                  bool _is_guest);
-    std::shared_ptr<local_endpoint> create_local_client_unlocked(client_t _client);
+    std::shared_ptr<local_endpoint> create_local_client_unlocked(client_t _client, boost::asio::ip::address const& _remote_address,
+                                                                 port_t _remote_port, bool _is_guest);
     std::shared_ptr<local_endpoint> find_local_client_unlocked(client_t _client);
 
     void remove_local_client_endpoint_unlocked(client_t _client, bool _remove_due_to_error);

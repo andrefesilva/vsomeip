@@ -248,45 +248,41 @@ std::shared_ptr<configuration> routing_manager_client::get_configuration() const
 bool routing_manager_client::offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                            minor_version_t _minor) {
 
-    {
-        std::scoped_lock its_lock(provider_mutex_);
-        auto its_info = find_service(_service, _instance, its_lock);
-        if (its_info) {
-            if (its_info->get_major() != _major || its_info->get_minor() != _minor) {
-                VSOMEIP_ERROR_P << "Service property mismatch (" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance)
-                                << ":" << static_cast<std::uint32_t>(its_info->get_major()) << "." << its_info->get_minor()
-                                << "] passed: " << static_cast<std::uint32_t>(_major) << ":" << _minor;
-                return false;
-            }
-            return true; // we are already offering this service -> no need to do anything else!
+    std::scoped_lock its_lock(provider_mutex_);
+    auto its_info = find_service(_service, _instance, its_lock);
+    if (its_info) {
+        if (its_info->get_major() != _major || its_info->get_minor() != _minor) {
+            VSOMEIP_ERROR_P << "Service property mismatch (" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":"
+                            << static_cast<std::uint32_t>(its_info->get_major()) << "." << its_info->get_minor()
+                            << "] passed: " << static_cast<std::uint32_t>(_major) << ":" << _minor;
+            return false;
         }
-        its_info = std::make_shared<serviceinfo>(_service, _instance, _major, _minor, DEFAULT_TTL, true);
-        provided_services_[_service][_instance] = its_info;
+        return true; // we are already offering this service -> no need to do anything else!
+    }
+    its_info = std::make_shared<serviceinfo>(_service, _instance, _major, _minor, DEFAULT_TTL, true);
+    provided_services_[_service][_instance] = its_info;
 
-        // Set major version for all registered events of this service and instance
-        const auto search = provided_events_.find(service_instance_t{_service, _instance});
+    // Set major version for all registered events of this service and instance
+    const auto search = provided_events_.find(service_instance_t{_service, _instance});
 
-        if (search != provided_events_.end()) {
-            for (const auto& [event_id, event_ptr] : search->second) {
-                event_ptr->set_version(_major);
-            }
+    if (search != provided_events_.end()) {
+        for (const auto& [event_id, event_ptr] : search->second) {
+            event_ptr->set_version(_major);
         }
     }
 
-    {
-        // order matters:
-        // 1. Ensure that it is part of the pending_offers set
-        // 2. check for the state
-        // otherwise:
-        // state might be not be registered, but turn registered just after the check,
-        // rushing ahead sending the pending offers that do not contain this offer yet.
-        protocol::service offer(_service, _instance, _major, _minor);
-        std::scoped_lock its_lock(pending_offers_mutex_);
-        pending_offers_.insert(offer);
-        if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
-            send_offer_service(_client, _service, _instance, _major, _minor);
-        }
+    // order matters:
+    // 1. Ensure that it is part of the pending_offers set
+    // 2. check for the state
+    // otherwise:
+    // state might be not be registered, but turn registered just after the check,
+    // rushing ahead sending the pending offers that do not contain this offer yet.
+    protocol::service offer(_service, _instance, _major, _minor);
+    pending_offers_.insert(offer);
+    if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
+        send_offer_service(_client, _service, _instance, _major, _minor);
     }
+
     return true;
 }
 
@@ -308,30 +304,25 @@ void routing_manager_client::stop_offer_service(client_t _client, service_t _ser
                                                 minor_version_t _minor) {
 
     (void)_client;
-    {
-        std::scoped_lock its_lock(provider_mutex_);
-        stop_offer_service_base(_client, _service, _instance, _major, _minor, its_lock);
-        clear_remote_subscriber_count(_service, _instance, its_lock);
-        clear_service_info(_service, _instance, its_lock);
-    }
+    std::scoped_lock its_lock(provider_mutex_);
+    stop_offer_service_base(_client, _service, _instance, _major, _minor, its_lock);
+    clear_remote_subscriber_count(_service, _instance, its_lock);
+    clear_service_info(_service, _instance, its_lock);
 
-    {
-        // order matters:
-        // 1. Remove the offer from the set,
-        // 2. Send the removal if we are registered
-        // otherwise it might happen that we don't send the stop offer,
-        // but have not removed the offer when REGISTERED is entered
-        std::scoped_lock its_lock(pending_offers_mutex_);
-        auto it = pending_offers_.begin();
-        while (it != pending_offers_.end()) {
-            if (it->service_ == _service && it->instance_ == _instance) {
-                break;
-            }
-            it++;
+    // order matters:
+    // 1. Remove the offer from the set,
+    // 2. Send the removal if we are registered
+    // otherwise it might happen that we don't send the stop offer,
+    // but have not removed the offer when REGISTERED is entered
+    auto it = pending_offers_.begin();
+    while (it != pending_offers_.end()) {
+        if (it->service_ == _service && it->instance_ == _instance) {
+            break;
         }
-        if (it != pending_offers_.end()) {
-            pending_offers_.erase(it);
-        }
+        it++;
+    }
+    if (it != pending_offers_.end()) {
+        pending_offers_.erase(it);
     }
     if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
         std::scoped_lock its_sender_lock{sender_mutex_};
@@ -1637,7 +1628,7 @@ void routing_manager_client::register_application(client_t _client) {
     }
 #endif
     // when changing the state we need to ensure that the debounce timer is not dispatching + altering the request set
-    if (std::scoped_lock its_lock{consumer_mutex_}; state_machine_->registered(_client)) {
+    if (std::scoped_lock its_lock{consumer_mutex_, provider_mutex_}; state_machine_->registered(_client)) {
         VSOMEIP_INFO << "Application/Client " << hex4(get_client()) << " (" << host_->get_name() << ") is registered.";
 
         if (!send_pending_commands(its_lock)) {
@@ -1843,13 +1834,11 @@ void routing_manager_client::on_stop_offer_service(service_t _service, instance_
     }
 }
 
-bool routing_manager_client::send_pending_commands([[maybe_unused]] std::scoped_lock<std::mutex> const& _consumer_lock) {
-    {
-        std::scoped_lock its_lock(pending_offers_mutex_);
-        for (auto& po : pending_offers_) {
-            if (!send_offer_service(get_client(), po.service_, po.instance_, po.major_, po.minor_)) {
-                return false;
-            }
+bool routing_manager_client::send_pending_commands(
+        [[maybe_unused]] std::scoped_lock<std::mutex, std::mutex> const& _consumer_provider_lock) {
+    for (auto& po : pending_offers_) {
+        if (!send_offer_service(get_client(), po.service_, po.instance_, po.major_, po.minor_)) {
+            return false;
         }
     }
 

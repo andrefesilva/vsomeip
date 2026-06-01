@@ -126,6 +126,11 @@ void endpoint_manager_base::stop_all_endpoints() {
 }
 
 std::shared_ptr<local_endpoint> endpoint_manager_base::find_or_create_local_client(client_t _client) {
+    boost::asio::ip::address its_remote_address;
+    port_t its_remote_port{};
+    // must be done outside mtx_ to avoid lock-order-inversion
+    bool is_guest = host_.get_connection_param(_client, its_remote_address, its_remote_port);
+
     std::shared_ptr<local_endpoint> its_endpoint{nullptr};
     {
         std::scoped_lock its_lock{mtx_};
@@ -135,7 +140,7 @@ std::shared_ptr<local_endpoint> endpoint_manager_base::find_or_create_local_clie
                 return nullptr;
             }
             VSOMEIP_INFO_P << "self 0x" << hex4(get_client_id()) << ", client 0x" << hex4(_client);
-            its_endpoint = create_local_client_unlocked(_client);
+            its_endpoint = create_local_client_unlocked(_client, its_remote_address, its_remote_port, is_guest);
 
             if (its_endpoint) {
                 its_endpoint->start();
@@ -429,10 +434,9 @@ std::shared_ptr<local_endpoint> endpoint_manager_base::create_routing_client() {
     return its_endpoint;
 }
 
-std::shared_ptr<local_endpoint> endpoint_manager_base::create_local_client_unlocked(client_t _client) {
-    boost::asio::ip::address its_remote_address;
-    port_t its_remote_port;
-    bool is_guest = host_.get_connection_param(_client, its_remote_address, its_remote_port);
+std::shared_ptr<local_endpoint> endpoint_manager_base::create_local_client_unlocked(client_t _client,
+                                                                                    boost::asio::ip::address const& its_remote_address,
+                                                                                    port_t its_remote_port, bool is_guest) {
     auto its_endpoint = create_local_client_endpoint(_client, get_client_id(), its_remote_address, its_remote_port, is_guest);
     if (its_endpoint) {
         local_client_endpoints_[_client] = its_endpoint;
