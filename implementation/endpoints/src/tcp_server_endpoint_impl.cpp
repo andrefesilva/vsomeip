@@ -314,8 +314,8 @@ bool tcp_server_endpoint_impl::is_established_to(const std::shared_ptr<endpoint_
     }
 
     if (!its_connected) {
-        VSOMEIP_ERROR_P << instance_name_ << " Didn't find TCP connection: Subscription "
-                        << "rejected for: " << _endpoint;
+        VSOMEIP_ERROR_P << instance_name_ << " Didn't find TCP connection to: " << _endpoint->get_address().to_string()
+                        << ". Subscription rejected for: " << _endpoint;
     }
 
     return its_connected;
