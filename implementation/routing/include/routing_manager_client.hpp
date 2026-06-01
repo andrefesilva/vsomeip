@@ -168,7 +168,7 @@ private:
     void on_stop_offer_service(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
                                std::scoped_lock<std::mutex> const& _consumer_lock);
 
-    [[nodiscard]] bool send_pending_commands(std::scoped_lock<std::mutex> const& _consumer_lock);
+    [[nodiscard]] bool send_pending_commands(std::scoped_lock<std::mutex, std::mutex> const& _consumer_provider_lock);
 
     void init_receiver_side([[maybe_unused]] std::unique_lock<std::mutex> const& _receive_lock);
 
@@ -299,9 +299,6 @@ private:
     std::shared_ptr<local_server> tcp_receiver_; // --> from everybody
     std::shared_ptr<local_server> uds_receiver_; // --> from everybody
 
-    std::mutex pending_offers_mutex_;
-    std::set<protocol::service> pending_offers_;
-
     struct event_data_t {
         service_instance_t service_instance_;
         event_t notifier_;
@@ -348,6 +345,7 @@ private:
     service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> provided_events_;
     eventgroups_t provided_eventgroups_;
     service_instance_map<std::map<eventgroup_t, uint32_t>> remote_subscriber_count_;
+    std::set<protocol::service> pending_offers_;
     // lc_count is bumped on every rmc::stop and on any reconnect invocation,
     // protected by the provider_mutex_, but it may be read during a start of the
     // sender at an arbitrary moment in time - although it shouldn't.
