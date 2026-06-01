@@ -1006,7 +1006,7 @@ void service_discovery_impl::on_message(const byte_t* _data, length_t _length, c
     deserialize_data(_data, _length, its_message);
     if (its_message) {
         // ignore all messages which are sent with invalid header fields
-        if (!check_static_header_fields(its_message)) {
+        if (!check_static_header_fields(its_message, _sender)) {
             return;
         }
 
@@ -1135,7 +1135,7 @@ void service_discovery_impl::on_message(const byte_t* _data, length_t _length, c
             serialize_and_send(its_resubscribes, _sender);
         }
     } else {
-        VSOMEIP_ERROR_P << "Deserialization error.";
+        VSOMEIP_ERROR_P << "Deserialization error from message from: " << _sender.to_string();
         return;
     }
 }
@@ -2266,27 +2266,29 @@ void service_discovery_impl::check_ttl(const boost::system::error_code& _error) 
     }
 }
 
-bool service_discovery_impl::check_static_header_fields(const std::shared_ptr<const message>& _message) const {
+bool service_discovery_impl::check_static_header_fields(const std::shared_ptr<const message>& _message,
+                                                        const boost::asio::ip::address& _sender) const {
     if (_message->get_protocol_version() != protocol_version) {
-        VSOMEIP_ERROR << "Invalid protocol version in SD header";
+        VSOMEIP_ERROR_P << "Invalid protocol version in SD header from: " << _sender.to_string();
         return false;
     }
     if (_message->get_interface_version() != interface_version) {
-        VSOMEIP_ERROR << "Invalid interface version in SD header";
+        VSOMEIP_ERROR_P << "Invalid interface version in SD header from: " << _sender.to_string();
         return false;
     }
     if (_message->get_message_type() != message_type) {
-        VSOMEIP_ERROR << "Invalid message type in SD header";
+        VSOMEIP_ERROR_P << "Invalid message type in SD header from: " << _sender.to_string();
         return false;
     }
     if (_message->get_return_code() > return_code_e::E_OK && _message->get_return_code() < return_code_e::E_UNKNOWN) {
-        VSOMEIP_ERROR << "Invalid return code in SD header";
+        VSOMEIP_ERROR_P << "Invalid return code in SD header from: " << _sender.to_string();
         return false;
     }
     // PRS_SOMEIPSD_00154
     // SD messages shall have Client-ID set to 0x0000
     if (_message->get_client() != VSOMEIP_SD_CLIENT) {
-        VSOMEIP_ERROR << "Invalid client ID in SD header: expected 0x0000, got 0x" << hex4(_message->get_client());
+        VSOMEIP_ERROR_P << "Invalid client ID in SD header: expected 0x0000, got 0x" << hex4(_message->get_client())
+                        << " from: " << _sender.to_string();
         return false;
     }
     return true;
