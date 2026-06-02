@@ -1611,9 +1611,9 @@ TEST_F(test_someip_gate, lets_through_n_notifications) {
     const auto& ev = tcp_offered_field; // TCP (reliable) field
     const auto& si = both_interface.instance_;
 
-    message_checker c1{std::nullopt, si, ev.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, p1};
-    message_checker c2{std::nullopt, si, ev.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, p2};
-    message_checker c3{std::nullopt, si, ev.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, p3};
+    message_checker const c1{client_session{0, 1}, si, ev.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, std::nullopt};
+    message_checker const c2{client_session{0, 2}, si, ev.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, std::nullopt};
+    message_checker const c3{client_session{0, 3}, si, ev.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, std::nullopt};
 
     // 2. Send 3 notifications.
     ecu_two_server_->send_event(ev, p1);
@@ -1624,15 +1624,15 @@ TEST_F(test_someip_gate, lets_through_n_notifications) {
     ASSERT_TRUE(gate->wait_for_blocked());
 
     // 3. First two must arrive.
-    EXPECT_TRUE(router_one->message_record_.wait_for(c1));
-    EXPECT_TRUE(router_one->message_record_.wait_for(c2));
+    EXPECT_TRUE(router_one->message_record_.wait_for_any(c1));
+    EXPECT_TRUE(router_one->message_record_.wait_for_last(c2));
 
     // 4. Third is buffered — must not arrive yet.
-    EXPECT_FALSE(router_one->message_record_.wait_for(c3, std::chrono::milliseconds(300)));
+    EXPECT_FALSE(router_one->message_record_.wait_for_any(c3, std::chrono::milliseconds(300)));
 
     // Release: 3rd notification is forwarded.
     gate->block(false);
-    EXPECT_TRUE(router_one->message_record_.wait_for(c3));
+    EXPECT_TRUE(router_one->message_record_.wait_for_any(c3));
 }
 
 TEST_F(test_someip_gate, blocks_request_then_response) {
