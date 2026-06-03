@@ -4,6 +4,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+FAIL=0
+
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 if ! source $SCRIPT_DIRECTORY/../setup_test.sh; then
     exit 1
@@ -39,19 +41,18 @@ function main() {
     echo -e "$SCRIPT: Waiting for the test service to stop."
 
     # Wait for the service to stop.
-    wait "$service_pid"
-    result="$?"
+    wait "$service_pid" || FAIL=$(($FAIL+1))
 
     echo -e "$SCRIPT: Stopping routing host."
 
     # Stop the routing host.
     kill "$host_pid"
-    wait "$host_pid"
+    wait "$host_pid" || FAIL=$(($FAIL+1))
 
     echo -e "$SCRIPT: Done."
 
     # Returns the test result.
-    exit "$result"
+    exit $FAIL
 }
 
 # Entrypoint of the script.

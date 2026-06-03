@@ -34,15 +34,15 @@ CLIENT_PID=$!
 FAIL=0
 
 # Wait for the service to finish.
-wait "$SERVICE_PID" || ((FAIL=1))
+wait "$SERVICE_PID" || FAIL=$(($FAIL+1))
 
-wait "$CLIENT_PID" || ((FAIL=1))
+wait "$CLIENT_PID" || FAIL=$(($FAIL+1))
 
 # Send a termination signal to the routing manager.
 kill "$DAEMON_PID"
 
 # Wait for the routing manager to exit.
-wait "$DAEMON_PID" || ((FAIL+=1))
+wait "$DAEMON_PID" || FAIL=$(($FAIL+1))
 
 # Return the result of the test.
 exit "$FAIL"
