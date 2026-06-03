@@ -9,11 +9,13 @@
 
 #include <cstring> // memcpy
 #include <optional>
+#include <type_traits>
 
 namespace vsomeip_v3::protocol {
 
 template<typename T>
-uint32_t from_mem(unsigned char const* _mem, uint32_t _size, T& _out) {
+    requires(std::is_integral_v<T> || std::is_enum_v<T>)
+inline uint32_t deserialize(T& _out, unsigned char const* _mem, uint32_t _size) {
     static constexpr auto size = sizeof(T);
     if (size > _size) {
         return 0;
@@ -26,7 +28,7 @@ template<typename... Ts>
 uint32_t parse(unsigned char const* _mem, uint32_t _size, Ts&... _ts) {
     uint32_t parsed{0};
     auto checked_parse = [&](auto& _out) {
-        auto const result = from_mem(_mem, _size, _out);
+        auto const result = deserialize(_out, _mem, _size);
         if (result == 0) {
             return false;
         }

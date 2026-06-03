@@ -11,9 +11,9 @@
 #include "../../security/include/policy_manager_impl.hpp"
 #include "../../utility/include/is_value.hpp"
 #include "../../utility/include/utility.hpp"
-#include "../../protocol/include/assign_client_ack_command.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../protocol/include/serialize.hpp"
+#include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/logging.hpp"
 #include "logger_ext.hpp"
 
@@ -463,10 +463,22 @@ void local_endpoint::send_cbk(boost::system::error_code const& _ec, [[maybe_unus
     // avoid checking every incoming messages, if a client id was already received
     if (own_ == VSOMEIP_CLIENT_UNSET) {
         while (receive_buffer_->next_message(result)) {
-            if (auto const id = protocol::read_client_id(result.message_data_, result.message_size_); id != VSOMEIP_CLIENT_UNSET) {
-                own_ = id;
-                if (assignment_timebox_) {
-                    assignment_timebox_->stop();
+            protocol::command_header cmd_header{};
+            auto const header_bytes = protocol::deserialize(cmd_header, result.message_data_, result.message_size_);
+            if (!header_bytes) {
+                VSOMEIP_ERROR_P << "Received parsing error, socket > " << status_unlock();
+            } else {
+                if (cmd_header.id_ == protocol::id_e::ASSIGN_CLIENT_ACK_ID) {
+                    if (client_t its_client;
+                        protocol::deserialize(its_client, result.message_data_ + header_bytes, result.message_size_ - header_bytes)) {
+                        own_ = its_client;
+                        if (assignment_timebox_) {
+                            assignment_timebox_->stop();
+                        }
+                    } else {
+                        VSOMEIP_ERROR_P << "Received parsing error for ASSIGN_CLIENT_ACK, memory dump: "
+                                        << utility::dump(result.message_data_, result.message_size_) << ", socket > " << status_unlock();
+                    }
                 }
             }
             _lock.unlock(); // fine to unlock, because the caller needs to return, before we would schedule another read
@@ -633,4 +645,9 @@ std::string const& local_endpoint::name() const {
 
 template bool local_endpoint::send<protocol::service_command_data>(protocol::service_command_data const&);
 template bool local_endpoint::send<protocol::simple_command_data>(protocol::simple_command_data const&);
+template bool
+local_endpoint::send<protocol::single_field_command_data<offer_type_e>>(protocol::single_field_command_data<offer_type_e> const&);
+template bool local_endpoint::send<protocol::single_field_command_data<client_t>>(protocol::single_field_command_data<client_t> const&);
+template bool local_endpoint::send<protocol::single_field_command_data<pending_remote_offer_id_t>>(
+        protocol::single_field_command_data<pending_remote_offer_id_t> const&);
 }

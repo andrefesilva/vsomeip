@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class resend_provided_events_command : public command {
+class [[deprecated("resend_provided_events_command is deprecated")]] resend_provided_events_command : public command {
 public:
     resend_provided_events_command();
 
