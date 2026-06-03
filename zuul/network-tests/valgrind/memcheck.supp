@@ -1,14 +1,3 @@
-# offer_thread_bind_tls
-# Valgrind can't follow TLS memory until the thread is completely destroyed,
-# therefore can't confirm whether the thread cleans it up after exit, hence it marks
-# it "possibly lost."
-# Thread is joined in the object (offer_test_service) destructor.
-
-# dispatcher_threads_tls, stop_thread_tls, io_threads_tls
-# When app_->start() is called, threads are internally created.
-# Valgrind can't keep track cleanup of thread shutdown for TLS allocations, thus it marks
-# as "possibly lost".
-
 # Suppressions for 'load_policy_data'
 # These errors come with the usage of the function configuration_impl::load_policy_data
 # There is no leak directly within the configuration_element class or its members. Structure
@@ -79,107 +68,6 @@
    socketcall.sendto(msg)
    ...
    obj:/usr/sbin/xtables-nft-multi
-}
-{
-   <io_threads_tls>
-   Memcheck:Leak
-   match-leak-kinds: possible
-   fun:calloc
-   fun:calloc
-   fun:allocate_dtv
-   fun:_dl_allocate_tls
-   fun:allocate_stack
-   fun:pthread_create@@GLIBC_2.34
-   fun:_ZNSt6thread15_M_start_threadESt10unique_ptrINS_6_StateESt14default_deleteIS1_EEPFvvE
-   fun:thread<vsomeip_v3::application_impl::start()::<lambda()> >
-   fun:_Construct<std::thread, vsomeip_v3::application_impl::start()::<lambda()> >
-   fun:construct<std::thread, vsomeip_v3::application_impl::start()::<lambda()> >
-   fun:_Sp_counted_ptr_inplace<vsomeip_v3::application_impl::start()::<lambda()> >
-   fun:__shared_count<std::thread, std::allocator<void>, vsomeip_v3::application_impl::start()::<lambda()> >
-   fun:__shared_ptr<std::allocator<void>, vsomeip_v3::application_impl::start()::<lambda()> >
-   fun:_ZNSt10shared_ptrISt6threadEC1ISaIvEJZN10vsomeip_v316application_impl5startEvEUlvE_EEESt20_Sp_alloc_shared_tagIT_EDpOT0_
-   fun:make_shared<std::thread, vsomeip_v3::application_impl::start()::<lambda()> >
-   fun:_ZN10vsomeip_v316application_impl5startEv
-   fun:_ZN18offer_test_serviceC1EN10offer_test12service_infoE
-   fun:_ZN48someip_offer_test_notify_increasing_counter_Test8TestBodyEv
-   fun:HandleSehExceptionsInMethodIfSupported<testing::Test, void>
-   fun:_ZN7testing8internal35HandleExceptionsInMethodIfSupportedINS_4TestEvEET0_PT_MS4_FS3_vEPKc
-   fun:_ZN7testing4Test3RunEv
-   fun:_ZN7testing8TestInfo3RunEv
-   fun:_ZN7testing9TestSuite3RunEv
-}
-{
-   <dispatcher_threads_tls>
-   Memcheck:Leak
-   match-leak-kinds: possible
-   fun:calloc
-   fun:calloc
-   fun:allocate_dtv
-   fun:_dl_allocate_tls
-   fun:allocate_stack
-   fun:pthread_create@@GLIBC_2.34
-   fun:_ZNSt6thread15_M_start_threadESt10unique_ptrINS_6_StateESt14default_deleteIS1_EEPFvvE
-   fun:thread<std::packaged_task<void()> >
-   fun:_Construct<std::thread, std::packaged_task<void()> >
-   fun:construct<std::thread, std::packaged_task<void()> >
-   fun:_Sp_counted_ptr_inplace<std::packaged_task<void()> >
-   fun:__shared_count<std::thread, std::allocator<void>, std::packaged_task<void()> >
-   fun:__shared_ptr<std::allocator<void>, std::packaged_task<void()> >
-   fun:_ZNSt10shared_ptrISt6threadEC1ISaIvEJSt13packaged_taskIFvvEEEEESt20_Sp_alloc_shared_tagIT_EDpOT0_
-   fun:make_shared<std::thread, std::packaged_task<void()> >
-   fun:_ZN10vsomeip_v316application_impl5startEv
-   fun:_ZN18offer_test_serviceC1EN10offer_test12service_infoE
-   fun:_ZN48someip_offer_test_notify_increasing_counter_Test8TestBodyEv
-   fun:HandleSehExceptionsInMethodIfSupported<testing::Test, void>
-   fun:_ZN7testing8internal35HandleExceptionsInMethodIfSupportedINS_4TestEvEET0_PT_MS4_FS3_vEPKc
-   fun:_ZN7testing4Test3RunEv
-   fun:_ZN7testing8TestInfo3RunEv
-   fun:_ZN7testing9TestSuite3RunEv
-}
-{
-   <stop_thread_tls>
-   Memcheck:Leak
-   match-leak-kinds: possible
-   fun:calloc
-   fun:calloc
-   fun:allocate_dtv
-   fun:_dl_allocate_tls
-   fun:allocate_stack
-   fun:pthread_create@@GLIBC_2.34
-   fun:_ZNSt6thread15_M_start_threadESt10unique_ptrINS_6_StateESt14default_deleteIS1_EEPFvvE
-   fun:thread<void (vsomeip_v3::application_impl::*)(), std::shared_ptr<vsomeip_v3::application_impl> >
-   fun:_ZN10vsomeip_v316application_impl5startEv
-   fun:_ZN18offer_test_serviceC1EN10offer_test12service_infoE
-   fun:_ZN48someip_offer_test_notify_increasing_counter_Test8TestBodyEv
-   fun:HandleSehExceptionsInMethodIfSupported<testing::Test, void>
-   fun:_ZN7testing8internal35HandleExceptionsInMethodIfSupportedINS_4TestEvEET0_PT_MS4_FS3_vEPKc
-   fun:_ZN7testing4Test3RunEv
-   fun:_ZN7testing8TestInfo3RunEv
-   fun:_ZN7testing9TestSuite3RunEv
-   fun:_ZN7testing8internal12UnitTestImpl11RunAllTestsEv
-}
-{
-   <offer_thread_bind_tls>
-   Memcheck:Leak
-   match-leak-kinds: possible
-   fun:calloc
-   fun:calloc
-   fun:allocate_dtv
-   fun:_dl_allocate_tls
-   fun:allocate_stack
-   fun:pthread_create@@GLIBC_2.34
-   fun:_ZNSt6thread15_M_start_threadESt10unique_ptrINS_6_StateESt14default_deleteIS1_EEPFvvE
-   fun:thread<std::_Bind<void (offer_test_service::*(offer_test_service*))()> >
-   fun:_ZN18offer_test_serviceC1EN10offer_test12service_infoE
-   fun:_ZN48someip_offer_test_notify_increasing_counter_Test8TestBodyEv
-   fun:HandleSehExceptionsInMethodIfSupported<testing::Test, void>
-   fun:_ZN7testing8internal35HandleExceptionsInMethodIfSupportedINS_4TestEvEET0_PT_MS4_FS3_vEPKc
-   fun:_ZN7testing4Test3RunEv
-   fun:_ZN7testing8TestInfo3RunEv
-   fun:_ZN7testing9TestSuite3RunEv
-   fun:_ZN7testing8internal12UnitTestImpl11RunAllTestsEv
-   fun:HandleSehExceptionsInMethodIfSupported<testing::internal::UnitTestImpl, bool>
-   fun:_ZN7testing8internal35HandleExceptionsInMethodIfSupportedINS0_12UnitTestImplEbEET0_PT_MS4_FS3_vEPKc
 }
 {
    <load_policy_data>
@@ -595,4 +483,20 @@
    fun:_ZN10vsomeip_v316application_impl4initEv
    fun:_ZN18offer_test_serviceC1EN10offer_test12service_infoE
    fun:_ZN48someip_offer_test_notify_increasing_counter_Test8TestBodyEv
+}
+# Generic suppression for glibc TLS allocation in all threads.
+# The thread-local storage allocated by glibc during pthread_create is reported
+# as "possibly lost" when threads are still running at exit or their stacks have
+# not yet been reclaimed. This is a well-known false positive.
+{
+   <glibc_tls_possibly_lost>
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:calloc
+   fun:calloc
+   fun:allocate_dtv
+   fun:_dl_allocate_tls
+   fun:allocate_stack
+   fun:pthread_create@@GLIBC_2.34
+   ...
 }
