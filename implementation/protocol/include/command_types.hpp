@@ -9,6 +9,7 @@
 
 #include "protocol.hpp"
 
+#include <cstring>
 #include <type_traits>
 
 namespace vsomeip_v3::protocol {
@@ -46,7 +47,15 @@ struct service_command_data {
     auto operator<=>(service_command_data const&) const = default;
 
     command_header header_;
-    service_data service_data_;
+    service_data payload_;
+};
+
+template<typename T>
+struct single_field_command_data {
+    auto operator<=>(single_field_command_data const&) const = default;
+
+    command_header header_;
+    T payload_;
 };
 
 // Wire-size helpers (sum of field sizes, no padding)
@@ -67,7 +76,12 @@ uint32_t wire_size(T const& _in) {
 inline service_command_data create_service_cmd(id_e _id, client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                                minor_version_t _minor) {
     return {.header_ = command_header::create(_id, wire_size(service_data{}), _client),
-            .service_data_ = {.service_ = _service, .instance_ = _instance, .major_version_ = _major, .minor_version_ = _minor}};
+            .payload_ = {.service_ = _service, .instance_ = _instance, .major_version_ = _major, .minor_version_ = _minor}};
+}
+
+template<typename T>
+inline single_field_command_data<T> create_single_field_cmd(id_e _id, client_t _client, T const& _field) {
+    return {.header_ = command_header::create(_id, sizeof(T), _client), .payload_ = _field};
 }
 
 // Factory functions
@@ -91,6 +105,18 @@ inline service_command_data create_offer_service_cmd(client_t _client, service_t
 inline service_command_data create_stop_offer_service_cmd(client_t _client, service_t _service, instance_t _instance,
                                                           major_version_t _major, minor_version_t _minor) {
     return create_service_cmd(id_e::STOP_OFFER_SERVICE_ID, _client, _service, _instance, _major, _minor);
+}
+
+inline auto create_offered_services_request_cmd(client_t _client, offer_type_e _offer_type) {
+    return create_single_field_cmd(id_e::OFFERED_SERVICES_REQUEST_ID, _client, _offer_type);
+}
+
+inline auto create_resend_provided_events_cmd(client_t _client, pending_remote_offer_id_t _id) {
+    return create_single_field_cmd(id_e::RESEND_PROVIDED_EVENTS_ID, _client, _id);
+}
+
+inline auto create_assign_client_ack_cmd(client_t _client, client_t _assigned_id) {
+    return create_single_field_cmd(id_e::ASSIGN_CLIENT_ACK_ID, _client, _assigned_id);
 }
 
 } // namespace vsomeip_v3::protocol

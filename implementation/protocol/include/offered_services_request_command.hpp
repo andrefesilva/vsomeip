@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class offered_services_request_command : public command {
+class [[deprecated("offered_services_request_command is deprecated")]] offered_services_request_command : public command {
 
 public:
     offered_services_request_command();

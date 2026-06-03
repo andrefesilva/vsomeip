@@ -190,7 +190,6 @@ private:
     void send_unsubscribe_ack(service_t _service, instance_t _instance, eventgroup_t _eventgroup, remote_subscription_id_t _id);
 
     void resend_provided_event_registrations();
-    void send_resend_provided_event_response(pending_remote_offer_id_t _id);
     void status_log_timer_cbk(boost::system::error_code const& _error);
     void version_log_timer_cbk(boost::system::error_code const& _error);
 #ifndef VSOMEIP_DISABLE_SECURITY

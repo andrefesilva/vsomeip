@@ -13,7 +13,6 @@
 #include "../../protocol/include/protocol.hpp"
 #include "../../protocol/include/assign_client_command.hpp"
 #include "../../protocol/include/config_command.hpp"
-#include "../../protocol/include/assign_client_ack_command.hpp"
 
 #include "../../utility/include/utility.hpp"
 #include "../../utility/include/is_value.hpp"
@@ -252,15 +251,7 @@ void local_server::add_connection(client_t _client, [[maybe_unused]] client_t _e
             ep->send(&config_buffer[0], static_cast<uint32_t>(config_buffer.size()));
 
             if (is_router_) {
-
-                protocol::assign_client_ack_command assign_ack_command;
-                assign_ack_command.set_client(VSOMEIP_ROUTING_CLIENT);
-                assign_ack_command.set_assigned(_client);
-                std::vector<byte_t> assign_ack_buffer;
-                assign_ack_command.serialize(assign_ack_buffer);
-
-                ep->send(&assign_ack_buffer[0], static_cast<uint32_t>(assign_ack_buffer.size()));
-
+                ep->send(protocol::create_assign_client_ack_cmd(VSOMEIP_ROUTING_CLIENT, _client));
                 VSOMEIP_INFO << ss.str();
             }
 

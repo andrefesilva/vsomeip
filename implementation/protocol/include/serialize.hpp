@@ -8,8 +8,23 @@
 #include "command_types.hpp"
 
 #include <cstring> // memcpy
-
+#include <concepts>
+#include <iostream>
 namespace vsomeip_v3::protocol {
+
+template<typename T>
+concept has_header = requires(T t) { t.header_; };
+template<typename T>
+concept has_payload = requires(T t) { t.payload_; };
+
+static_assert(has_header<service_command_data>);
+static_assert(has_payload<service_command_data>);
+static_assert(has_header<single_field_command_data<offer_type_e>>);
+static_assert(has_payload<single_field_command_data<offer_type_e>>);
+
+// Forward declaration so write_fields can call serialize in its fold expression.
+template<typename T>
+uint32_t serialize(T const& _value, unsigned char* _mem);
 
 template<typename T>
 uint32_t write_field(unsigned char* _mem, T const& _value) {
@@ -20,25 +35,31 @@ uint32_t write_field(unsigned char* _mem, T const& _value) {
 template<typename... Ts>
 uint32_t write_fields(unsigned char* _mem, Ts const&... _fields) {
     uint32_t written{0};
-    ((written += write_field(_mem + written, _fields)), ...);
+    ((written += serialize(_fields, _mem + written)), ...);
     return written;
 }
 
-inline uint32_t serialize(command_header const& _in, unsigned char* _mem) {
-    return write_fields(_mem, _in.id_, _in.version_, _in.client_, _in.length_);
-}
-
-inline uint32_t serialize(service_command_data const& _in, unsigned char* _mem) {
-    return write_fields(_mem, _in.header_.id_, _in.header_.version_, _in.header_.client_, _in.header_.length_, _in.service_data_.service_,
-                        _in.service_data_.instance_, _in.service_data_.major_version_, _in.service_data_.minor_version_);
-}
-
-// Generic serialize for header-only composite commands (ping, pong, suspend, etc.).
-// Non-template overloads (e.g. service_command_data) are preferred by overload resolution.
 template<typename T>
-    requires requires(T const& _t) { _t.header_; }
-uint32_t serialize(T const& _in, unsigned char* _mem) {
-    return serialize(_in.header_, _mem);
+uint32_t serialize(T const& _value, unsigned char* _mem) {
+    if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
+        std::memcpy(_mem, &_value, sizeof(T));
+        return sizeof(T);
+    } else if constexpr (std::is_same_v<T, command_header>) {
+        return write_fields(_mem, _value.id_, _value.version_, _value.client_, _value.length_);
+    } else if constexpr (std::is_same_v<T, service_data>) {
+        return write_fields(_mem, _value.service_, _value.instance_, _value.major_version_, _value.minor_version_);
+    } else if constexpr (has_header<T>) {
+        if constexpr (has_payload<T>) {
+            // non-trivial commands -> recurse!
+            return write_fields(_mem, _value.header_, _value.payload_);
+        } else {
+            // simple commands (PING, PONG, SUSPEND)
+            return serialize(_value.header_, _mem);
+        }
+    } else {
+        static_assert(!std::is_same_v<T, T>, "Unsupported type requested to be serialized");
+    }
+    return 0;
 }
 
 } // namespace vsomeip_v3::protocol

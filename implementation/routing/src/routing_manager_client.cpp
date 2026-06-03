@@ -37,7 +37,6 @@
 #include "../../message/include/deserializer.hpp"
 #include "../../message/include/message_impl.hpp"
 #include "../../message/include/serializer.hpp"
-#include "../../protocol/include/assign_client_ack_command.hpp"
 #include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/distribute_security_policies_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
@@ -49,7 +48,6 @@
 #include "../../protocol/include/remove_security_policy_command.hpp"
 #include "../../protocol/include/remove_security_policy_response_command.hpp"
 #include "../../protocol/include/request_service_command.hpp"
-#include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
 #include "../../protocol/include/subscribe_ack_command.hpp"
@@ -810,7 +808,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     protocol::error_e its_error;
 
     protocol::command_header its_header{};
-    if (protocol::deserialize(its_header, _data, _size)) {
+    uint32_t parsed_hdr_bytes = 0;
+    if (parsed_hdr_bytes = protocol::deserialize(its_header, _data, _size); parsed_hdr_bytes) {
         its_id = its_header.id_;
         its_client = its_header.client_;
 
@@ -998,13 +997,12 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         }
 
         case protocol::id_e::ASSIGN_CLIENT_ACK_ID: {
-            client_t its_assigned_client(VSOMEIP_CLIENT_UNSET);
-            protocol::assign_client_ack_command its_ack_command;
-            its_ack_command.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK)
-                its_assigned_client = its_ack_command.get_assigned();
-
-            on_client_assign_ack(its_assigned_client, !_peer_data.routing_address_.is_unspecified());
+            if (client_t its_client; protocol::deserialize(its_client, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+                on_client_assign_ack(its_client, !_peer_data.routing_address_.is_unspecified());
+            } else {
+                VSOMEIP_ERROR_P << "Assign client ack command deserialization failed memory: " << utility::dump(_data, _size);
+                return;
+            }
             break;
         }
 
@@ -1324,16 +1322,20 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
             break;
         }
         case protocol::id_e::RESEND_PROVIDED_EVENTS_ID: {
-            protocol::resend_provided_events_command its_command;
-            its_command.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
-
+            if (pending_remote_offer_id_t its_remote_offer_id;
+                protocol::deserialize(its_remote_offer_id, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
                 resend_provided_event_registrations();
-                send_resend_provided_event_response(its_command.get_remote_offer_id());
 
-                VSOMEIP_INFO << "RESEND_PROVIDED_EVENTS(" << hex4(its_command.get_client()) << ")";
-            } else
-                VSOMEIP_ERROR_P << "Resend provided events command deserialization failed (" << static_cast<int>(its_error) << ")";
+                std::scoped_lock its_sender_lock{sender_mutex_};
+                if (sender_) {
+                    sender_->send(protocol::create_resend_provided_events_cmd(get_client(), its_remote_offer_id));
+                    VSOMEIP_INFO << "RESEND_PROVIDED_EVENTS(" << hex4(its_client) << ")";
+                } else {
+                    VSOMEIP_WARNING_P << "Failed due to a missing sender";
+                }
+            } else {
+                VSOMEIP_ERROR_P << "Resend provided events command deserialization failed, memory: " << utility::dump(_data, _size);
+            }
             break;
         }
         case protocol::id_e::SUSPEND_ID: {
@@ -1449,7 +1451,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
             break;
         }
     } else
-        VSOMEIP_ERROR_P << "Command header deserialization failed";
+        VSOMEIP_ERROR_P << "Deserialization of command header failed, memory: " << utility::dump(_data, _size);
 }
 
 void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size) {
@@ -2054,17 +2056,9 @@ void routing_manager_client::cleanup_client(client_t _client, bool _due_to_error
 }
 
 void routing_manager_client::send_get_offered_services_info(client_t _client, offer_type_e _offer_type) {
-
-    protocol::offered_services_request_command its_command;
-    its_command.set_client(_client);
-    its_command.set_offer_type(_offer_type);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
     std::scoped_lock its_sender_lock{sender_mutex_};
     if (sender_) {
-        sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
+        sender_->send(protocol::create_offered_services_request_cmd(_client, _offer_type));
     } else {
         VSOMEIP_ERROR_P << "Failed due to a missing sender";
     }
@@ -2098,23 +2092,6 @@ void routing_manager_client::resend_provided_event_registrations() {
             send_register_event(get_client(), ed.service_instance_.service(), ed.service_instance_.instance(), ed.notifier_,
                                 ed.eventgroups_, ed.type_, ed.reliability_, ed.is_provided_, ed.is_cyclic_);
         }
-    }
-}
-
-void routing_manager_client::send_resend_provided_event_response(pending_remote_offer_id_t _id) {
-
-    protocol::resend_provided_events_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_remote_offer_id(_id);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
-    std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_) {
-        sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
-    } else {
-        VSOMEIP_ERROR_P << "Failed due to a missing sender";
     }
 }
 
