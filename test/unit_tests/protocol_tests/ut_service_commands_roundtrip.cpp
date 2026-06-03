@@ -29,7 +29,7 @@ TEST(ut_service_commands_roundtrip, offer_service_roundtrip) {
     service_data svc{};
     auto const payload_size = deserialize(svc, buf.data() + header_size, static_cast<uint32_t>(buf.size()) - header_size);
     ASSERT_GT(payload_size, 0u);
-    EXPECT_EQ(svc, cmd.service_data_);
+    EXPECT_EQ(svc, cmd.payload_);
 }
 
 TEST(ut_service_commands_roundtrip, stop_offer_service_roundtrip) {
@@ -46,7 +46,7 @@ TEST(ut_service_commands_roundtrip, stop_offer_service_roundtrip) {
     service_data svc{};
     auto const payload_size = deserialize(svc, buf.data() + header_size, static_cast<uint32_t>(buf.size()) - header_size);
     ASSERT_GT(payload_size, 0u);
-    EXPECT_EQ(svc, cmd.service_data_);
+    EXPECT_EQ(svc, cmd.payload_);
 }
 
 TEST(ut_service_commands_roundtrip, deserialize_rejects_truncated_header) {

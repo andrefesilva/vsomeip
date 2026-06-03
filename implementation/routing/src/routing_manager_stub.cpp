@@ -512,24 +512,21 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::OFFERED_SERVICES_REQUEST_ID: {
-        protocol::offered_services_request_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
-
-            on_offered_service_request(its_command.get_client(), its_command.get_offer_type());
-        } else
-            VSOMEIP_ERROR_P << "Offer service request deserialization failed (" << static_cast<int>(its_error) << ")";
+        if (offer_type_e its_offer_type; protocol::deserialize(its_offer_type, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            on_offered_service_request(its_client, its_offer_type);
+        } else {
+            VSOMEIP_ERROR_P << "Deserialization of offered services request command failed, memory: " << utility::dump(_data, _size);
+        }
         break;
     }
 
     case protocol::id_e::RESEND_PROVIDED_EVENTS_ID: {
-        protocol::resend_provided_events_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
-            host_->on_resend_provided_events_response(its_command.get_remote_offer_id());
-            VSOMEIP_INFO << "RESEND_PROVIDED_EVENTS(" << hex4(its_client) << ")";
-        } else
-            VSOMEIP_ERROR_P << "Resend provided events deserialization failed (" << static_cast<int>(its_error) << ")";
+        if (pending_remote_offer_id_t its_resend_command_data;
+            protocol::deserialize(its_resend_command_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            host_->on_resend_provided_events_response(its_resend_command_data);
+        } else {
+            VSOMEIP_ERROR_P << "Deserialization of resend provided events command failed, memory: " << utility::dump(_data, _size);
+        }
         break;
     }
 #ifndef VSOMEIP_DISABLE_SECURITY
@@ -1212,15 +1209,7 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
 bool routing_manager_stub::send_provided_event_resend_request(client_t _client, pending_remote_offer_id_t _id) {
 
     if (auto its_endpoint = find_local_routing_endpoint(_client); its_endpoint) {
-
-        protocol::resend_provided_events_command its_command;
-        its_command.set_client(VSOMEIP_ROUTING_CLIENT);
-        its_command.set_remote_offer_id(_id);
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
-
-        return send_local(its_endpoint, its_buffer);
+        return its_endpoint->send(protocol::create_resend_provided_events_cmd(VSOMEIP_ROUTING_CLIENT, _id));
     } else {
         VSOMEIP_WARNING_P << "Couldn't send provided event resend request to local client: 0x" << hex4(_client);
     }
