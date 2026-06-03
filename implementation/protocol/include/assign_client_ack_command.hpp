@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class assign_client_ack_command : public command {
+class [[deprecated("assign_client_ack_command is deprecated")]] assign_client_ack_command : public command {
 public:
     assign_client_ack_command();
 
