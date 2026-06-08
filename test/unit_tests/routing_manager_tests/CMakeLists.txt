@@ -8,6 +8,7 @@ project(unit_tests_routing_manager_tests LANGUAGES CXX)
 set(TEST_SRCS
     ../main.cpp
     ut_routing_client_state_machine.cpp
+    ut_local_service_table.cpp
 )
 
 add_executable(

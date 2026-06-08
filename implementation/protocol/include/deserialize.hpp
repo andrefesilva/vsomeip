@@ -48,4 +48,20 @@ inline uint32_t deserialize(service_data& _out, unsigned char const* _mem, uint3
     return parse(_mem, _size, _out.service_, _out.instance_, _out.major_version_, _out.minor_version_);
 }
 
+inline uint32_t deserialize(std::vector<service_data>& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t acc = 0;
+    auto elems = _size / service_data::wire_size_;
+    if (elems * service_data::wire_size_ != _size) {
+        // some remaining bytes?
+        return 0;
+    }
+    _out.resize(elems);
+    for (auto& out : _out) {
+        // there is no need to check for the amount of parsed bytes,
+        // as we only allocated enough space to also deserialize the payload
+        acc += deserialize(out, _mem + acc, _size - acc);
+    }
+    return acc;
+}
+
 } // namespace vsomeip_v3::protocol
