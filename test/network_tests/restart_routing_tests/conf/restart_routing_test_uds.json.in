@@ -1,6 +1,5 @@
 {
    "unicast" : "127.0.0.1",
-   "netmask" : "255.255.255.0",
    "logging" :
    {
       "level" : "trace",
@@ -12,13 +11,17 @@
    },
    "services" :
    [
+      {
+         "service" : "0x1234",
+         "instance" : "0x5678"
+      }
    ],
-   "routing" : "routingmanagerd",
+   "routing" : "restart_routing_managerd",
    "service-discovery" :
    {
       "enable" : "false",
       "multicast" : "224.0.0.1",
-      "port" : "30491",
+      "port" : "30490",
       "protocol" : "udp"
    }
 }

@@ -8,30 +8,22 @@ project(restart_routing_tests LANGUAGES CXX)
 # Configure necessary files into the build folder.
 set(configuration_files
     restart_routing_test_autoconfig_service_host.json
-    restart_routing_test_client.json
-    restart_routing_test_service.json
+    restart_routing_test_uds.json
     restart_routing_test_without_id.json
 )
 configure_files("${configuration_files}")
 
-add_executable(restart_routing_test_service
-    restart_routing_test_service.cpp
-)
-
 add_executable(restart_routing_test_manager
     restart_routing_test_manager.cpp
-)
-
-add_executable(restart_routing_test_client
     restart_routing_test_client.cpp
+    restart_routing_test_service.cpp
 )
 
 # Add build dependencies and link libraries to executables.
 set(executables
     restart_routing_test_manager
-    restart_routing_test_service
-    restart_routing_test_client
 )
+
 targets_add_default_dependencies("${executables}")
 targets_link_default_libraries("${executables}")
 

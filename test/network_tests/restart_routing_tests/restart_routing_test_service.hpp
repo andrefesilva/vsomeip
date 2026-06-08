@@ -16,39 +16,26 @@
 #include <mutex>
 #include <condition_variable>
 
-class routing_restart_test_service {
+class restart_routing_test_service {
 public:
-    routing_restart_test_service();
-    ~routing_restart_test_service();
-    bool init();
-    void start();
-    void stop();
+    restart_routing_test_service();
+    ~restart_routing_test_service();
+    void init();
     void offer();
     void stop_offer();
-    void join_offer_thread();
     void on_state(vsomeip::state_type_e _state);
     void on_message(const std::shared_ptr<vsomeip::message>& _request);
-    void on_message_shutdown(const std::shared_ptr<vsomeip::message>& _request);
     void run();
+    bool wait_for_messages();
 
 private:
     std::shared_ptr<vsomeip::application> app_;
-    bool is_registered_;
-
     std::mutex mutex_;
     std::condition_variable condition_;
-    std::condition_variable init_shutdown_condition_;
-    std::condition_variable execute_shutdown_condition_;
-    bool blocked_;
-    bool init_shutdown_;
-    bool all_received_;
-    std::mutex shutdown_mutex_;
-    std::mutex counter_mutex_;
-    std::uint32_t shutdown_counter_;
+    vsomeip::state_type_e registration_status_{vsomeip::state_type_e::ST_DEREGISTERED};
+    bool all_received_{false};
     std::map<std::uint16_t, std::uint32_t> received_counter_;
-
-    std::mutex number_of_received_messages_mutex_;
-    std::uint32_t number_of_received_messages_;
-
-    std::thread offer_thread_;
+    std::uint32_t number_of_received_messages_{0};
+    std::thread runner_;
+    std::thread starter_;
 };
