@@ -265,62 +265,12 @@ void routing_manager_impl::stop() {
     utility::reset_client_ids(configuration_->get_network());
 }
 
-bool routing_manager_impl::insert_offer_command(service_t _service, instance_t _instance, uint8_t _command, client_t _client,
-                                                major_version_t _major, minor_version_t _minor) {
-    // flag to indicate whether caller of this function can start directly processing the command
-    bool must_process(false);
-    auto found_service_instance = offer_commands_.find(std::make_pair(_service, _instance));
-    if (found_service_instance != offer_commands_.end()) {
-        // if nothing is queued
-        if (found_service_instance->second.empty()) {
-            must_process = true;
-        }
-        found_service_instance->second.push_back(std::make_tuple(_command, _client, _major, _minor));
-    } else {
-        // nothing is queued -> add command to queue and process command directly
-        offer_commands_[std::make_pair(_service, _instance)].push_back(std::make_tuple(_command, _client, _major, _minor));
-        must_process = true;
-    }
-    return must_process;
-}
-
-void routing_manager_impl::erase_offer_command(service_t _service, instance_t _instance) {
-    auto found_service_instance = offer_commands_.find(std::make_pair(_service, _instance));
-    if (found_service_instance != offer_commands_.end()) {
-        // erase processed command
-        if (!found_service_instance->second.empty()) {
-            found_service_instance->second.pop_front();
-            if (!found_service_instance->second.empty()) {
-                // check for other commands to be processed
-                auto its_command = found_service_instance->second.front();
-                if (std::get<0>(its_command) == uint8_t(protocol::id_e::OFFER_SERVICE_ID)) {
-                    boost::asio::post(io_, [this, its_command, _service, _instance]() {
-                        offer_service(std::get<1>(its_command), _service, _instance, std::get<2>(its_command), std::get<3>(its_command),
-                                      false);
-                    });
-                } else {
-                    boost::asio::post(io_, [this, its_command, _service, _instance]() {
-                        stop_offer_service(std::get<1>(its_command), _service, _instance, std::get<2>(its_command),
-                                           std::get<3>(its_command), false);
-                    });
-                }
-            }
-        }
-    }
-}
-
 bool routing_manager_impl::is_local_client(client_t _client) const {
     return find_routing_endpoint(_client) != nullptr;
 }
 
 bool routing_manager_impl::offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                          minor_version_t _minor) {
-
-    return offer_service(_client, _service, _instance, _major, _minor, true);
-}
-
-bool routing_manager_impl::offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                         minor_version_t _minor, bool _must_queue) {
     bool external_routing_ready{false};
     {
         std::scoped_lock its_lock(on_state_change_mutex_);
@@ -328,20 +278,10 @@ bool routing_manager_impl::offer_service(client_t _client, service_t _service, i
     }
 
     std::scoped_lock its_lock{offer_serialization_mutex_};
-    // only queue commands if method was NOT called via erase_offer_command()
-    if (_must_queue) {
-        if (!insert_offer_command(_service, _instance, uint8_t(protocol::id_e::OFFER_SERVICE_ID), _client, _major, _minor)) {
-            VSOMEIP_INFO_P << "(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":" << int(_major) << "."
-                           << _minor << "] (" << std::boolalpha << _must_queue << ")"
-                           << " not offering service, because insert_offer_command returned false!";
-            return false;
-        }
-    }
 
     if (!handle_local_offer_service(_client, _service, _instance, _major, _minor)) {
-        erase_offer_command(_service, _instance);
         VSOMEIP_INFO_P << "(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":" << int(_major) << "." << _minor
-                       << "] (" << std::boolalpha << _must_queue << ")"
+                       << "] (" << std::boolalpha << true << ")"
                        << " not offering, returned from handle_local_offer_service!";
         return false;
     }
@@ -366,31 +306,16 @@ bool routing_manager_impl::offer_service(client_t _client, service_t _service, i
         }
     }
 
-    erase_offer_command(_service, _instance);
     stub_->on_offer_service(_client, _service, _instance, _major, _minor);
 
     VSOMEIP_INFO << "OFFER(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":" << int(_major) << "." << _minor
-                 << "] (" << std::boolalpha << _must_queue << ")";
+                 << "] (" << std::boolalpha << true << ")";
     return true;
 }
 
 void routing_manager_impl::stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                               minor_version_t _minor) {
-    stop_offer_service(_client, _service, _instance, _major, _minor, true);
-}
-
-void routing_manager_impl::stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                              minor_version_t _minor, bool _must_queue) {
     std::scoped_lock its_lock{offer_serialization_mutex_};
-
-    if (_must_queue) {
-        if (!insert_offer_command(_service, _instance, uint8_t(protocol::id_e::STOP_OFFER_SERVICE_ID), _client, _major, _minor)) {
-            VSOMEIP_INFO_P << "(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":" << int(_major) << "."
-                           << _minor << "] (" << std::boolalpha << _must_queue << ")"
-                           << " STOP-OFFER NOT INSERTED!";
-            return;
-        }
-    }
 
     bool is_local(false);
     {
@@ -414,11 +339,10 @@ void routing_manager_impl::stop_offer_service(client_t _client, service_t _servi
 
         on_stop_offer_service_unlocked(_client, _service, _instance, _major, _minor, true);
         VSOMEIP_INFO << "STOP OFFER(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":" << int(_major) << "."
-                     << _minor << "] (" << std::boolalpha << _must_queue << ")";
+                     << _minor << "] (" << std::boolalpha << true << ")";
     } else {
         VSOMEIP_WARNING_P << "Received STOP_OFFER(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":"
                           << int(_major) << "." << _minor << "] for remote service --> ignore";
-        erase_offer_command(_service, _instance);
     }
 
     remove_pending_requests(pending_request_removal_type_e::OFFERING_ONLY, _client, _service, _instance);
@@ -1328,7 +1252,6 @@ void routing_manager_impl::on_stop_offer_service_unlocked(client_t _client, serv
         }
     }
 
-    erase_offer_command(_service, _instance);
     if (_call_stub) {
         stub_->on_stop_offer_service(_client, _service, _instance, _major, _minor);
     }
@@ -2680,7 +2603,7 @@ void routing_manager_impl::cleanup_client(client_t _client) {
         });
     }
     for (const auto& [client, service, instance, major, minor] : its_offers) {
-        offer_service(client, service, instance, major, minor, true);
+        offer_service(client, service, instance, major, minor);
     }
 }
 
