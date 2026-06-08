@@ -20,11 +20,11 @@ class routing_manager_stub_host {
 public:
     virtual ~routing_manager_stub_host() { }
 
-    virtual bool offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                               bool _must_queue = true) = 0;
+    virtual bool offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                               minor_version_t _minor) = 0;
 
     virtual void stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                    minor_version_t _minor, bool _must_queue = true) = 0;
+                                    minor_version_t _minor) = 0;
 
     virtual void request_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                  minor_version_t _minor) = 0;

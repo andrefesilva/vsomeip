@@ -245,12 +245,6 @@ private:
 
     [[nodiscard]] bool is_local_client(client_t _client) const override;
 
-    bool offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                       bool _must_queue);
-
-    void stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                            bool _must_queue);
-
     void deliver_notification(service_t _service, instance_t _instance, const byte_t* _data, length_t _length, bool _reliable,
                               client_t _bound_client, const vsomeip_sec_client_t* _sec_client, uint8_t _status_check = 0,
                               bool _is_from_remote = false);
@@ -325,10 +319,6 @@ private:
 
     pending_remote_offer_id_t pending_remote_offer_add(service_t _service, instance_t _instance);
     std::pair<service_t, instance_t> pending_remote_offer_remove(pending_remote_offer_id_t _id);
-
-    bool insert_offer_command(service_t _service, instance_t _instance, uint8_t _command, client_t _client, major_version_t _major,
-                              minor_version_t _minor);
-    void erase_offer_command(service_t _service, instance_t _instance);
 
     bool insert_event_statistics(service_t _service, instance_t _instance, method_t _method, length_t _length);
     void statistics_log_timer_cbk(boost::system::error_code const& _error);
