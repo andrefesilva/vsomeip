@@ -9,7 +9,7 @@
    "routing" : {
       "host" :
       {
-         "name" : "routingmanagerd",
+         "name" : "restart_routing_managerd",
          "unicast" : "@TEST_IP_MASTER@",
          "port" : "11000"
       },
