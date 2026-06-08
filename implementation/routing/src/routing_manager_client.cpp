@@ -41,7 +41,6 @@
 #include "../../protocol/include/distribute_security_policies_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
-#include "../../protocol/include/offered_services_response_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/release_service_command.hpp"
@@ -337,7 +336,7 @@ void routing_manager_client::request_service([[maybe_unused]] client_t _client, 
 
     {
         size_t request_debouncing_time = configuration_->get_request_debounce_time(host_->get_name());
-        protocol::service request = {_service, _instance, _major, _minor};
+        protocol::service_data request = {.service_ = _service, .instance_ = _instance, .major_version_ = _major, .minor_version_ = _minor};
         std::scoped_lock its_lock{consumer_mutex_};
         if (requests_.contains(request) || requests_to_debounce_.contains(request)) {
             return;
@@ -350,9 +349,9 @@ void routing_manager_client::request_service([[maybe_unused]] client_t _client, 
             // the subsequent logic.
             requests_.insert(request);
             if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
-                std::set<protocol::service> requests;
+                local_service_table requests;
                 requests.insert(request);
-                send_request_services(requests);
+                send_request_services(requests.view());
             }
         } else {
             requests_to_debounce_.insert(request);
@@ -368,41 +367,17 @@ void routing_manager_client::request_service([[maybe_unused]] client_t _client, 
 }
 
 void routing_manager_client::release_service(client_t _client, service_t _service, instance_t _instance) {
-    bool pending(false);
+    bool already_requested(false);
     {
         std::scoped_lock its_service_guard(consumer_mutex_);
         available_services_history_.erase({_service, _instance});
         remove_pending_subscription(_service, _instance, 0xFFFF, ANY_EVENT, its_service_guard);
-        auto it = requests_to_debounce_.begin();
-        while (it != requests_to_debounce_.end()) {
-            if (it->service_ == _service && it->instance_ == _instance) {
-                pending = true;
-                break;
-            }
-            it++;
-        }
-        if (it != requests_to_debounce_.end()) {
-            requests_to_debounce_.erase(it);
-        }
-
-        // order matters:
-        // 1. Remove the service from the requests
-        // 2. Send the release when we are registered
-        // otherwise we might not send the release, but request the service
-        // when being registered
-        auto it_requests = requests_.begin();
-        while (it_requests != requests_.end()) {
-            if (it_requests->service_ == _service && it_requests->instance_ == _instance) {
-                pending = false;
-                break;
-            }
-            it_requests++;
-        }
-        if (it_requests != requests_.end()) {
-            requests_.erase(it_requests);
-        }
+        protocol::service_data request{
+                .service_ = _service, .instance_ = _instance, .major_version_ = ANY_MAJOR, .minor_version_ = ANY_MINOR};
+        requests_to_debounce_.remove(request);
+        already_requested = requests_.remove(request);
     }
-    if (!pending && state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
+    if (already_requested && state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
         send_release_service(_client, _service, _instance);
     }
 }
@@ -1307,18 +1282,17 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         }
 
         case protocol::id_e::OFFERED_SERVICES_RESPONSE_ID: {
-            protocol::offered_services_response_command its_response;
-            its_response.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
+            if (std::vector<protocol::service_data> its_services;
+                protocol::deserialize(its_services, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
                 if (!configuration_->is_security_enabled() || is_from_routing) {
-                    on_offered_services_info(its_response);
+                    on_offered_services_info(its_services);
                 } else {
                     VSOMEIP_WARNING << std::hex << "Security: Client 0x" << get_client()
                                     << " received an offered services info from a client which isn't the routing manager"
                                     << " : Skip message!";
                 }
             } else
-                VSOMEIP_ERROR_P << "Offered services response command deserialization failed (" << static_cast<int>(its_error) << ")";
+                VSOMEIP_ERROR_P << "Offered services response command deserialization failed, memory: " << utility::dump(_data, _size);
             break;
         }
         case protocol::id_e::RESEND_PROVIDED_EVENTS_ID: {
@@ -1535,11 +1509,12 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
     }
 }
 
-void routing_manager_client::on_offered_services_info(protocol::offered_services_response_command& _command) {
+void routing_manager_client::on_offered_services_info(std::vector<protocol::service_data> const& _services) {
 
     std::vector<std::pair<service_t, instance_t>> its_offered_services_info;
+    its_offered_services_info.reserve(_services.size());
 
-    for (const auto& s : _command.get_services())
+    for (const auto& s : _services)
         its_offered_services_info.push_back(std::make_pair(s.service_, s.instance_));
 
     host_->on_offered_services_info(its_offered_services_info);
@@ -1657,19 +1632,13 @@ void routing_manager_client::send_pong() const {
     }
 }
 
-bool routing_manager_client::send_request_services(const std::set<protocol::service>& _requests) {
+bool routing_manager_client::send_request_services(std::span<protocol::service_data const> _requests) {
     if (!_requests.size()) {
         return true;
     }
 
-    protocol::request_service_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_services(_requests);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
     std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_ && sender_->send(&its_buffer[0], uint32_t(its_buffer.size()))) {
+    if (sender_ && sender_->send(protocol::create_request_service_cmd(get_client(), _requests))) {
         return true;
     }
     VSOMEIP_ERROR_P << "Failed to send requested services";
@@ -1844,7 +1813,7 @@ bool routing_manager_client::send_pending_commands(
         }
     }
 
-    return send_pending_event_registrations(get_client()) && send_request_services(requests_);
+    return send_pending_event_registrations(get_client()) && send_request_services(requests_.view());
 }
 
 void routing_manager_client::init_receiver_side([[maybe_unused]] std::unique_lock<std::mutex> const& _receive_lock) {
@@ -1971,9 +1940,8 @@ void routing_manager_client::request_debounce_timeout_cbk(boost::system::error_c
     if (!_error) {
         if (requests_to_debounce_.size()) {
             if (auto state = state_machine_->state(); state == routing_client_state_e::ST_REGISTERED) {
-                send_request_services(requests_to_debounce_);
-                requests_.insert(requests_to_debounce_.begin(), requests_to_debounce_.end());
-                requests_to_debounce_.clear();
+                send_request_services(requests_to_debounce_.view());
+                requests_.take(requests_to_debounce_);
             } else {
                 request_debounce_timer_.expires_after(
                         std::chrono::milliseconds(configuration_->get_request_debounce_time(host_->get_name())));
@@ -2027,13 +1995,13 @@ void routing_manager_client::cleanup_client(client_t _client, bool _due_to_error
         // First ensure that the connection is dropped, before enforcing a
         // reconnect from the client. Otherwise a client subscribe might
         // be handled by a partially cleaned-up connection
-        std::set<protocol::service> requested_services;
+        local_service_table requested_services;
         remove_local(_due_to_error, _client, requested_services);
 
         // Request the host these services again.
         if (_due_to_error) {
             if (auto state = state_machine_->state(); state == routing_client_state_e::ST_REGISTERED) {
-                send_request_services(requested_services);
+                send_request_services(requested_services.view());
             }
         }
 
@@ -2280,7 +2248,7 @@ void routing_manager_client::lazy_load(const std::string& _client_host) {
     // This data is better kept at the endpoint
 }
 
-void routing_manager_client::remove_local(bool _due_to_error, client_t _client, std::set<protocol::service>& _requested_services) {
+void routing_manager_client::remove_local(bool _due_to_error, client_t _client, local_service_table& _requested_services) {
 
     vsomeip_sec_client_t its_sec_client;
     configuration_->get_policy_manager()->get_client_to_sec_client_mapping(_client, its_sec_client);
@@ -2313,7 +2281,8 @@ void routing_manager_client::remove_local(bool _due_to_error, client_t _client, 
         auto removed = available_services_.remove_all_for_client(_client);
         for (auto const& [its_service, its_instance, its_major, its_minor, its_client] : removed) {
             // save the removed available services to re-request them from the router
-            _requested_services.emplace(its_service, its_instance, its_major, its_minor);
+            _requested_services.insert(protocol::service_data{
+                    .service_ = its_service, .instance_ = its_instance, .major_version_ = its_major, .minor_version_ = its_minor});
             on_stop_offer_service(its_service, its_instance, its_major, its_minor, its_lock);
         }
 

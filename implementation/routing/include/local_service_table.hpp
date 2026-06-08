@@ -5,141 +5,135 @@
 
 #pragma once
 
-#include <map>
-#include <optional>
-#include <set>
-#include <tuple>
-#include <vector>
+#include "../../protocol/include/command_types.hpp"
 
 #include <vsomeip/constants.hpp>
 #include <vsomeip/primitive_types.hpp>
 
-#include "internal.hpp"
+#include <algorithm>
+#include <vector>
+#include <span>
+#include <tuple>
 
 namespace vsomeip_v3 {
 
+/**
+ * Collection of unique service + instance pairs along the first recorded major + minor version.
+ * For legacy reasons no two entries differing only in the major version are allowed.
+ **/
 class local_service_table {
-public:
-    struct entry {
-        service_t service;
-        instance_t instance;
-        major_version_t major;
-        minor_version_t minor;
-        client_t client;
+private:
+    struct less {
+        [[nodiscard]] bool operator()(protocol::service_data const& _lhs, protocol::service_data const& _rhs) const {
+            static constexpr auto tie = [](auto const& _d) { return std::tie(_d.service_, _d.instance_); };
+            return tie(_lhs) < tie(_rhs);
+        }
+    };
+    static bool similar(protocol::service_data const& _lhs, protocol::service_data const& _rhs) {
+        static constexpr auto tie = [](auto const& _d) { return std::tie(_d.service_, _d.instance_); };
+        return tie(_lhs) == tie(_rhs);
     };
 
-    void add(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, client_t _client) {
-        services_[_service][_instance] = std::make_tuple(_major, _minor, _client);
-    }
+public:
+    size_t size() const { return services_.size(); }
 
-    bool remove(service_t _service, instance_t _instance) {
-        auto found_service = services_.find(_service);
-        if (found_service == services_.end()) {
+    [[nodiscard]] bool contains(protocol::service_data const& _data) const {
+        auto it = find_service(_data);
+        if (it == services_.end()) {
             return false;
         }
-        auto found_instance = found_service->second.find(_instance);
-        if (found_instance == found_service->second.end()) {
-            return false;
-        }
-        found_service->second.erase(found_instance);
-        if (found_service->second.empty()) {
-            services_.erase(found_service);
-        }
-        return true;
+        auto itE = find_next_service(it, _data.service_);
+        it = find_instance(it, itE, _data.instance_);
+        // TODO this should be wrong as soon as one client can requests multiple major versions
+        return it != itE;
     }
 
-    client_t find_client(service_t _service, instance_t _instance) const {
-        const auto* t = find_tuple(_service, _instance);
-        return t ? std::get<2>(*t) : static_cast<client_t>(VSOMEIP_ROUTING_CLIENT);
+    void insert(protocol::service_data const& _data) {
+        auto const it = std::lower_bound(services_.begin(), services_.end(), _data, less{});
+        if (it == services_.end()) {
+            services_.push_back(_data);
+            return;
+        }
+        if (similar(_data, *it)) {
+            return;
+        }
+        services_.insert(it, _data);
     }
 
-    std::optional<entry> find_entry(service_t _service, instance_t _instance) const {
-        const auto* t = find_tuple(_service, _instance);
-        if (!t) {
-            return std::nullopt;
-        }
-        return entry{_service, _instance, std::get<0>(*t), std::get<1>(*t), std::get<2>(*t)};
-    }
-
-    std::set<client_t> find_clients(service_t _service, instance_t _instance) const {
-        std::set<client_t> clients;
-        auto found_service = services_.find(_service);
-        if (found_service == services_.end()) {
-            return clients;
-        }
-        if (_instance == ANY_INSTANCE) {
-            for (const auto& [inst, tuple] : found_service->second) {
-                clients.insert(std::get<2>(tuple));
+    void take(local_service_table& _in) {
+        services_.reserve(services_.size() + _in.services_.size());
+        auto it = services_.begin();
+        auto const itEnd = _in.services_.end();
+        for (auto itNext = _in.services_.begin(); itNext != itEnd; ++itNext) {
+            it = std::lower_bound(it, services_.end(), *itNext, less{});
+            if (it == services_.end()) {
+                services_.insert(it, itNext, itEnd);
+                _in.services_.clear();
+                return;
             }
-        } else {
-            auto found_instance = found_service->second.find(_instance);
-            if (found_instance != found_service->second.end()) {
-                clients.insert(std::get<2>(found_instance->second));
+            if (similar(*itNext, *it)) {
+                ++it;
+            } else {
+                it = services_.insert(it, *itNext);
+                ++it;
             }
         }
-        return clients;
+        _in.services_.clear();
     }
 
-    bool is_available(service_t _service, instance_t _instance, major_version_t _major) const {
-        auto found_service = services_.find(_service);
-        if (found_service == services_.end()) {
-            return false;
-        }
-        if (_instance == ANY_INSTANCE) {
+    bool remove(protocol::service_data const& _data) {
+        if (_data.service_ == ANY_SERVICE) {
+            services_.clear();
             return true;
         }
-        auto found_instance = found_service->second.find(_instance);
-        if (found_instance == found_service->second.end()) {
+        auto it = find_service(_data);
+        if (it == services_.end()) {
             return false;
         }
-        return _major == ANY_MAJOR || _major == DEFAULT_MAJOR || std::get<0>(found_instance->second) == _major;
+        auto itE = find_next_service(it, _data.service_);
+        if (_data.instance_ == ANY_INSTANCE) {
+            services_.erase(it, itE);
+            return true;
+        }
+        it = find_instance(it, itE, _data.instance_);
+        if (it == itE) {
+            return false;
+        }
+        itE = find_next_instance(it, itE, _data.instance_);
+        if (_data.major_version_ == ANY_MAJOR) {
+            services_.erase(it, itE);
+            return true;
+        }
+        it = find_major(it, itE, _data.major_version_);
+        if (it != itE) {
+            services_.erase(it);
+            return true;
+        }
+        return false;
     }
+    void clear() { services_.clear(); }
 
-    [[nodiscard]] std::vector<entry> remove_all_for_client(client_t _client) {
-        std::vector<entry> removed;
-        for (auto sit = services_.begin(); sit != services_.end();) {
-            for (auto iit = sit->second.begin(); iit != sit->second.end();) {
-                if (std::get<2>(iit->second) == _client) {
-                    removed.push_back({sit->first, iit->first, std::get<0>(iit->second), std::get<1>(iit->second), _client});
-                    iit = sit->second.erase(iit);
-                } else {
-                    ++iit;
-                }
-            }
-            if (sit->second.empty()) {
-                sit = services_.erase(sit);
-            } else {
-                ++sit;
-            }
-        }
-        return removed;
-    }
-    [[nodiscard]] std::vector<entry> clear() {
-        std::vector<entry> removed;
-        for (const auto& [service, instances] : services_) {
-            for (const auto& [instance, tuple] : instances) {
-                removed.push_back({service, instance, std::get<0>(tuple), std::get<1>(tuple), std::get<2>(tuple)});
-            }
-        }
-        services_.clear();
-        return removed;
-    }
+    std::span<protocol::service_data const> view() const { return services_; };
 
 private:
-    using instance_map_t = std::map<instance_t, std::tuple<major_version_t, minor_version_t, client_t>>;
-    std::map<service_t, instance_map_t> services_;
-
-    const std::tuple<major_version_t, minor_version_t, client_t>* find_tuple(service_t _service, instance_t _instance) const {
-        auto found_service = services_.find(_service);
-        if (found_service == services_.end()) {
-            return nullptr;
-        }
-        auto found_instance = found_service->second.find(_instance);
-        if (found_instance == found_service->second.end()) {
-            return nullptr;
-        }
-        return &found_instance->second;
+    using iterator = std::vector<protocol::service_data>::const_iterator;
+    iterator find_service(protocol::service_data const& _data) const {
+        return std::lower_bound(services_.begin(), services_.end(), _data,
+                                [](auto const& _lhs, auto const& _rhs) { return _lhs.service_ < _rhs.service_; });
     }
+    iterator find_next_service(iterator _iterator, service_t _service) const {
+        return std::find_if(_iterator, services_.end(), [&](auto const& _in) { return _service != _in.service_; });
+    };
+    static iterator find_instance(iterator _itB, iterator _itE, instance_t _instance) {
+        return std::find_if(_itB, _itE, [&](auto const& _in) { return _instance == _in.instance_; });
+    }
+    static iterator find_next_instance(iterator _itB, iterator _itE, instance_t _instance) {
+        return std::find_if(_itB, _itE, [&](auto const& _in) { return _instance != _in.instance_; });
+    }
+    static iterator find_major(iterator _itB, iterator _itE, major_version_t _version) {
+        return std::find_if(_itB, _itE, [&](auto const& _in) { return _version == _in.major_version_; });
+    }
+    std::vector<protocol::service_data> services_;
 };
 
 } // namespace vsomeip_v3

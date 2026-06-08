@@ -48,6 +48,13 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.id_, _value.version_, _value.client_, _value.length_);
     } else if constexpr (std::is_same_v<T, service_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.major_version_, _value.minor_version_);
+    } else if constexpr (std::ranges::range<T>) {
+        // covers span, vector, set, map etc..
+        uint32_t written = 0;
+        for (auto const& v : _value) {
+            written += serialize(v, _mem + written);
+        }
+        return written;
     } else if constexpr (has_header<T>) {
         if constexpr (has_payload<T>) {
             // non-trivial commands -> recurse!

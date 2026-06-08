@@ -5,12 +5,14 @@
 
 #pragma once
 
+#include <vsomeip/enumeration_types.hpp>
 #include <vsomeip/primitive_types.hpp>
 
 #include "protocol.hpp"
 
 #include <cstring>
 #include <type_traits>
+#include <span>
 
 namespace vsomeip_v3::protocol {
 
@@ -29,6 +31,7 @@ struct command_header {
 
 struct simple_command_data {
     auto operator<=>(simple_command_data const&) const = default;
+
     static simple_command_data create(id_e _id, client_t _client) { return {.header_ = command_header::create(_id, 0, _client)}; }
 
     command_header header_;
@@ -36,6 +39,8 @@ struct simple_command_data {
 
 struct service_data {
     auto operator<=>(service_data const&) const = default;
+
+    static constexpr uint32_t wire_size_{sizeof(service_t) + sizeof(instance_t) + sizeof(major_version_t) + sizeof(minor_version_t)};
 
     service_t service_;
     instance_t instance_;
@@ -46,13 +51,33 @@ struct service_data {
 struct service_command_data {
     auto operator<=>(service_command_data const&) const = default;
 
+    static service_command_data create(id_e _id, client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                       minor_version_t _minor) {
+        return {.header_ = command_header::create(_id, service_data::wire_size_, _client),
+                .payload_ = {.service_ = _service, .instance_ = _instance, .major_version_ = _major, .minor_version_ = _minor}};
+    }
+
     command_header header_;
     service_data payload_;
+};
+
+struct multiple_service_command_data {
+    static multiple_service_command_data create(id_e _id, client_t _client, std::span<service_data const> _in) {
+        return {.header_ = command_header::create(_id, static_cast<uint32_t>(_in.size()) * service_data::wire_size_, _client),
+                .payload_ = _in};
+    }
+
+    command_header header_;
+    std::span<service_data const> payload_;
 };
 
 template<typename T>
 struct single_field_command_data {
     auto operator<=>(single_field_command_data const&) const = default;
+
+    static single_field_command_data create(id_e _id, client_t _client, T const& _field) {
+        return {.header_ = command_header::create(_id, sizeof(T), _client), .payload_ = _field};
+    }
 
     command_header header_;
     T payload_;
@@ -64,24 +89,12 @@ constexpr uint32_t wire_size(command_header const&) {
 }
 
 constexpr uint32_t wire_size(service_data const&) {
-    return sizeof(service_t) + sizeof(instance_t) + sizeof(major_version_t) + sizeof(minor_version_t);
+    return service_data::wire_size_;
 }
 
 template<typename T>
 uint32_t wire_size(T const& _in) {
     return wire_size(_in.header_) + _in.header_.length_;
-}
-
-// Factory helpers
-inline service_command_data create_service_cmd(id_e _id, client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                               minor_version_t _minor) {
-    return {.header_ = command_header::create(_id, wire_size(service_data{}), _client),
-            .payload_ = {.service_ = _service, .instance_ = _instance, .major_version_ = _major, .minor_version_ = _minor}};
-}
-
-template<typename T>
-inline single_field_command_data<T> create_single_field_cmd(id_e _id, client_t _client, T const& _field) {
-    return {.header_ = command_header::create(_id, sizeof(T), _client), .payload_ = _field};
 }
 
 // Factory functions
@@ -99,24 +112,32 @@ inline simple_command_data create_suspend_cmd(client_t _client) {
 
 inline service_command_data create_offer_service_cmd(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                                      minor_version_t _minor) {
-    return create_service_cmd(id_e::OFFER_SERVICE_ID, _client, _service, _instance, _major, _minor);
+    return service_command_data::create(id_e::OFFER_SERVICE_ID, _client, _service, _instance, _major, _minor);
 }
 
 inline service_command_data create_stop_offer_service_cmd(client_t _client, service_t _service, instance_t _instance,
                                                           major_version_t _major, minor_version_t _minor) {
-    return create_service_cmd(id_e::STOP_OFFER_SERVICE_ID, _client, _service, _instance, _major, _minor);
+    return service_command_data::create(id_e::STOP_OFFER_SERVICE_ID, _client, _service, _instance, _major, _minor);
 }
 
 inline auto create_offered_services_request_cmd(client_t _client, offer_type_e _offer_type) {
-    return create_single_field_cmd(id_e::OFFERED_SERVICES_REQUEST_ID, _client, _offer_type);
+    return single_field_command_data<offer_type_e>::create(id_e::OFFERED_SERVICES_REQUEST_ID, _client, _offer_type);
 }
 
 inline auto create_resend_provided_events_cmd(client_t _client, pending_remote_offer_id_t _id) {
-    return create_single_field_cmd(id_e::RESEND_PROVIDED_EVENTS_ID, _client, _id);
+    return single_field_command_data<pending_remote_offer_id_t>::create(id_e::RESEND_PROVIDED_EVENTS_ID, _client, _id);
 }
 
 inline auto create_assign_client_ack_cmd(client_t _client, client_t _assigned_id) {
-    return create_single_field_cmd(id_e::ASSIGN_CLIENT_ACK_ID, _client, _assigned_id);
+    return single_field_command_data<client_t>::create(id_e::ASSIGN_CLIENT_ACK_ID, _client, _assigned_id);
+}
+
+inline auto create_request_service_cmd(client_t _client, std::span<service_data const> _data) {
+    return multiple_service_command_data::create(id_e::REQUEST_SERVICE_ID, _client, std::move(_data));
+}
+
+inline auto create_offered_services_response_cmd(client_t _client, std::span<service_data const> _data) {
+    return multiple_service_command_data::create(id_e::OFFERED_SERVICES_RESPONSE_ID, _client, std::move(_data));
 }
 
 } // namespace vsomeip_v3::protocol
