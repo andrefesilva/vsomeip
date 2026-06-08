@@ -19,7 +19,7 @@
 #include "routing_host.hpp"
 #include "eventgroupinfo.hpp"
 #include "routing_manager_host.hpp"
-#include "local_service_table.hpp"
+#include "local_offering_table.hpp"
 
 #include "../../message/include/serializer.hpp"
 #include "../../message/include/deserializer.hpp"

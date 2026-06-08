@@ -17,6 +17,7 @@
 #include <vsomeip/structured_types.hpp>
 
 #include "logger_ext.hpp"
+#include "../include/local_service_table.hpp"
 #include "../include/routing_manager_stub.hpp"
 #include "../include/routing_manager_stub_host.hpp"
 #include "../include/remote_subscription.hpp"
@@ -29,13 +30,11 @@
 #include "../../protocol/include/expire_command.hpp"
 #include "../../protocol/include/logging.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
-#include "../../protocol/include/offered_services_response_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/release_service_command.hpp"
 #include "../../protocol/include/remove_security_policy_command.hpp"
 #include "../../protocol/include/remove_security_policy_response_command.hpp"
-#include "../../protocol/include/request_service_command.hpp"
 #include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
@@ -414,14 +413,11 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::REQUEST_SERVICE_ID: {
-        protocol::request_service_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
-            its_client = its_command.get_client();
-            auto its_requests = its_command.get_services();
+        if (std::vector<protocol::service_data> its_services;
+            protocol::deserialize(its_services, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
             std::set<protocol::service> its_allowed_requests;
-            for (const auto& r : its_requests) {
+            for (const auto& r : its_services) {
                 if (VSOMEIP_SEC_OK
                     == configuration_->get_security()->is_client_allowed_to_request(&_peer_data.sec_client_, r.service_, r.instance_)) {
                     if (has_client_requested(its_client, r.service_, r.instance_)) {
@@ -431,8 +427,8 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
                             continue;
                         }
                     }
-                    host_->request_service(its_client, r.service_, r.instance_, r.major_, r.minor_);
-                    its_allowed_requests.insert(r);
+                    host_->request_service(its_client, r.service_, r.instance_, r.major_version_, r.minor_version_);
+                    its_allowed_requests.insert(protocol::service(r.service_, r.instance_, r.major_version_, r.minor_version_));
                 } else {
                     VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " received a request from client 0x"
                                     << hex4(its_client) << " to service/instance " << hex4(r.service_) << "/" << hex4(r.instance_)
@@ -445,7 +441,7 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
 
             handle_requests(its_client, its_allowed_requests);
         } else
-            VSOMEIP_ERROR_P << "Request service deserialization failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Request service deserialization failed, memory: " << utility::dump(_data, _size);
 
         break;
     }
@@ -588,8 +584,7 @@ void routing_manager_stub::on_deregister_application(client_t _client) {
 
 void routing_manager_stub::on_offered_service_request(client_t _client, offer_type_e _offer_type) {
 
-    protocol::offered_services_response_command its_command;
-    its_command.set_client(_client);
+    local_service_table table;
 
     std::scoped_lock its_guard{routing_info_mutex_};
     for (const auto& found_client : routing_info_) {
@@ -603,18 +598,16 @@ void routing_manager_stub::on_offered_service_request(client_t _client, offer_ty
                 if (_offer_type == offer_type_e::OT_ALL || (_offer_type == offer_type_e::OT_LOCAL && !has_port)
                     || (_offer_type == offer_type_e::OT_REMOTE && has_port)) {
 
-                    protocol::service its_service(si.service(), si.instance(), version.first, version.second);
-                    its_command.add_service(its_service);
+                    table.insert(protocol::service_data{.service_ = si.service(),
+                                                        .instance_ = si.instance(),
+                                                        .major_version_ = version.first,
+                                                        .minor_version_ = version.second});
                 }
             }
         }
     }
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
     if (auto its_endpoint = find_local_routing_endpoint(_client); its_endpoint) {
-        send_local(its_endpoint, its_buffer);
+        its_endpoint->send(protocol::create_offered_services_response_cmd(_client, table.view()));
     } else {
         VSOMEIP_ERROR_P << "Failed for client 0x" << hex4(_client) << ", as no routing connection was given";
     }

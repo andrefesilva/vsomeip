@@ -644,6 +644,7 @@ std::string const& local_endpoint::name() const {
 }
 
 template bool local_endpoint::send<protocol::service_command_data>(protocol::service_command_data const&);
+template bool local_endpoint::send<protocol::multiple_service_command_data>(protocol::multiple_service_command_data const&);
 template bool local_endpoint::send<protocol::simple_command_data>(protocol::simple_command_data const&);
 template bool
 local_endpoint::send<protocol::single_field_command_data<offer_type_e>>(protocol::single_field_command_data<offer_type_e> const&);

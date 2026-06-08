@@ -414,7 +414,7 @@ private:
     std::atomic<routing_state_e> routing_state_;
 
     mutable std::mutex services_state_mutex_;
-    local_service_table local_services_table_;
+    local_offering_table local_services_table_;
 
     // map to store pending offers.
     // 1st client id in tuple: client id of new offering application

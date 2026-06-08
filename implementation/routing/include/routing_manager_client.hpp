@@ -18,6 +18,7 @@
 #include <vsomeip/primitive_types.hpp>
 
 #include "routing_manager_base.hpp"
+#include "local_service_table.hpp"
 #include "event_dispatcher.hpp"
 #include "types.hpp"
 #include "../../protocol/include/protocol.hpp"
@@ -98,7 +99,7 @@ public:
     bool get_connection_param(client_t _client, boost::asio::ip::address& _address, port_t& _port) override;
     void register_error_handler(client_t _client, std::shared_ptr<local_endpoint> _ep) override;
 
-    void on_offered_services_info(protocol::offered_services_response_command& _command);
+    void on_offered_services_info(std::vector<protocol::service_data> const& _services);
 
     void send_get_offered_services_info(client_t _client, offer_type_e _offer_type);
     bool send(client_t _client, std::shared_ptr<message> _message, bool _force);
@@ -185,7 +186,7 @@ private:
 
     void request_debounce_timeout_cbk(boost::system::error_code const& _error);
 
-    bool send_request_services(const std::set<protocol::service>& _requests);
+    bool send_request_services(std::span<protocol::service_data const> _requests);
 
     void send_unsubscribe_ack(service_t _service, instance_t _instance, eventgroup_t _eventgroup, remote_subscription_id_t _id);
 
@@ -224,7 +225,7 @@ private:
     /// @param _due_to_error, true in case of error
     /// @param _client what client
     /// @param _requested_services what services were requested by us and offered by client;
-    void remove_local(bool _due_to_error, client_t _client, std::set<protocol::service>& _requested_services);
+    void remove_local(bool _due_to_error, client_t _client, local_service_table& _requested_services);
 
     void cleanup_routing_data();
     void cleanup_subscriber(std::scoped_lock<std::mutex> const& _provider_lock);
@@ -359,10 +360,10 @@ private:
     bool request_debounce_timer_running_;
     boost::asio::steady_timer request_debounce_timer_;
 
-    std::set<protocol::service> requests_;
-    std::set<protocol::service> requests_to_debounce_;
+    local_service_table requests_;
+    local_service_table requests_to_debounce_;
     std::map<client_t, std::pair<boost::asio::ip::address, port_t>> address_table_;
-    local_service_table available_services_;
+    local_offering_table available_services_;
     service_instance_map<std::set<client_t>> available_services_history_;
     service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> consumed_events_;
     eventgroups_t consumed_eventgroups_;

@@ -10,7 +10,8 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class offered_services_response_command : public multiple_services_command_base {
+class [[deprecated("offered_services_response_command is deprecated")]] offered_services_response_command
+    : public multiple_services_command_base {
 public:
     offered_services_response_command();
 };
