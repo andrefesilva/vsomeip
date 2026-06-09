@@ -138,7 +138,6 @@ This code snippet was taken from `vsomeip-lib/implementation/routing/src/routing
 
 ```c++
 void routing_manager_impl::init() {
-    routing_manager_base::init(ep_mgr_impl_);
     if (configuration_->is_routing_enabled()) {
         stub_ = std::make_shared<routing_manager_stub>(this, configuration_);
         stub_->init();
@@ -172,7 +171,6 @@ void routing_manager_impl::init() {
 ```c++
 void routing_manager_impl::init()
 {
-    routing_manager_base::init(ep_mgr_impl_);
     // Bad Practice: Inconsistent indentation and brace placement.
     if (configuration_-> is_routing_enabled())
     {

@@ -23,7 +23,6 @@
 #include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/logging.hpp"
 #include "../../protocol/include/command_types.hpp"
-#include "../../routing/include/routing_manager_base.hpp"
 #include "../../routing/include/routing_manager_impl.hpp"
 #include "../../routing/include/routing_host.hpp"
 #include "../../utility/include/utility.hpp"

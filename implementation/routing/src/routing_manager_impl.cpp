@@ -70,13 +70,24 @@ runtime::~runtime() { }
 #endif
 
 routing_manager_impl::routing_manager_impl(routing_manager_host* _host) :
-    routing_manager_base(_host), version_log_timer_(_host->get_io()), if_state_running_(false), sd_route_set_(false),
+    host_(_host), io_(host_->get_io()), configuration_(host_->get_configuration()), env_([] {
+        char h[1024];
+        return gethostname(h, sizeof(h)) == 0 ? std::string(h) : std::string{};
+    }()),
+    tc_(trace::connector_impl::get()), version_log_timer_(_host->get_io()), if_state_running_(false), sd_route_set_(false),
     routing_running_(false), routing_state_(configuration_->get_initial_routing_state()), status_log_timer_(_host->get_io()),
     memory_log_timer_(_host->get_io()), ep_mgr_impl_(std::make_shared<endpoint_manager_impl>(this, io_, configuration_)),
     pending_remote_offer_id_(0), last_resume_(std::chrono::steady_clock::time_point::min()), statistics_log_timer_(_host->get_io()),
     ignored_statistics_counter_(0), stop_offer_graceful_timer_{_host->get_io()} {
 
     VSOMEIP_INFO << "Starting Routing Manager [Host] with state " << routing_state_tostring(routing_state_);
+    const std::size_t its_max = configuration_->get_io_thread_count(host_->get_name());
+    const uint32_t its_buffer_shrink_threshold = configuration_->get_buffer_shrink_threshold();
+
+    for (std::size_t i = 0; i < its_max; ++i) {
+        serializers_.push(std::make_shared<serializer>(its_buffer_shrink_threshold));
+        deserializers_.push(std::make_shared<deserializer>(its_buffer_shrink_threshold));
+    }
 }
 
 routing_manager_impl::~routing_manager_impl() {
@@ -85,7 +96,7 @@ routing_manager_impl::~routing_manager_impl() {
 }
 
 boost::asio::io_context& routing_manager_impl::get_io() {
-    return routing_manager_base::get_io();
+    return io_;
 }
 
 client_t routing_manager_impl::get_client() const {
@@ -93,16 +104,19 @@ client_t routing_manager_impl::get_client() const {
 }
 
 vsomeip_sec_client_t routing_manager_impl::get_sec_client() const {
+    return host_->get_sec_client();
+}
 
-    return routing_manager_base::get_sec_client();
+void routing_manager_impl::set_sec_client_port(port_t _port) {
+    host_->set_sec_client_port(_port);
 }
 
 std::string routing_manager_impl::get_client_host() const {
-    return routing_manager_base::get_client_host();
+    return env_;
 }
 
-void routing_manager_impl::set_client_host(const std::string& _client_host) {
-    routing_manager_base::set_client_host(_client_host);
+std::string const& routing_manager_impl::get_name() const {
+    return host_->get_name();
 }
 
 std::set<client_t> routing_manager_impl::find_local_clients(service_t _service, instance_t _instance) {
@@ -354,8 +368,6 @@ void routing_manager_impl::request_service(client_t _client, service_t _service,
     VSOMEIP_INFO << "REQUEST(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":" << int(_major) << "." << _minor
                  << "]";
 
-    routing_manager_base::request_service(_client, _service, _instance, _major, _minor);
-
     auto its_info = find_service(_service, _instance);
     if (!its_info) {
         add_requested_service(_client, _service, _instance, _major, _minor);
@@ -370,15 +382,19 @@ void routing_manager_impl::request_service(client_t _client, service_t _service,
         }
     } else {
         if (_major == its_info->get_major() || DEFAULT_MAJOR == its_info->get_major() || ANY_MAJOR == _major) {
+            its_info->add_client(_client);
             if (!its_info->is_local()) {
                 add_requested_service(_client, _service, _instance, _major, _minor);
                 if (discovery_) {
                     // Non local service instance ~> tell SD to find it!
                     discovery_->request_service(_service, _instance, _major, _minor, DEFAULT_TTL);
                 }
-                its_info->add_client(_client);
                 ep_mgr_impl_->find_or_create_remote_client(_service, _instance);
             }
+        } else {
+            VSOMEIP_ERROR_P << "Service property mismatch (" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":"
+                            << static_cast<std::uint32_t>(its_info->get_major()) << "." << its_info->get_minor()
+                            << "] passed: " << static_cast<std::uint32_t>(_major) << ":" << _minor;
         }
     }
 }
@@ -387,11 +403,13 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
 
     VSOMEIP_INFO << "RELEASE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "]";
 
-    routing_manager_base::release_service(_client, _service, _instance);
+    std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance));
+    if (its_info) {
+        its_info->remove_client(_client);
+    }
     remove_requested_service(_client, _service, _instance, ANY_MAJOR, ANY_MINOR);
     remove_pending_requests(pending_request_removal_type_e::REQUESTING_ONLY, _client, _service, _instance);
 
-    std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance));
     if (its_info && !its_info->is_local()) {
         if (0 == its_info->get_requesters_size()) {
             auto its_eventgroups = find_eventgroups(_service, _instance);
@@ -841,6 +859,24 @@ bool routing_manager_impl::send_via_sd(const std::shared_ptr<endpoint_definition
         }
     }
     return is_sent;
+}
+
+bool routing_manager_impl::send_local(std::shared_ptr<local_endpoint>& _target, client_t _client, const byte_t* _data, uint32_t _size,
+                                      instance_t _instance, bool _reliable, protocol::id_e _command, uint8_t _status_check,
+                                      client_t _sender) const {
+
+    protocol::send_command its_command(_command);
+    its_command.set_client(_sender);
+    its_command.set_instance(_instance);
+    its_command.set_reliable(_reliable);
+    its_command.set_status(_status_check);
+    its_command.set_target(_client);
+    its_command.set_message(std::vector<byte_t>(_data, _data + _size));
+
+    std::vector<byte_t> its_buffer;
+    its_command.serialize(its_buffer);
+
+    return _target->send(&its_buffer[0], uint32_t(its_buffer.size()));
 }
 
 void routing_manager_impl::register_shadow_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
@@ -2377,12 +2413,12 @@ void routing_manager_impl::version_log_timer_cbk(boost::system::error_code const
 
         if (_count % 3) {
             // log only external connections, UDP+TCP
-            log_network_state(false, true);
-            log_network_state(true, true);
+            utility::log_network_state(configuration_, false, true);
+            utility::log_network_state(configuration_, true, true);
         } else {
             // log all connections, UDP+TCP
-            log_network_state(false, false);
-            log_network_state(true, false);
+            utility::log_network_state(configuration_, false, false);
+            utility::log_network_state(configuration_, true, false);
         }
 
         {
@@ -3216,7 +3252,6 @@ void routing_manager_impl::handle_subscription_state(client_t _client, service_t
                                                      event_t _event) {
     // Note: event_registration_mutex_ is already locked as this
     // method builds a critical section together with insert_subscription
-    // from routing_manager_base.
     // Todo: Improve this situation...
     auto its_event = find_event(_service, _instance, _event);
     client_t its_client(VSOMEIP_ROUTING_CLIENT);
@@ -4471,5 +4506,25 @@ void routing_manager_impl::offer_remote_service(service_t _service, instance_t _
             discovery_->offer_service(its_info);
         }
     }
+}
+
+std::shared_ptr<serializer> routing_manager_impl::get_serializer() {
+    std::unique_lock its_lock(serializer_mutex_);
+    while (serializers_.empty()) {
+        VSOMEIP_INFO_P << "Client 0x" << hex4(get_client()) << " has no available serializer. Waiting...";
+        serializer_condition_.wait(its_lock, [this] { return !serializers_.empty(); });
+        VSOMEIP_INFO_P << ": Client 0x" << hex4(get_client()) << " now checking for available serializer.";
+    }
+
+    auto its_serializer = serializers_.front();
+    serializers_.pop();
+
+    return its_serializer;
+}
+
+void routing_manager_impl::put_serializer(const std::shared_ptr<serializer>& _serializer) {
+    std::scoped_lock its_lock(serializer_mutex_);
+    serializers_.push(_serializer);
+    serializer_condition_.notify_one();
 }
 } // namespace vsomeip_v3

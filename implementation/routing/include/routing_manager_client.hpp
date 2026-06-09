@@ -10,6 +10,18 @@
 #include <atomic>
 #include <tuple>
 #include <condition_variable>
+#include <queue>
+#include <unordered_set>
+
+#include <vsomeip/constants.hpp>
+#include <vsomeip/vsomeip_sec.h>
+
+#include "event.hpp"
+#include "serviceinfo.hpp"
+#include "routing_host.hpp"
+#include "eventgroupinfo.hpp"
+#include "routing_manager_host.hpp"
+#include "local_service_table.hpp"
 
 #include <boost/asio/steady_timer.hpp>
 
@@ -17,14 +29,21 @@
 #include <vsomeip/handler.hpp>
 #include <vsomeip/primitive_types.hpp>
 
-#include "routing_manager_base.hpp"
 #include "local_service_table.hpp"
+#include "local_offering_table.hpp"
 #include "event_dispatcher.hpp"
 #include "types.hpp"
 #include "../../protocol/include/protocol.hpp"
 #include "../../endpoints/include/local_endpoint_manager_host.hpp"
+#include "../../utility/include/service_instance_map.hpp"
+#include "../../endpoints/include/endpoint_manager_base.hpp"
+#include "../../tracing/include/connector_impl.hpp"
 
 namespace vsomeip_v3 {
+
+namespace trace {
+class connector_impl;
+} // namespace trace
 
 class configuration;
 class event;
@@ -38,8 +57,7 @@ class offered_services_response_command;
 class update_security_credentials_command;
 }
 
-class routing_manager_client : public routing_manager_base,
-                               public local_endpoint_manager_host,
+class routing_manager_client : public local_endpoint_manager_host,
                                public event_dispatcher,
                                public routing_host,
                                public std::enable_shared_from_this<routing_manager_client> {
@@ -106,7 +124,7 @@ public:
     bool is_available(service_t _service, instance_t _instance, major_version_t _major) const;
 
     // that this function is provided to the application_impl feels pretty strange
-    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance) const override;
+    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance) const;
     std::set<std::shared_ptr<event>> find_consumed_events(service_t _service, instance_t _instance, eventgroup_t _eventgroup) const;
     void notify_one(service_t _service, instance_t _instance, event_t _event, std::shared_ptr<payload> _payload, client_t _client,
                     bool _force);
@@ -121,7 +139,19 @@ public:
     std::shared_ptr<event> find_provided_event(service_t _service, instance_t _instance, event_t _event) const;
     std::shared_ptr<event> find_consumed_event(service_t _service, instance_t _instance, event_t _event) const;
 
+    std::string const& get_name() const;
+    std::string get_client_host() const;
+    vsomeip_sec_client_t get_sec_client() const;
+    void set_sec_client_port(port_t _port);
+
 private:
+    bool send_local(std::shared_ptr<local_endpoint>& _target, client_t _client, const byte_t* _data, uint32_t _size, instance_t _instance,
+                    bool _reliable, protocol::id_e _command, uint8_t _status_check, client_t _sender) const;
+    std::shared_ptr<serializer> get_serializer();
+    void put_serializer(const std::shared_ptr<serializer>& _serializer);
+    std::shared_ptr<deserializer> get_deserializer();
+    void put_deserializer(const std::shared_ptr<deserializer>& _deserializer);
+
     void unregister_event_base(client_t _client, service_t _service, instance_t _instance, event_t _event, bool _is_provided);
 
     std::shared_ptr<event> find_provided_event(service_t _service, instance_t _instance, event_t _event,
@@ -133,7 +163,7 @@ private:
 
     client_t get_client_by_address(const boost::asio::ip::address& _address, port_t _port) const;
 
-    [[nodiscard]] bool is_local_client(client_t _client) const override;
+    [[nodiscard]] bool is_local_client(client_t _client) const;
 
     void register_application(client_t _client);
 
@@ -266,8 +296,7 @@ private:
     // event_dispatcher iface
     session_t get_event_session() override;
 
-    bool send_event_to(const client_t _client, const std::shared_ptr<endpoint_definition>& _target,
-                       std::shared_ptr<message> _message) override;
+    bool send_event_to(const client_t _client, const std::shared_ptr<endpoint_definition>& _target, std::shared_ptr<message> _message);
 
     // routing_host
     client_t get_client() const override;
@@ -285,6 +314,23 @@ private:
                                                     eventgroup_t _eventgroup, std::scoped_lock<std::mutex> const&) const;
 
 private:
+    routing_manager_host* host_;
+    boost::asio::io_context& io_;
+
+    std::shared_ptr<configuration> configuration_;
+
+    std::queue<std::shared_ptr<serializer>> serializers_;
+    std::mutex serializer_mutex_;
+    std::condition_variable serializer_condition_;
+
+    std::queue<std::shared_ptr<deserializer>> deserializers_;
+    std::mutex deserializer_mutex_;
+    std::condition_variable deserializer_condition_;
+
+    const std::string env_;
+
+    std::shared_ptr<trace::connector_impl> tc_;
+
     std::mutex log_timer_mutex_;
     boost::asio::steady_timer status_log_timer_;
     boost::asio::steady_timer version_log_timer_;
