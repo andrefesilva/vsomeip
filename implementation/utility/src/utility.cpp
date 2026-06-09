@@ -415,4 +415,81 @@ std::uint16_t utility::get_max_client_number(const std::shared_ptr<configuration
     return its_max_clients;
 }
 
+void utility::log_network_state(const std::shared_ptr<configuration>& _configuration, bool _tcp, bool _only_external) {
+#ifndef __linux__
+    (void)_tcp;
+    (void)_only_external;
+#else
+    const std::string filename = _tcp ? "/proc/net/tcp" : "/proc/net/udp";
+
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        VSOMEIP_ERROR_P << "Could not open " << filename << " for reading";
+        return;
+    }
+
+    std::string line;
+    // skip header line
+    if (!std::getline(file, line)) {
+        VSOMEIP_ERROR_P << "Failed to read header from " << filename;
+        return;
+    }
+
+    if (file.peek() == std::ifstream::traits_type::eof()) {
+        return;
+    }
+
+    // compute external address in hex, same format as /proc/net/tcp
+    // e.g., 127.0.0.1 => 0100007F
+    auto external_addr = _configuration->get_unicast_address();
+    std::ostringstream external_addr_stream;
+    external_addr_stream << std::uppercase << std::hex << std::setfill('0') << std::setw(8)
+                         << (external_addr.is_v4() ? htonl(external_addr.to_v4().to_uint()) : 0);
+    std::string external_addr_hex = external_addr_stream.str();
+
+    VSOMEIP_INFO_P << (_tcp ? "TCP" : "UDP") << " connections";
+    VSOMEIP_INFO << "idx, local_addr, remote_addr, state, tx_queue:rx_queue, timer_active:tm_when, retrnsmt, uid, unanswered, inode";
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        std::string idx, local_addr, remote_addr, state, tx_rx_queue, timer, retrnsmt, uid, unanswered, inode;
+
+        // see https://www.kernel.org/doc/Documentation/networking/proc_net_tcp.txt
+        // NOTE: there are more fields (especially in /proc/net/udp), but we do not care about these
+        if (!(iss >> idx >> local_addr >> remote_addr >> state >> tx_rx_queue >> timer >> retrnsmt >> uid >> unanswered >> inode)) {
+            VSOMEIP_ERROR_P << "Failed to parse line: " << line;
+            continue;
+        }
+
+        if (_only_external && local_addr.substr(0, external_addr_hex.length()) != external_addr_hex) {
+            continue;
+        }
+
+        // parse local_addr/remote_addr, e.g., 0100007F:7424 to 127.0.0.1:29732
+        try {
+            std::string local_ip = local_addr.substr(0, 8);
+            std::string local_port = local_addr.substr(9, 4);
+            std::string remote_ip = remote_addr.substr(0, 8);
+            std::string remote_port = remote_addr.substr(9, 4);
+
+            // convert hex to decimal
+            unsigned int local_ip_int = htonl(static_cast<unsigned int>(std::stoul(local_ip, nullptr, 16)));
+            unsigned int remote_ip_int = htonl(static_cast<unsigned int>(std::stoul(remote_ip, nullptr, 16)));
+            auto local_port_int = static_cast<unsigned int>(std::stoul(local_port, nullptr, 16));
+            auto remote_port_int = static_cast<unsigned int>(std::stoul(remote_port, nullptr, 16));
+
+            // convert to dotted-decimal notation
+            local_addr = boost::asio::ip::address_v4(local_ip_int).to_string() + ":" + std::to_string(local_port_int);
+            remote_addr = boost::asio::ip::address_v4(remote_ip_int).to_string() + ":" + std::to_string(remote_port_int);
+        } catch (...) {
+            // leave the old local_addr/remote_addr
+        }
+
+        // use the same format as /proc/net/tcp
+        // especially with local TCP communication, there will be *MANY* connections, and the hex encoding does make the logs smaller
+        VSOMEIP_INFO << idx << " " << local_addr << " " << remote_addr << " " << state << " " << tx_rx_queue << " " << timer << " "
+                     << retrnsmt << " " << uid << " " << unanswered << " " << inode;
+    }
+#endif
+}
+
 } // namespace vsomeip_v3

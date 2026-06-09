@@ -17,7 +17,6 @@
 #include "../../configuration/include/configuration.hpp"
 #include "../../protocol/include/assign_client_command.hpp"
 #include "../../protocol/include/config_command.hpp"
-#include "../../routing/include/routing_manager_base.hpp"
 #include "../../utility/include/utility.hpp"
 
 #include <iomanip>

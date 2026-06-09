@@ -20,11 +20,19 @@
 #include <vsomeip/primitive_types.hpp>
 #include <vsomeip/handler.hpp>
 
+#include "../../protocol/include/protocol.hpp"
+#include "../../protocol/include/send_command.hpp"
+#include "../../configuration/include/configuration.hpp"
+#include "../../configuration/include/debounce_filter_impl.hpp"
+
 #include "boardnet_routing_host.hpp"
-#include "routing_manager_base.hpp"
 #include "routing_manager_stub_host.hpp"
+#include "event.hpp"
 #include "types.hpp"
 #include "event_dispatcher.hpp"
+#include "local_service_table.hpp"
+#include "local_offering_table.hpp"
+#include "serviceinfo.hpp"
 
 #include "../../endpoints/include/abstract_netlink_connector.hpp"
 #include "../../service_discovery/include/service_discovery_host.hpp"
@@ -32,6 +40,10 @@
 #include "../../endpoints/include/local_endpoint.hpp"
 
 namespace vsomeip_v3 {
+
+namespace trace {
+class connector_impl;
+} // namespace trace
 
 class configuration;
 class deserializer;
@@ -49,8 +61,7 @@ namespace e2e {
 class e2e_provider;
 } // namespace e2e
 
-class routing_manager_impl : public routing_manager_base,
-                             public boardnet_routing_host,
+class routing_manager_impl : public boardnet_routing_host,
                              public routing_manager_stub_host,
                              public sd::service_discovery_host,
                              public event_dispatcher,
@@ -62,8 +73,9 @@ public:
     boost::asio::io_context& get_io();
     client_t get_client() const;
     vsomeip_sec_client_t get_sec_client() const;
+    void set_sec_client_port(port_t _port);
     std::string get_client_host() const;
-    void set_client_host(const std::string& _client_host);
+    std::string const& get_name() const;
 
     void init();
     void start();
@@ -85,8 +97,9 @@ public:
 
     bool send_notification(client_t _client, std::shared_ptr<message> _message, bool _force);
 
-    bool send(client_t _client, const byte_t* _data, uint32_t _size, instance_t _instance, bool _reliable, client_t _bound_client,
-              const vsomeip_sec_client_t* _sec_client, uint8_t _status_check, bool _sent_from_remote, bool _force);
+    bool send(client_t _client, const byte_t* _data, uint32_t _size, instance_t _instance, bool _reliable,
+              client_t _bound_client = VSOMEIP_ROUTING_CLIENT, const vsomeip_sec_client_t* _sec_client = nullptr, uint8_t _status_check = 0,
+              bool _sent_from_remote = false, bool _force = true);
 
     bool send_to(const client_t _client, const std::shared_ptr<endpoint_definition>& _target, std::shared_ptr<message> _message);
 
@@ -216,7 +229,7 @@ public:
                                  instance_t _instance = ANY_INSTANCE);
 
     // endpoint_manager_impl requires this to be accessible
-    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance) const override;
+    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance) const;
     bool offer_service_base(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
     std::shared_ptr<serviceinfo> create_service_info(service_t _service, instance_t _instance, major_version_t _major,
                                                      minor_version_t _minor, ttl_t _ttl, bool _is_local_service);
@@ -243,11 +256,14 @@ public:
 private:
     bool is_locally_available(service_t _service, instance_t _instance, major_version_t _major) const;
 
-    [[nodiscard]] bool is_local_client(client_t _client) const override;
+    [[nodiscard]] bool is_local_client(client_t _client) const;
 
     void deliver_notification(service_t _service, instance_t _instance, const byte_t* _data, length_t _length, bool _reliable,
                               client_t _bound_client, const vsomeip_sec_client_t* _sec_client, uint8_t _status_check = 0,
                               bool _is_from_remote = false);
+
+    bool send_local(std::shared_ptr<local_endpoint>& _target, client_t _client, const byte_t* _data, uint32_t _size, instance_t _instance,
+                    bool _reliable, protocol::id_e _command, uint8_t _status_check, client_t _sender) const;
 
     bool is_suppress_event(service_t _service, instance_t _instance, event_t _event) const;
 
@@ -380,7 +396,27 @@ private:
 
     void offer_remote_service(service_t _service, instance_t _instance, bool _external_routing_ready);
 
+    std::shared_ptr<serializer> get_serializer();
+    void put_serializer(const std::shared_ptr<serializer>& _serializer);
+
 private:
+    routing_manager_host* host_;
+    boost::asio::io_context& io_;
+
+    std::shared_ptr<configuration> configuration_;
+
+    std::queue<std::shared_ptr<serializer>> serializers_;
+    std::mutex serializer_mutex_;
+    std::condition_variable serializer_condition_;
+
+    std::queue<std::shared_ptr<deserializer>> deserializers_;
+    std::mutex deserializer_mutex_;
+    std::condition_variable deserializer_condition_;
+
+    const std::string env_;
+
+    std::shared_ptr<trace::connector_impl> tc_;
+
     std::shared_ptr<routing_manager_stub> stub_;
     std::shared_ptr<sd::service_discovery> discovery_;
 
