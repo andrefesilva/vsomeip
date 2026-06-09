@@ -1,0 +1,80 @@
+#!/bin/bash
+# Copyright (C) 2014-2026 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Shared test helper functions (assertions, socket checks, etc.)
+# Source this file from test starter scripts that need these utilities.
+
+# Parameter 1: the pid to check (used to access /proc/<pid>/net/{tcp,udp})
+# Parameter 2..N: port numbers (decimal) that must be open (TCP LISTEN or UDP bound)
+check_tcp_udp_sockets_are_open() {
+    # Check that specific ports are in LISTEN (TCP, state 0A) or bound (UDP, state 07).
+    # /proc/<pid>/net/{tcp,udp} shows all sockets in the network namespace, so we
+    # must filter by the specific local port to avoid false positives from other
+    # listeners (e.g. sshd) in the same namespace.
+
+    local PID=$1
+    shift
+    local -a PORTS=("$@")
+    local MAX_ATTEMPTS=12 # 12 attempts * 250ms = 3000ms = 3 seconds
+    local ATTEMPT=0
+    local ALL_OPEN=false
+
+    while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+        ALL_OPEN=true
+        for PORT in "${PORTS[@]}"; do
+            local HEX_PORT
+            HEX_PORT=$(printf "%04X" "$PORT")
+            # Check TCP LISTEN (state 0A) or UDP bound (state 07) for this specific port
+            if ! cat /proc/$PID/net/tcp /proc/$PID/net/udp 2>/dev/null | awk -v hp=":${HEX_PORT}" 'NR>1 && ($2 ~ hp"$") && ($4 == "0A" || $4 == "07")' | grep -q .; then
+                ALL_OPEN=false
+                break
+            fi
+        done
+
+        if [ "$ALL_OPEN" = true ]; then
+            break
+        fi
+
+        ((ATTEMPT += 1))
+        sleep 0.25
+    done
+
+    if [ "$ALL_OPEN" = false ]; then
+        echo "ERROR: Not all ports open after 3 seconds for PID $PID (expected: ${PORTS[*]})"
+        ((FAIL += 1))
+    fi
+}
+
+# Parameter 1: the pid to check
+# Asserts that the given process does not own any TCP/UDP sockets (neither
+# listening nor connected). Used to verify that a process communicates only
+# via local (UDS) transport.
+check_tcp_udp_sockets_are_closed() {
+    local PID=$1
+
+    # Use /proc/<pid>/net/{tcp,udp} filtered to sockets actually owned by this
+    # PID via its file descriptors. We resolve the inode from /proc/<pid>/fd and
+    # match against the inode column (field 10) in /proc/net/{tcp,udp}.
+    local INODES
+    INODES=$(find /proc/$PID/fd -lname 'socket:*' 2>/dev/null | xargs -r readlink 2>/dev/null | grep -oP '\d+')
+
+    if [ -z "$INODES" ]; then
+        return
+    fi
+
+    # Build a lookup of this process's socket inodes
+    local INODE_PATTERN
+    INODE_PATTERN=$(echo "$INODES" | paste -sd'|')
+
+    # Check TCP and UDP for any socket owned by this process (any state)
+    local COUNT
+    COUNT=$(cat /proc/$PID/net/tcp /proc/$PID/net/udp 2>/dev/null | awk -v pat="$INODE_PATTERN" 'NR>1 && $10 ~ "^("pat")$"' | wc -l)
+
+    if [ "$COUNT" -ne 0 ]; then
+        echo "ERROR: Process $PID has $COUNT open TCP/UDP socket(s), expected none"
+        ((FAIL += 1))
+    fi
+}
