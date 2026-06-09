@@ -8,6 +8,9 @@ SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 if ! source $SCRIPT_DIRECTORY/../setup_test.sh; then
     exit 1
 fi
+if ! source $SCRIPT_DIRECTORY/../test_helpers.sh; then
+    exit 1
+fi
 
 # Purpose: This script is needed to start the client and service with
 # one command. This is necessary as ctest - which is used to run the
@@ -18,66 +21,14 @@ fi
 # Initialize error tracking
 FAIL=0
 
-# Parameter 1: the pid to check
-# Parameter 2: number of TCP/UDP sockets the process should have open
-check_tcp_udp_sockets_are_open ()
-{
-    local MAX_ATTEMPTS=12  # 12 attempts * 250ms = 3000ms = 3 seconds
-    local ATTEMPT=0
-    local SOCKETS_OPEN=false
-
-    # Check that the passed pid/process does listen on at least one TCP/UDP socket
-    # awk is used to avoid the case when a inode number is the same as a PID. The awk
-    # program filters the netstat output down to the protocol (1st field) and
-    # the PID/Program name (last field) fields.
-
-    while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-        SERVICE_SOCKETS_LISTENING=$(cat /proc/$1/net/udp /proc/$1/net/tcp 2>/dev/null | awk 'NR>1 && $4 == "0A"' | wc -l)
-
-        if [ $SERVICE_SOCKETS_LISTENING -ge $2 ]; then
-            SOCKETS_OPEN=true
-            break
-        fi
-
-        ((ATTEMPT+=1))
-        sleep 0.25
-    done
-
-    if [ "$SOCKETS_OPEN" = false ]; then
-        echo "ERROR: Sockets not open after 2 seconds for PID $1 (expected: $2, found: $SERVICE_SOCKETS_LISTENING)"
-        ((FAIL+=1))
-    fi
-}
-
-# Parameter 1: the pid to check
-check_tcp_udp_sockets_are_closed ()
-{
-    # Check that the passed pid/process does not listen on any TCP/UDP socket
-    # or has any active connection via a TCP/UDP socket
-    # awk is used to avoid the case when a inode number is the same as a PID. The awk
-    # program filters the netstat output down to the protocol (1st field) and
-    # the PID/Program name (last field) fields.
-    SERVICE_SOCKETS_LISTENING=$(netstat -tulpen 2> /dev/null | awk '{print $1 "\t"  $NF}' | grep $1 | wc -l)
-    if [ $SERVICE_SOCKETS_LISTENING -ne 0 ]
-    then
-        ((FAIL+=1))
-    fi
-
-    SERVICE_SOCKETS_CONNECTED=$(netstat -tupen 2> /dev/null | awk '{print $1 "\t"  $NF}' | grep $1 | wc -l)
-    if [ $SERVICE_SOCKETS_CONNECTED -ne 0 ]
-    then
-        ((FAIL+=1))
-    fi
-}
-
 # Start the service
 export VSOMEIP_APPLICATION_NAME=external_local_payload_test_service
 export VSOMEIP_CONFIGURATION=external_local_payload_test_service.json
 ./payload_test_service &
 SERVICE_PID=$!
 
-# The service should listen on a TCP and UDP socket now
-check_tcp_udp_sockets_are_open $SERVICE_PID 2
+# The service should listen on TCP 30510 and UDP 30509
+check_tcp_udp_sockets_are_open $SERVICE_PID 30509 30510
 
 # Start the client which sends messages over local UDS
 export VSOMEIP_APPLICATION_NAME=external_local_payload_test_client_local
@@ -85,17 +36,17 @@ export VSOMEIP_CONFIGURATION=external_local_payload_test_client_local.json
 ./payload_test_client --dont-shutdown-service &
 CLIENT_PID=$!
 
-check_tcp_udp_sockets_are_open $SERVICE_PID 2
+check_tcp_udp_sockets_are_open $SERVICE_PID 30509 30510
 check_tcp_udp_sockets_are_closed $CLIENT_PID
 
 # Wait until client is finished
-wait $CLIENT_PID || ((FAIL+=1))
+wait $CLIENT_PID || ((FAIL += 1))
 
 exec_slave "./external_local_payload_test_client_external_start_tcp.sh"
 EXTERNAL_CLIENT_PID=$!
 
-# The service should still listen on a TCP and UDP socket
-check_tcp_udp_sockets_are_open $SERVICE_PID 2
+# The service should still listen on TCP 30510 and UDP 30509
+check_tcp_udp_sockets_are_open $SERVICE_PID 30509 30510
 
 # Wait until service is finished
 # The client remotely shuts down the service if he has successfully transmitted
@@ -104,8 +55,8 @@ check_tcp_udp_sockets_are_open $SERVICE_PID 2
 
 # Fail gets incremented if either client or service exit
 # with a non-zero exit code
-wait $SERVICE_PID || ((FAIL+=1))
-wait $EXTERNAL_CLIENT_PID || ((FAIL+=1))
+wait $SERVICE_PID || ((FAIL += 1))
+wait $EXTERNAL_CLIENT_PID || ((FAIL += 1))
 
 # Start the service for payload test with tcp
 export VSOMEIP_APPLICATION_NAME=external_local_payload_test_service
@@ -113,8 +64,8 @@ export VSOMEIP_CONFIGURATION=external_local_payload_test_service.json
 ./payload_test_service --tcp &
 SERVICE_PID=$!
 
-# The service should listen on a TCP and UDP socket now
-check_tcp_udp_sockets_are_open $SERVICE_PID 2
+# The service should listen on TCP 30510 and UDP 30509
+check_tcp_udp_sockets_are_open $SERVICE_PID 30509 30510
 
 exec_slave "./external_local_payload_test_client_external_start_tcp.sh"
 EXTERNAL_CLIENT_PID=$!
@@ -126,8 +77,8 @@ EXTERNAL_CLIENT_PID=$!
 
 # Fail gets incremented if either client or service exit
 # with a non-zero exit code
-wait $SERVICE_PID || ((FAIL+=1))
-wait $EXTERNAL_CLIENT_PID || ((FAIL+=1))
+wait $SERVICE_PID || ((FAIL += 1))
+wait $EXTERNAL_CLIENT_PID || ((FAIL += 1))
 
 # Check if client and server both exited sucessfully and the service didnt't
 # have any open TCP/UDP sockets

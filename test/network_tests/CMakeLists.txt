@@ -160,6 +160,7 @@ endfunction()
 
 # setup helper for bash tests
 configure_files("setup_test.sh")
+configure_files("test_helpers.sh")
 
 ### ADD TESTS SUBDIRECTORIES ###
 if(NOT ${TESTS_BAT})
