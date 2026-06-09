@@ -76,12 +76,7 @@ private:
 
         do {
             VSOMEIP_DEBUG << "[TEST] Wait runner: " << std::boolalpha << wait_runner_.load();
-
-            {
-                std::scoped_lock its_lock(sr_mutex_);
-                sr_cv_.notify_one();
-            }
-
+            sr_cv_.notify_one();
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } while (wait_runner_.load());
 
@@ -99,7 +94,8 @@ private:
             {
                 VSOMEIP_DEBUG << "[TEST] STR simulation: waiting signal, iteration#" << iteration;
                 std::unique_lock its_lock(sr_mutex_);
-                sr_cv_.wait(its_lock, [this] { return is_suspend_requested_.load() || !is_running_; });
+                // Wait for both suspend requested and subscription active to avoid signal pile-up under high load (valgrind).
+                sr_cv_.wait(its_lock, [this] { return (is_suspend_requested_.load() && is_subscribe_.load()) || !is_running_; });
                 is_suspend_requested_ = false;
             }
 
@@ -241,7 +237,6 @@ private:
                 } break;
                 case TEST_STOP: {
                     VSOMEIP_INFO << "[TEST] Request: stop";
-                    std::scoped_lock its_lock(mutex_);
                     cv_.notify_one();
                 } break;
                 default:;
@@ -259,6 +254,10 @@ private:
         VSOMEIP_DEBUG << "[TEST] on_subscribe client=" << std::hex << std::setfill('0') << std::setw(4) << _client
                       << ", subscribe=" << std::boolalpha << _is_subscribe << ", was is_subscribe_=" << is_subscribe_;
         is_subscribe_ = _is_subscribe;
+
+        if (_is_subscribe) {
+            sr_cv_.notify_one();
+        }
 
         return true;
     }
