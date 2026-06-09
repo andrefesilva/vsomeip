@@ -14,6 +14,7 @@ RUN apt-get update;\
         iproute2\
         jq\
         lcov\
+        libboost-all-dev \
         libnetfilter-queue-dev\
         libnfnetlink-dev\
         lsof\
@@ -44,17 +45,6 @@ RUN git clone --depth 1 https://github.com/brendangregg/FlameGraph /opt/flamegra
 ENV CC=gcc
 ENV CXX=g++
 ENV GCOV=gcov
-
-# Build boost
-ARG BOOST_MAJOR
-ARG BOOST_MINOR
-ARG BOOST_PATCH
-
-RUN wget https://archives.boost.io/release/${BOOST_MAJOR}.${BOOST_MINOR}.${BOOST_PATCH}/source/boost_${BOOST_MAJOR}_${BOOST_MINOR}_${BOOST_PATCH}.tar.gz -O boost_sources.tar.gz;\
-    tar -zxvf boost_sources.tar.gz;\
-    cd boost_${BOOST_MAJOR}_${BOOST_MINOR}_${BOOST_PATCH};\
-    ./bootstrap.sh --prefix=/usr;\
-    ./b2 install valgrind=on --with-system --with-filesystem
 
 # /etc configurations
 RUN echo 'SendEnv *' > /etc/ssh/ssh_config.d/vsomeip.conf;\
