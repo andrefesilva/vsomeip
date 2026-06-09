@@ -87,7 +87,6 @@ public:
     virtual bool is_subscribe_to_any_event_allowed(const vsomeip_sec_client_t* _sec_client, client_t _client, service_t _service,
                                                    instance_t _instance, eventgroup_t _eventgroup) = 0;
 
-    virtual void set_client_host(const std::string& _client_host) = 0;
     virtual std::string get_client_host() const = 0;
 
     virtual routing_state_e get_routing_state() = 0;

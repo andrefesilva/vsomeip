@@ -15,6 +15,7 @@
 #include <sstream>
 #include <ostream>
 #include <iomanip>
+#include <fstream>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -132,6 +133,8 @@ public:
     };
 
     static std::string dump(const byte_t* _data, size_t _length);
+
+    static void log_network_state(const std::shared_ptr<configuration>& _configuration, bool _tcp, bool _only_external);
 
 private:
     struct data_t {
