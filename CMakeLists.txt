@@ -155,7 +155,6 @@ if (NOT MSVC)
             # The --fair-sched option controls the locking mechanism used by Valgrind to serialise thread execution.
             # The locking mechanism controls the way the threads are scheduled, and different settings give different trade-offs between fairness and performance.
             set(TEST_ENTRYPOINT ${VALGRIND} --tool=${VALGRIND_TYPE} --trace-children=yes --fair-sched=yes)
-            add_compile_definitions(BOOST_USE_VALGRIND)
         endif ()
 
         if (VALGRIND_TYPE STREQUAL "massif")
