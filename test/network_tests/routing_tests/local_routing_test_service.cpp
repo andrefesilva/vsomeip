@@ -85,8 +85,10 @@ void local_routing_test_service::on_message(const std::shared_ptr<vsomeip::messa
     // TR_SOMEIP_00055
     ASSERT_EQ(_request->get_message_type(), vsomeip::message_type_e::MT_REQUEST);
 
-    // check the session id.
-    ASSERT_EQ(_request->get_session(), static_cast<vsomeip::session_t>(number_of_received_messages_));
+    // Check the session id is in valid range (messages may be dispatched out of
+    // order when multiple dispatcher threads are active).
+    ASSERT_GE(_request->get_session(), static_cast<vsomeip::session_t>(1));
+    ASSERT_LE(_request->get_session(), static_cast<vsomeip::session_t>(vsomeip_test::NUMBER_OF_MESSAGES_TO_SEND));
 
     // send response
     std::shared_ptr<vsomeip::message> its_response = vsomeip::runtime::get()->create_response(_request);
