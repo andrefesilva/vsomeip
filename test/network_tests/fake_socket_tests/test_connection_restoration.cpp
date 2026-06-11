@@ -920,9 +920,15 @@ TEST_F(test_reoffer_on_connection_breaking, client_can_dispatch_a_request_after_
 
         // checking of sanity
         ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+        // it is important to check as a first step that the connection was re-established,
+        // and that then the service is getting available
+        // and only then does the reply matter.
+        // (If we would directly check the service and the reply, they might have been captured before the connection was disconnected,
+        // leading to a false positive failure in the next iteration)
         ASSERT_TRUE(await_connection(client_name_, server_name_));
-        ASSERT_TRUE(client_->message_record_.wait_for(response_checker_));
         ASSERT_TRUE(await_service());
+        ASSERT_TRUE(client_->message_record_.wait_for(response_checker_));
         TEST_LOG << "### Iteration: " << i << " END";
     }
 }
@@ -1108,8 +1114,7 @@ TEST_F(test_connection_restoration, atomic_stop_offer_tests) {
             }
             ASSERT_TRUE(received_availability_for_any_service.value())
                     << "Client received available->unavailable for service:" << hex4(si.service_)
-                    << " but previously only received unavailable for other services"
-                    << " record: " << client_->availability_record_;
+                    << " but previously only received unavailable for other services" << " record: " << client_->availability_record_;
         } else {
             ASSERT_FALSE(client_->availability_record_.wait_for_any(service_availability::available(si), std::chrono::milliseconds(1)))
                     << "Client received availability without subsequent unavailability for service:" << hex4(si.service_)
@@ -1119,8 +1124,7 @@ TEST_F(test_connection_restoration, atomic_stop_offer_tests) {
             }
             ASSERT_FALSE(received_availability_for_any_service.value())
                     << "Client did not receive available->unavailable for service:" << hex4(si.service_)
-                    << " but previously received available->unavailable for other services"
-                    << " record: " << client_->availability_record_;
+                    << " but previously received available->unavailable for other services" << " record: " << client_->availability_record_;
         }
     }
 }
