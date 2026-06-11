@@ -136,6 +136,8 @@ void routing_manager_client::start() {
         }
     }
     std::unique_lock lock{sender_mutex_};
+    assert(!on_sender_stopped_);
+    on_sender_stopped_ = {};
     restart_sender(lock);
     {
         std::scoped_lock its_lock{log_timer_mutex_};
@@ -180,20 +182,28 @@ void routing_manager_client::version_log_timer_cbk(boost::system::error_code con
     }
 }
 
-void routing_manager_client::stop() {
+async::hook routing_manager_client::stop() {
     state_machine_->target_shutdown();
-    ep_mgr_->stop();
+    async::hook when_sender_stopped;
     // Transition to ST_DEREGISTERED so that a subsequent start() finds a clean state.
     // The error handler is suppressed because shall_run_ = false (target_shutdown was called above).
     {
         std::scoped_lock its_sender_lock{sender_mutex_};
+        assert(!on_sender_stopped_);
+        on_sender_stopped_ = async::trigger(io_);
+        when_sender_stopped = on_sender_stopped_.get_hook();
         // transition the state under the sender mutex, as this is the one protecting the restart sequence
         state_machine_->deregistered();
         if (sender_) {
             VSOMEIP_INFO_P << "starting to flush the sender";
             sender_->start_flushing();
+        } else {
+            VSOMEIP_INFO_P << "sender already cleared";
+            on_sender_stopped_.fire();
+            on_sender_stopped_ = {};
         }
     }
+    auto when_endpoints_flushed = ep_mgr_->stop();
 
     {
         std::scoped_lock its_lock{consumer_mutex_};
@@ -217,35 +227,34 @@ void routing_manager_client::stop() {
         version_log_timer_.cancel();
         status_log_timer_.cancel();
     }
-    if (!ep_mgr_->await_stopped(std::chrono::milliseconds(500))) {
-        VSOMEIP_WARNING_P << "Not all endpoints could be flushed within time";
-        ep_mgr_->clear_consumer_endpoints();
-        ep_mgr_->clear_provider_endpoints();
-    }
-    {
-        std::unique_lock its_lock(sender_mutex_);
-        if (sender_) {
-            if (!sender_cv_.wait_for(its_lock, std::chrono::milliseconds(500), [this] { return !sender_; })) {
-                VSOMEIP_WARNING << "rmc::stop sender was not flushed successfully";
-                // sender is not null, since the predicate is still true
+    auto when_no_eps = when_endpoints_flushed.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
+        VSOMEIP_WARNING << "rmc::stop: endpoints where not flushed within time. Enforcing stop";
+        if (auto self = weak_self.lock(); self) {
+            self->ep_mgr_->force_stop();
+        }
+    });
+    auto when_no_sender = when_sender_stopped.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this(), this] {
+        VSOMEIP_WARNING << "rmc::stop: sender was not flushed within time. Enforcing stop";
+        if (auto self = weak_self.lock(); self) {
+            std::scoped_lock its_sender_lock{sender_mutex_};
+            if (sender_) {
                 sender_->stop(true);
-                // delete the sender
                 sender_ = nullptr;
             }
+            // hook is no longer required to be kept around
+            if (on_sender_stopped_) {
+                on_sender_stopped_ = {};
+            }
         }
-    }
-    {
-        // By now all endpoints have been stopped
-        // -> all still queued continuations will be marked "stale"
-        std::scoped_lock its_lock(provider_mutex_);
-        // also mark boardnet continuations that are in flight as stale
-        ++lc_count_;
-        // any in-flight continuation is now either "stale" or "done" as it had acquired the provider lock.
-        clear_remote_subscriptions(its_lock);
-        cleanup_subscriber(its_lock);
-    }
-    cleanup_routing_data();
-    host_->on_state(state_type_e::ST_DEREGISTERED);
+    });
+    auto when_all_stopped = async::when_all(when_no_eps, when_no_sender);
+    return when_all_stopped.then([weak_self = weak_from_this()] {
+        if (auto self = weak_self.lock(); self) {
+            VSOMEIP_INFO << "rmc::stop: All endpoints cleared. Finishing the shutdown";
+            // once all endpoints have been cleared -> this function is going to be invoked
+            self->finish_shutdown();
+        }
+    });
 }
 
 std::shared_ptr<configuration> routing_manager_client::get_configuration() const {
@@ -2021,7 +2030,10 @@ void routing_manager_client::cleanup_client(client_t _client, bool _due_to_error
             if (sender_) {
                 sender_->stop(_due_to_error);
                 sender_ = nullptr;
-                sender_cv_.notify_one();
+            }
+            if (on_sender_stopped_) {
+                on_sender_stopped_.fire();
+                on_sender_stopped_ = {};
             }
             if (!_due_to_error) {
                 VSOMEIP_INFO_P << "self 0x" << hex4(get_client()) << " handles shutdown. Not reconnecting to host 0x" << hex4(_client);
@@ -3104,6 +3116,20 @@ client_t routing_manager_client::get_client() const {
     return host_->get_client();
 }
 
+void routing_manager_client::finish_shutdown() {
+    {
+        // By now all endpoints have been stopped
+        // -> all still queued continuations will be marked "stale"
+        std::scoped_lock its_lock(provider_mutex_);
+        // also mark boardnet continuations that are in flight as stale
+        ++lc_count_;
+        // any in-flight continuation is now either "stale" or "done" as it had acquired the provider lock.
+        clear_remote_subscriptions(its_lock);
+        cleanup_subscriber(its_lock);
+    }
+    cleanup_routing_data();
+    host_->on_state(state_type_e::ST_DEREGISTERED);
+}
 std::string const& routing_manager_client::get_name() const {
     return host_->get_name();
 }

@@ -161,6 +161,12 @@ struct base_fake_socket_fixture : ::testing::Test {
                                                 socket_role _role = socket_role::server);
 
     /**
+     * @see socket_manager::delay_sending()
+     **/
+    [[nodiscard]] bool delay_sending(std::string const& _client, std::string const& _server, bool _delay,
+                                     socket_role _role = socket_role::client);
+
+    /**
      * @see socket_manager::delay_boardnet_sending(boost::asio::ip::udp::endpoint, bool)
      **/
     [[nodiscard]] bool delay_boardnet_sending(boost::asio::ip::udp::endpoint const& _ep, bool _delay);

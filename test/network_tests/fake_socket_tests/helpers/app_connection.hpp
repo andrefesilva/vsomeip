@@ -58,6 +58,11 @@ public:
     [[nodiscard]] bool delay_message_processing(bool _delay, socket_role _role);
 
     /**
+     * Delays send-completion callbacks on the socket having the corresponding role (can be set ahead of time)
+     **/
+    [[nodiscard]] bool delay_sending(bool _delay, socket_role _role);
+
+    /**
      * sets the fake_tcp_socket_handle on each socket correspondingly (can be set ahead of time)
      **/
     [[nodiscard]] bool set_ignore_inner_close(bool _client, bool _server);
@@ -142,6 +147,7 @@ public:
 private:
     struct connection_options {
         bool delay_message_processing_{false};
+        bool delay_sending_{false};
         bool ignore_inner_close_{false};
         bool ignore_nothing_to_read_from_{false};
         std::optional<std::chrono::milliseconds> block_on_close_time_{};

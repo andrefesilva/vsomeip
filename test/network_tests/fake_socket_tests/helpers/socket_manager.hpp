@@ -142,6 +142,16 @@ public:
                                                 socket_role _role = socket_role::server);
 
     /**
+     * Delays send-completion callbacks on the socket identified by the connection
+     * _client -> _server. While delayed, the local_endpoint's send queue fills up
+     * because the next async_write is not triggered until the completion fires.
+     *
+     * @return false, if the connection does not exist.
+     **/
+    [[nodiscard]] bool delay_sending(std::string const& _client, std::string const& _server, bool _delay,
+                                     socket_role _role = socket_role::client);
+
+    /**
      * Finds the UDP socket bound to @param _ep and delays its outgoing message processing.
      * @param _ep must be the sending endpoint.
      *

@@ -8,6 +8,7 @@
 #include "helpers/base_fake_socket_fixture.hpp"
 #include "helpers/command_gate.hpp"
 #include "helpers/command_record.hpp"
+#include "helpers/ecu_setup.hpp"
 #include "helpers/fake_socket_factory.hpp"
 #include "helpers/message_checker.hpp"
 #include "helpers/sockets/fake_tcp_socket_handle.hpp"
@@ -1102,5 +1103,99 @@ TEST_F(test_concurrent_registration, repeated_concurrent_registration_with_queui
         stop_client(app_name_);
     }
     stop_client(routingmanager_name_);
+}
+
+/**
+ * Test fixture for verifying that a single IO thread does not deadlock during stop.
+ *
+ * With the default configuration (2 IO threads), the stop sequence could rely on
+ * a second thread to complete asynchronous work. With only 1 IO thread, the stop
+ * continuation must not block the sole thread — otherwise the application hangs.
+ */
+struct test_single_io_thread : public base_fake_socket_fixture {
+    static constexpr auto router_name_ = "routingmanagerd";
+    static constexpr auto server_name_ = "server";
+    static constexpr auto client_name_ = "client";
+
+    ecu_config config_ = [] {
+        ecu_config cfg;
+        cfg.apps_ = {application_config{router_name_, 0x0100, 1}, application_config{server_name_, 0x3489, 1},
+                     application_config{client_name_, 0x3490, 1}};
+        cfg.routing_config_ = local_tcp_config{.router_name_ = router_name_,
+                                               .host_ = boost::asio::ip::make_address("127.0.0.1"),
+                                               .guest_ = boost::asio::ip::make_address("127.0.0.1")};
+        cfg.sd_ = false;
+        return cfg;
+    }();
+
+    ecu_setup ecu_{"single_io", config_, *socket_manager_};
+
+    service_instance service_{0x3344, 0x1};
+    event_ids field_{service_, 0x8003, 0x6};
+
+    void start_apps() {
+        ecu_.prepare();
+        ecu_.start_apps();
+    }
+};
+
+TEST_F(test_single_io_thread, stop_flushes_queued_messages_with_one_io_thread) {
+    /**
+     * Verify that endpoint flushing during stop works correctly with a single
+     * IO thread and that queued messages are delivered to the receiver.
+     *
+     * 1. Start all apps (router, server, client) each with threads=1
+     * 2. Offer a service and subscribe to a field
+     * 3. Delay the send-completion callback on the server→client connection
+     *    so messages pile up in the server's local endpoint send queue
+     * 4. Send several event notifications from the server
+     * 5. Stop the server — this triggers endpoint flushing
+     * 6. Release the send delay so the queued data can flow
+     * 7. Verify the client received all notifications
+     */
+    start_apps();
+
+    auto* server = ecu_.apps_[server_name_];
+    auto* client = ecu_.apps_[client_name_];
+    ASSERT_NE(server, nullptr);
+    ASSERT_NE(client, nullptr);
+
+    ASSERT_TRUE(server->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    ASSERT_TRUE(client->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+    server->offer_field(field_);
+    server->offer(service_);
+
+    client->request_service(service_);
+    client->subscribe_field(field_);
+    ASSERT_TRUE(client->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_)));
+
+    // Hold back send-completion callbacks from the server so that notifications
+    // pile up in the server's local endpoint send queue.
+    ASSERT_TRUE(delay_sending(client_name_, server_name_, true, socket_role::server));
+
+    server->send_event(field_, {0x01});
+    server->send_event(field_, {0x02});
+    server->send_event(field_, {0x03});
+
+    // Stop the server while messages are still queued.
+    // With 1 IO thread this must not deadlock — the async stop continuation
+    // allows the flushing work to complete on the same thread.
+    // (use vsomeip application directly to avoid joining the io thread)
+    server->get_application()->stop();
+
+    // Release the queued send completions so the endpoint can finish flushing
+    // and the routing manager forwards the notifications.
+    ASSERT_TRUE(delay_sending(client_name_, server_name_, false, socket_role::server));
+
+    // The client should eventually receive the last notification.
+    message_checker const field_checker{std::nullopt, service_, field_.event_id_, vsomeip::message_type_e::MT_NOTIFICATION,
+                                        std::vector<unsigned char>{0x03}};
+    EXPECT_TRUE(client->message_record_.wait_for(field_checker, std::chrono::seconds(5)))
+            << "Client did not receive all flushed notifications\n"
+            << client->message_record_;
+
+    ecu_.stop_one(client_name_);
+    ecu_.stop_one(router_name_);
 }
 }

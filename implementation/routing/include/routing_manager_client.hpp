@@ -70,7 +70,7 @@ public:
 
     void init();
     void start();
-    void stop();
+    async::hook stop();
 
     std::shared_ptr<configuration> get_configuration() const;
 
@@ -313,6 +313,8 @@ private:
     std::shared_ptr<eventgroupinfo> find_eventgroup(const eventgroups_t& _eventgroups, service_t _service, instance_t _instance,
                                                     eventgroup_t _eventgroup, std::scoped_lock<std::mutex> const&) const;
 
+    void finish_shutdown();
+
 private:
     routing_manager_host* host_;
     boost::asio::io_context& io_;
@@ -338,7 +340,6 @@ private:
     mutable std::mutex sender_mutex_;
     bool sender_debounce_active_{false};
     bool start_sender_after_debounce_{false};
-    std::condition_variable sender_cv_;
     std::shared_ptr<local_endpoint> sender_; // --> stub
 
     mutable std::mutex receiver_mutex_;
@@ -435,6 +436,8 @@ private:
         }
     };
     std::set<subscription_data_t> pending_subscriptions_;
+
+    async::trigger on_sender_stopped_;
 };
 
 } // namespace vsomeip_v3
