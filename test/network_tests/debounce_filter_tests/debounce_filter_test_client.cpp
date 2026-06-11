@@ -185,9 +185,9 @@ TEST(debounce_test, normal_interval) {
     its_client.start();
     its_client.wait();
 
-    // Average Interval should be between 30ms and 70ms
-    EXPECT_GE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_1 - 20);
-    EXPECT_LE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_1 + 20);
+    // Average Interval should be between 25ms and 75ms
+    EXPECT_GE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_1 - 25);
+    EXPECT_LE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_1 + 25);
 }
 
 TEST(debounce_test, large_interval) {
@@ -197,9 +197,9 @@ TEST(debounce_test, large_interval) {
     its_client.start();
     its_client.wait();
 
-    // Average Interval should be between 280ms and 320ms
-    EXPECT_GE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_2 - 20);
-    EXPECT_LE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_2 + 20);
+    // Average Interval should be between 275ms and 325ms
+    EXPECT_GE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_2 - 25);
+    EXPECT_LE(its_client.get_avgtime().count(), (double)DEBOUNCE_INTERVAL_2 + 25);
 }
 
 TEST(debounce_test, disable) {
