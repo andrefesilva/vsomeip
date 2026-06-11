@@ -369,7 +369,6 @@ private:
 
     std::mutex start_stop_mutex_;
     std::atomic_bool stopping_;
-    std::thread stop_thread_;
 
     bool is_routing_manager_host_;
 
