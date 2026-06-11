@@ -12,7 +12,9 @@ constexpr auto SERVICE_UP_TIME = std::chrono::seconds(9);
 
 /// @brief Time for which the service application is offering the services and responding to
 /// requests, needs to be at least an offer cyclic delay to ensure offers are allowed to be sent to remote clients.
-constexpr auto SERVICE_OFFER_TIME = std::chrono::milliseconds(1500);
+/// In practice, it needs to be longer than the offer cyclic delay to ensure that at least one offer cycle is completed
+/// and the service is offered to remote clients.
+constexpr auto SERVICE_OFFER_TIME = std::chrono::milliseconds(2000);
 
 /// @brief Time for which the service application stops offering the services
 constexpr auto SERVICE_STOP_OFFER_TIME = std::chrono::milliseconds(2);
