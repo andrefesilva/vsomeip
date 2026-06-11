@@ -45,10 +45,26 @@ void endpoint_manager_base::start() {
     is_started_ = true;
 }
 
-void endpoint_manager_base::stop() {
+void endpoint_manager_base::force_stop() {
     std::scoped_lock its_lock(mtx_);
+    is_started_ = false;
+    if (stop_done_trigger_) {
+        stop_done_trigger_ = {};
+    }
+
+    clear_consumer_endpoints(its_lock);
+    clear_provider_endpoints(its_lock);
+}
+
+async::hook endpoint_manager_base::stop() {
+    std::scoped_lock its_lock(mtx_);
+    assert(!stop_done_trigger_);
+    stop_done_trigger_ = async::trigger(io_);
     if (!is_started_) {
-        return;
+        stop_done_trigger_.fire();
+        auto hook = stop_done_trigger_.get_hook();
+        stop_done_trigger_ = {};
+        return hook;
     }
     is_started_ = false;
     ++lc_token_;
@@ -63,32 +79,40 @@ void endpoint_manager_base::stop() {
         ep->stop(true); // never started -> nothing to flush
     }
     pending_server_endpoints_.clear();
-}
 
-[[nodiscard]] bool endpoint_manager_base::await_stopped(std::chrono::milliseconds _timeout) {
-    std::unique_lock its_lock{mtx_};
-    return cv_.wait_for(its_lock, _timeout, [this] { return local_server_endpoints_.empty() && local_client_endpoints_.empty(); });
+    auto ret = stop_done_trigger_.get_hook();
+    if (local_client_endpoints_.empty() && local_server_endpoints_.empty()) {
+        stop_done_trigger_.fire();
+        stop_done_trigger_ = {};
+    }
+
+    return ret;
 }
 
 void endpoint_manager_base::remove_provider_endpoint(client_t _client, bool _remove_due_to_error) {
     VSOMEIP_INFO_P << "self 0x" << hex4(get_client_id()) << ", client 0x" << hex4(_client) << ", error " << _remove_due_to_error;
     std::scoped_lock lock{mtx_};
     remove_local_server_endpoint_unlocked(_client, _remove_due_to_error);
-    if (!is_started_) {
-        cv_.notify_one();
+    if (stop_done_trigger_ && local_client_endpoints_.empty() && local_server_endpoints_.empty()) {
+        stop_done_trigger_.fire();
+        stop_done_trigger_ = {};
     }
 }
 void endpoint_manager_base::remove_consumer_endpoint(client_t _client, bool _remove_due_to_error) {
     VSOMEIP_INFO_P << "self 0x" << hex4(get_client_id()) << ", client 0x" << hex4(_client) << ", error " << _remove_due_to_error;
     std::scoped_lock lock{mtx_};
     remove_local_client_endpoint_unlocked(_client, _remove_due_to_error);
-    if (!is_started_) {
-        cv_.notify_one();
+    if (stop_done_trigger_ && local_client_endpoints_.empty() && local_server_endpoints_.empty()) {
+        stop_done_trigger_.fire();
+        stop_done_trigger_ = {};
     }
 }
 
 void endpoint_manager_base::clear_provider_endpoints() {
     std::scoped_lock lock{mtx_};
+    clear_provider_endpoints(lock);
+}
+void endpoint_manager_base::clear_provider_endpoints([[maybe_unused]] std::scoped_lock<std::mutex> const& _lock) {
     VSOMEIP_INFO_P << "self 0x" << hex4(get_client_id());
     for (auto const& [id, ep] : local_server_endpoints_) {
         ep->stop(true);
@@ -103,6 +127,10 @@ void endpoint_manager_base::clear_provider_endpoints() {
 
 void endpoint_manager_base::clear_consumer_endpoints() {
     std::scoped_lock lock{mtx_};
+    clear_consumer_endpoints(lock);
+}
+
+void endpoint_manager_base::clear_consumer_endpoints([[maybe_unused]] std::scoped_lock<std::mutex> const& _lock) {
     VSOMEIP_INFO_P << "self 0x" << hex4(get_client_id());
     for (auto const& [id, ep] : local_client_endpoints_) {
         ep->stop(true);

@@ -191,6 +191,14 @@ struct fake_tcp_socket_handle : public fake_socket_handle {
      **/
     void block_on_close_for(std::optional<std::chrono::milliseconds> _block_time);
 
+    /**
+     * if _delay == true, write() will still deliver data to the connected socket
+     * but the send-completion callback is stashed instead of being posted.
+     * When set back to false, all stashed callbacks are fired immediately.
+     * This simulates send back-pressure so the local_endpoint's send_queue fills up.
+     **/
+    void delay_sending(bool _delay);
+
     void set_app_name(std::string const& _name) override;
     std::string get_app_name() const override;
 
@@ -255,6 +263,12 @@ private:
     bool ignore_inner_close_{false};
     bool ignore_nothing_to_read_from_{false};
     bool delay_processing_{false};
+    bool delay_sending_{false};
+    struct stashed_send {
+        std::vector<unsigned char> data_;
+        rw_handler handler_;
+    };
+    std::optional<stashed_send> stashed_send_;
     bool is_open_{false};
     socket_id socket_id_;
     std::weak_ptr<socket_manager> socket_manager_;

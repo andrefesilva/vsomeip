@@ -19,6 +19,7 @@ namespace vsomeip_v3::testing {
 struct application_config {
     std::string name_;
     std::optional<client_t> id_;
+    std::optional<std::size_t> threads_ = std::nullopt;
 };
 struct event_config {
     vsomeip::event_t event_id_{};

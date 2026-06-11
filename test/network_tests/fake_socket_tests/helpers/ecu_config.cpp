@@ -80,6 +80,9 @@ void to_json(std::ostringstream& o, const application_config& app) {
     if (app.id_) {
         o << R"(, "id" : ")" << to_hex(*app.id_) << "\"";
     }
+    if (app.threads_) {
+        o << R"(, "threads" : ")" << *app.threads_ << "\"";
+    }
     o << " }";
 }
 

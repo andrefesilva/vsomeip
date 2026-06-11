@@ -101,6 +101,17 @@ bool app_connection::delay_message_processing(bool _delay, socket_role _role) {
     return apply_options(std::move(lock));
 }
 
+bool app_connection::delay_sending(bool _delay, socket_role _role) {
+    std::unique_lock lock{mtx_};
+    if (_role == socket_role::unspecified || _role == socket_role::client) {
+        client_options_.delay_sending_ = _delay;
+    }
+    if (_role == socket_role::unspecified || _role == socket_role::server) {
+        server_options_.delay_sending_ = _delay;
+    }
+    return apply_options(std::move(lock));
+}
+
 [[nodiscard]] bool app_connection::set_ignore_inner_close(bool _client, bool _server) {
     std::unique_lock lock{mtx_};
     client_options_.ignore_inner_close_ = _client;
@@ -241,6 +252,7 @@ bool app_connection::apply_options(std::unique_lock<std::mutex> _lock) {
         if (ptr) {
             ptr->block_on_close_for(opt.block_on_close_time_);
             ptr->delay_processing(opt.delay_message_processing_);
+            ptr->delay_sending(opt.delay_sending_);
             if (opt.ignore_inner_close_) {
                 ptr->ignore_inner_close();
             }

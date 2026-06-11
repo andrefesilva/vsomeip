@@ -19,6 +19,8 @@
 #include <vsomeip/enumeration_types.hpp>
 #include "local_endpoint_manager_host.hpp"
 
+#include "../../utility/include/async.hpp"
+
 namespace vsomeip_v3 {
 
 enum class transport_protocol_e : uint8_t { TCP = 0x00, UDS = 0x01 };
@@ -47,15 +49,8 @@ public:
      * clears all pending provider endpoints,
      * starts flushing all managed endpoints
      **/
-    void stop();
-
-    /**
-     * Blocks the current thread for max _timeout or until all managed endpoints have been removed.
-     * Note:
-     * It is mandatory to have called ::stop() before and do not call ::start() inbetween to avoid
-     * expiring the _timeout.
-     **/
-    [[nodiscard]] bool await_stopped(std::chrono::milliseconds _timeout);
+    async::hook stop();
+    void force_stop();
 
     std::shared_ptr<local_server> create_local_server(transport_protocol_e _transport_protocol);
 
@@ -79,6 +74,8 @@ public:
     uint32_t provider_connection_token(client_t _client) const;
 
 private:
+    void clear_provider_endpoints(std::scoped_lock<std::mutex> const& _lock);
+    void clear_consumer_endpoints(std::scoped_lock<std::mutex> const& _lock);
     client_t get_client_id() const;
     std::string get_client_env() const;
 
@@ -117,7 +114,7 @@ private:
     uint32_t lc_token_{0};
 
     mutable std::mutex mtx_;
-    std::condition_variable cv_; // required for stopping
+    async::trigger stop_done_trigger_;
     std::weak_ptr<routing_host> local_message_handler_;
     std::map<client_t, std::shared_ptr<local_endpoint>> local_client_endpoints_;
     std::map<client_t, std::shared_ptr<local_endpoint>> local_server_endpoints_;
