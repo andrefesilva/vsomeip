@@ -557,6 +557,12 @@ void socket_manager::set_ignore_ip(boost::asio::ip::address _ip, bool _ignore_co
     auto connection = get_or_create_connection(_client, _server);
     return connection->delay_message_processing(_delay, _role);
 }
+
+[[nodiscard]] bool socket_manager::delay_sending(std::string const& _client, std::string const& _server, bool _delay, socket_role _role) {
+    auto connection = get_or_create_connection(_client, _server);
+    return connection->delay_sending(_delay, _role);
+}
+
 [[nodiscard]] bool socket_manager::delay_boardnet_sending(boost::asio::ip::udp::endpoint const& _ep, bool _delay) {
     std::shared_ptr<fake_udp_socket_handle> udp_handle;
     {

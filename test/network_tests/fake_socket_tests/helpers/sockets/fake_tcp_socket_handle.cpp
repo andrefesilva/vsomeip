@@ -165,6 +165,28 @@ void fake_tcp_socket_handle::delay_processing(bool _delay) {
     }
 }
 
+void fake_tcp_socket_handle::delay_sending(bool _delay) {
+    std::optional<stashed_send> replay;
+    {
+        auto const lock = std::scoped_lock(mtx_);
+        if (delay_sending_ == _delay) {
+            return;
+        }
+        TEST_LOG << "[fake-socket] setting delay_sending: " << (_delay ? "true" : "false") << " on: " << socket_id_;
+        delay_sending_ = _delay;
+        if (!_delay && stashed_send_) {
+            replay = std::move(stashed_send_);
+            stashed_send_ = std::nullopt;
+        }
+    }
+    if (replay) {
+        // Re-enter write with the stashed data now that the delay is lifted.
+        std::vector<boost::asio::const_buffer> buffers;
+        buffers.emplace_back(replay->data_.data(), replay->data_.size());
+        write(buffers, std::move(replay->handler_));
+    }
+}
+
 void fake_tcp_socket_handle::set_ignore_nothing_to_read_from(bool _ignore) {
     auto const lock = std::scoped_lock(mtx_);
     TEST_LOG << "[fake-socket] setting ignore_nothing_to_read_from: " << (_ignore ? "true" : "false") << " on: " << socket_id_;
@@ -288,6 +310,21 @@ void fake_tcp_socket_handle::clear_handler() {
 }
 
 void fake_tcp_socket_handle::write(std::vector<boost::asio::const_buffer> const& _buffer, rw_handler _handler) {
+    {
+        auto const lock = std::scoped_lock(mtx_);
+        if (delay_sending_) {
+            size_t total = std::accumulate(_buffer.begin(), _buffer.end(), size_t{0}, [](size_t s, auto const& b) { return s + b.size(); });
+            std::vector<unsigned char> data;
+            data.reserve(total);
+            for (auto const& buf : _buffer) {
+                auto p = static_cast<unsigned char const*>(buf.data());
+                data.insert(data.end(), p, p + buf.size());
+            }
+            stashed_send_ = stashed_send{std::move(data), std::move(_handler)};
+            return;
+        }
+    }
+
     auto receiver = [&]() -> std::shared_ptr<fake_tcp_socket_handle> {
         auto const lock = std::scoped_lock(mtx_);
         return connected_socket_.lock();

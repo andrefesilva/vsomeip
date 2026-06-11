@@ -570,21 +570,27 @@ void application_impl::stop() {
             dispatcher_condition_.notify_all();
         }
 
-        if (routing_) {
-            routing_->stop();
-        }
-        {
-            // no new handlers can be invoked as the routing_->stop ensures
-            // no io thread is pushing any task into the queue
-            // -> now we can clear all pending tasks
-            std::scoped_lock its_handler_lock{handlers_mutex_};
-            subscription_handlers_.clear();
-        }
-        if (routing_app_) {
-            routing_app_->stop();
-        }
+        auto finalize_stop = [this, weak_self = weak_from_this()] {
+            if (auto self = weak_self.lock(); self) {
+                {
+                    // no new handlers can be invoked as the routing_->stop ensures
+                    // no io thread is pushing any task into the queue
+                    // -> now we can clear all pending tasks
+                    std::scoped_lock its_handler_lock{handlers_mutex_};
+                    subscription_handlers_.clear();
+                }
+                if (routing_app_) {
+                    routing_app_->stop();
+                }
 
-        io_.stop();
+                io_.stop();
+            }
+        };
+        if (routing_) {
+            routing_->stop().then(finalize_stop);
+        } else {
+            finalize_stop();
+        }
     });
 }
 
@@ -1306,17 +1312,6 @@ void application_impl::set_client(const client_t& _client) {
 
         for (const auto& [id, thread] : dispatchers_) {
             pthread_setname_np(thread->native_handle(), s.str().c_str());
-        }
-    }
-    // stop thread
-    {
-        std::scoped_lock its_lock{start_stop_mutex_};
-
-        std::stringstream s;
-        s << hex4(client_) << "_shutdown";
-
-        if (stop_thread_.joinable()) {
-            pthread_setname_np(stop_thread_.native_handle(), s.str().c_str());
         }
     }
 #endif
