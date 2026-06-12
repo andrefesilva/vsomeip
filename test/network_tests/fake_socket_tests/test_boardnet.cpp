@@ -1211,7 +1211,8 @@ TEST_F(server_offering_multiple_fields, test_sd_unicat_gate_early_loading) {
     // Guarantee the gate has been blocked.
     ASSERT_TRUE(router_two_sd_gate->wait_for_blocked());
     // Check that no offer has been received.
-    EXPECT_FALSE(client->availability_record_.wait_for_last(service_availability::available(multi_field_service_.instance_)));
+    EXPECT_FALSE(client->availability_record_.wait_for_last(service_availability::available(multi_field_service_.instance_),
+                                                            std::chrono::milliseconds(250)));
     // Release the gate, message pushes through.
     router_two_sd_gate->block(false);
     EXPECT_TRUE(client->availability_record_.wait_for_last(service_availability::available(multi_field_service_.instance_)));

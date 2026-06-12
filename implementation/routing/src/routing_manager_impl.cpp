@@ -264,7 +264,7 @@ void routing_manager_impl::stop() {
     }
 
     {
-        std::scoped_lock its_lock{offer_serialization_mutex_};
+        std::scoped_lock its_lock{mutex_};
         last_stop_offer_.clear();
         stop_offer_graceful_timer_.cancel();
     }
@@ -285,13 +285,7 @@ bool routing_manager_impl::is_local_client(client_t _client) const {
 
 bool routing_manager_impl::offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                          minor_version_t _minor) {
-    bool external_routing_ready{false};
-    {
-        std::scoped_lock its_lock(on_state_change_mutex_);
-        external_routing_ready = is_external_routing_ready();
-    }
-
-    std::scoped_lock its_lock{offer_serialization_mutex_};
+    std::scoped_lock its_lock{mutex_};
 
     if (!handle_local_offer_service(_client, _service, _instance, _major, _minor)) {
         VSOMEIP_INFO_P << "(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":" << int(_major) << "." << _minor
@@ -301,12 +295,12 @@ bool routing_manager_impl::offer_service(client_t _client, service_t _service, i
     }
 
     {
-        // offer_serialization_mutex_ locked.
+        // mutex_ locked.
         // Search the time-point-keyed map for an entry matching this service instance.
         const service_instance_t si{_service, _instance};
         auto it = std::find_if(last_stop_offer_.begin(), last_stop_offer_.end(), [&si](const auto& kv) { return kv.second.first == si; });
         if (it == last_stop_offer_.end()) {
-            offer_remote_service(_service, _instance, external_routing_ready);
+            offer_remote_service(_service, _instance, is_external_routing_ready());
         } else {
             /// Offering a service that has been stopped within milliseconds, can lead to a protocol race scenario in which combined with
             /// high CPU contention, the daemon could processes incoming subscriptions out of order i.e., associated with offers sent
@@ -329,7 +323,7 @@ bool routing_manager_impl::offer_service(client_t _client, service_t _service, i
 
 void routing_manager_impl::stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                               minor_version_t _minor) {
-    std::scoped_lock its_lock{offer_serialization_mutex_};
+    std::scoped_lock its_lock{mutex_};
 
     bool is_local(false);
     {
@@ -1199,7 +1193,7 @@ void routing_manager_impl::on_notification(client_t _client, service_t _service,
 
 void routing_manager_impl::on_stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                                  minor_version_t _minor) {
-    std::scoped_lock its_lock{offer_serialization_mutex_};
+    std::scoped_lock its_lock{mutex_};
     on_stop_offer_service_unlocked(_client, _service, _instance, _major, _minor, true);
 }
 
@@ -2610,10 +2604,10 @@ void routing_manager_impl::cleanup_client(client_t _client) {
     VSOMEIP_INFO_P << "self 0x" << hex4(get_client()) << " handles cleanup of client 0x" << hex4(_client);
 
     // Since the client could be offering services that need to be removed
-    // lock the offer serialization mutex. This is needed here to prevent
+    // Lock state and offer serialization. This is needed here to prevent
     // a lock inversion with rms routing_info_mutex_
     {
-        std::scoped_lock its_lock{offer_serialization_mutex_};
+        std::scoped_lock its_lock{mutex_};
         stub_->deregister_client(_client);
     }
 
@@ -2663,7 +2657,7 @@ routing_state_e routing_manager_impl::get_routing_state() {
 }
 
 void routing_manager_impl::set_routing_state(routing_state_e _routing_state) {
-    std::scoped_lock its_lock(on_state_change_mutex_);
+    std::scoped_lock its_lock(mutex_);
 
     if (routing_state_ == _routing_state) {
         VSOMEIP_INFO_P << "No routing state change --> do nothing.";
@@ -2677,12 +2671,9 @@ void routing_manager_impl::set_routing_state(routing_state_e _routing_state) {
         case routing_state_e::RS_SUSPENDED: {
             VSOMEIP_INFO_P << "Set routing to RS_SUSPENDED";
 
-            {
-                std::scoped_lock its_inner_lock{offer_serialization_mutex_};
-                // Remove all stop offers and cancel the shared graceful timer.
-                last_stop_offer_.clear();
-                stop_offer_graceful_timer_.cancel();
-            }
+            // Remove all stop offers and cancel the shared graceful timer.
+            last_stop_offer_.clear();
+            stop_offer_graceful_timer_.cancel();
 
             // stop processing of incoming SD messages
             discovery_->suspend();
@@ -2880,7 +2871,7 @@ void routing_manager_impl::on_net_interface_or_route_state_changed(bool _is_inte
     bool switch_to_resumed = false;
 
     {
-        std::scoped_lock its_lock(on_state_change_mutex_);
+        std::scoped_lock its_lock(mutex_);
         if (_is_interface) {
             if (_available != if_state_running_) {
                 log_change_message(_available);
@@ -2939,6 +2930,7 @@ void routing_manager_impl::start_ip_routing() {
 }
 
 void routing_manager_impl::init_pending_services() {
+    // Needs to be called with mutex_ locked so offers cannot be queued after pending_sd_offers_ is drained.
     std::scoped_lock its_lock(pending_sd_offers_mutex_);
     if (!pending_sd_offers_.empty()) {
         for (auto [service, instance] : pending_sd_offers_) {
@@ -4457,13 +4449,7 @@ void routing_manager_impl::stop_offer_graceful_timeout(const boost::system::erro
         return;
     }
 
-    bool external_routing_ready{false};
-    {
-        std::scoped_lock its_lock(on_state_change_mutex_);
-        external_routing_ready = is_external_routing_ready();
-    }
-
-    std::scoped_lock its_lock(offer_serialization_mutex_);
+    std::scoped_lock its_lock(mutex_);
     // Drain all entries whose deadline has been reached.
     const auto now = std::chrono::steady_clock::now();
     for (auto it = last_stop_offer_.begin(); it != last_stop_offer_.end() && it->first <= now;) {
@@ -4475,7 +4461,7 @@ void routing_manager_impl::stop_offer_graceful_timeout(const boost::system::erro
         if (offer_pending) {
             VSOMEIP_INFO << "Graceful stop-offer window expired for service 0x" << hex4(si.service()) << "." << hex4(si.instance())
                          << ". Service can be offered again.";
-            offer_remote_service(si.service(), si.instance(), external_routing_ready);
+            offer_remote_service(si.service(), si.instance(), is_external_routing_ready());
         }
     }
 
@@ -4488,7 +4474,7 @@ void routing_manager_impl::stop_offer_graceful_timeout(const boost::system::erro
             std::bind(&routing_manager_impl::stop_offer_graceful_timeout, shared_from_this(), std::placeholders::_1));
 }
 
-// Needs to be called with offer_serialization_mutex_ locked.
+// Needs to be called with mutex_ locked.
 void routing_manager_impl::offer_remote_service(service_t _service, instance_t _instance, bool _external_routing_ready) {
     {
         if (_external_routing_ready) {
