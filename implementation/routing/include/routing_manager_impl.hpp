@@ -475,7 +475,8 @@ private:
     std::mutex last_resume_mutex_;
     std::chrono::steady_clock::time_point last_resume_;
 
-    std::mutex offer_serialization_mutex_;
+    // Serializes routing readiness transitions with local offer processing.
+    std::mutex mutex_;
     std::map<std::pair<service_t, instance_t>, std::deque<std::tuple<uint8_t, client_t, major_version_t, minor_version_t>>> offer_commands_;
 
     std::mutex callback_counts_mutex_;
@@ -492,8 +493,6 @@ private:
     std::mutex update_remote_subscription_mutex_;
 
     message_acceptance_handler_t message_acceptance_handler_;
-
-    std::mutex on_state_change_mutex_;
 
     services_t services_remote_;
     mutable std::mutex services_remote_mutex_;
