@@ -441,6 +441,7 @@ bool udp_server_endpoint_impl::send_queued_unlocked(const target_data_iterator_t
                                        });
         return true;
     } else {
+        VSOMEIP_ERROR_P << instance_name_ << " Failed to cast to udp_server_endpoint_impl";
         return false;
     }
 }
