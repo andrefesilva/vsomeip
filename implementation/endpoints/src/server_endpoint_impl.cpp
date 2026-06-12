@@ -95,10 +95,6 @@ bool server_endpoint_impl<Protocol>::send(const uint8_t* _data, uint32_t _size) 
     if (VSOMEIP_SESSION_POS_MAX < _size) {
         std::scoped_lock its_lock{mutex_};
 
-        if (endpoint_impl<Protocol>::sending_blocked_) {
-            return false;
-        }
-
         const service_t its_service = bithelper::read_uint16_be(&_data[VSOMEIP_SERVICE_POS_MIN]);
         const method_t its_method = bithelper::read_uint16_be(&_data[VSOMEIP_METHOD_POS_MIN]);
         const client_t its_client = bithelper::read_uint16_be(&_data[VSOMEIP_CLIENT_POS_MIN]);
@@ -114,6 +110,8 @@ bool server_endpoint_impl<Protocol>::send(const uint8_t* _data, uint32_t _size) 
         if (is_valid_target) {
             is_valid_target = send_intern(its_target, _data, _size);
         }
+    } else {
+        VSOMEIP_ERROR_P << "Message too short to send: " << _size;
     }
     return is_valid_target;
 }
@@ -147,7 +145,6 @@ bool server_endpoint_impl<Protocol>::send_intern(endpoint_type _target, const by
         return segment_message(_data, _size, _target) == endpoint_impl<Protocol>::cms_ret_e::MSG_WAS_SPLIT;
     }
 
-    bool must_depart(false);
     auto its_now(std::chrono::steady_clock::now());
 
     // STEP 2: Cancel the dispatch timer
@@ -162,44 +159,42 @@ bool server_endpoint_impl<Protocol>::send_intern(endpoint_type _target, const by
         get_configured_times_from_endpoint(its_service, its_method, &its_debouncing, &its_retention);
     }
 
-    // STEP 4: Check if the passenger enters an empty train
     const std::pair<service_t, method_t> its_identifier = std::make_pair(its_service, its_method);
-    if (its_data.train_->passengers_.empty()) {
-        its_data.train_->departure_ = its_now + its_retention;
-    } else {
-        if (its_data.train_->passengers_.end() != its_data.train_->passengers_.find(its_identifier)) {
-            must_depart = true;
-        } else {
-            // STEP 5: Check whether the current message fits into the current train
-            if (its_data.train_->buffer_->size() + _size > endpoint_impl<Protocol>::max_message_size_) {
-                must_depart = true;
-            } else {
-                // STEP 6: Check debouncing time
-                if (its_debouncing > its_data.train_->minimal_max_retention_time_) {
-                    // train's latest departure would already undershot new
-                    // passenger's debounce time
-                    must_depart = true;
-                } else {
-                    if (its_now + its_debouncing > its_data.train_->departure_) {
-                        // train departs earlier as the new passenger's debounce
-                        // time allows
-                        must_depart = true;
-                    } else {
-                        // STEP 7: Check maximum retention time
-                        if (its_retention < its_data.train_->minimal_debounce_time_) {
-                            // train's earliest departure would already exceed
-                            // the new passenger's retention time.
-                            must_depart = true;
-                        } else {
-                            if (its_now + its_retention < its_data.train_->departure_) {
-                                its_data.train_->departure_ = its_now + its_retention;
-                            }
-                        }
-                    }
-                }
-            }
+    auto must_depart = [&]() {
+        // STEP 4: Check if the passenger enters an empty train
+        if (its_data.train_->passengers_.empty()) {
+            its_data.train_->departure_ = its_now + its_retention;
+            return false;
         }
-    }
+        if (its_data.train_->passengers_.end() != its_data.train_->passengers_.find(its_identifier)) {
+            return true;
+        }
+        // STEP 5: Check whether the current message fits into the current train
+        if (its_data.train_->buffer_->size() + _size > endpoint_impl<Protocol>::max_message_size_) {
+            return true;
+        }
+        // STEP 6: Check debouncing time
+        if (its_debouncing > its_data.train_->minimal_max_retention_time_) {
+            // train's latest departure would already undershot new
+            // passenger's debounce time
+            return true;
+        }
+        if (its_now + its_debouncing > its_data.train_->departure_) {
+            // train departs earlier as the new passenger's debounce
+            // time allows
+            return true;
+        }
+        // STEP 7: Check maximum retention time
+        if (its_retention < its_data.train_->minimal_debounce_time_) {
+            // train's earliest departure would already exceed
+            // the new passenger's retention time.
+            return true;
+        }
+        if (its_now + its_retention < its_data.train_->departure_) {
+            its_data.train_->departure_ = its_now + its_retention;
+        }
+        return false;
+    }();
 
     // STEP 8: if necessary, send current buffer and create a new one
     if (must_depart) {
@@ -439,6 +434,9 @@ bool server_endpoint_impl<Protocol>::queue_train(target_data_iterator_type _it, 
                && is_reliable() == (this->configuration_->get_sd_protocol() == "tcp")) {
         VSOMEIP_WARNING_P << "SD endpoint is currently sending " << its_data.is_sending_ << " queue size: " << its_data.queue_size_
                           << " target address: " << _it->first;
+    } else {
+        VSOMEIP_WARNING_P << "Endpoint is currently sending " << its_data.is_sending_ << " queue size: " << its_data.queue_size_
+                          << " target address: " << _it->first;
     }
 
     return must_erase;
@@ -446,20 +444,20 @@ bool server_endpoint_impl<Protocol>::queue_train(target_data_iterator_type _it, 
 
 template<typename Protocol>
 bool server_endpoint_impl<Protocol>::flush(endpoint_type _key) {
-
     bool has_queued(true);
     bool is_current_train(true);
 
     std::scoped_lock its_lock(mutex_);
 
     auto it = targets_.find(_key);
-    if (it == targets_.end())
+    if (it == targets_.end()) {
+        VSOMEIP_WARNING_P << "Flush called for non-existing target " << _key;
         return false;
+    }
 
     auto& its_data = it->second;
     auto its_train(its_data.train_);
     if (!its_data.dispatched_trains_.empty()) {
-
         auto its_dispatched = its_data.dispatched_trains_.begin();
         if (its_dispatched->first <= its_train->departure_) {
 
@@ -476,7 +474,6 @@ bool server_endpoint_impl<Protocol>::flush(endpoint_type _key) {
     }
 
     if (!its_train->buffer_->empty()) {
-
         queue_train(it, its_train);
 
         // Reset current train if necessary
@@ -484,11 +481,11 @@ bool server_endpoint_impl<Protocol>::flush(endpoint_type _key) {
             its_train->reset();
         }
     } else {
+        VSOMEIP_WARNING_P << "Flush called for empty train for target " << _key;
         has_queued = false;
     }
 
     if (!is_current_train || !its_data.dispatched_trains_.empty()) {
-
         auto its_now(std::chrono::steady_clock::now());
         start_dispatch_timer(it, its_now);
     }
@@ -552,8 +549,7 @@ void server_endpoint_impl<Protocol>::send_cbk(const endpoint_type _key, boost::s
             parse_message_ids(its_buffer, its_service, its_method, its_client, its_session);
             VSOMEIP_WARNING_P << "Prevented queue_size underflow. queue_size: " << its_data.queue_size_ << " payload_size: " << payload_size
                               << " payload: (" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_method) << "."
-                              << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_method) << "." << hex4(its_session)
-                              << "]";
+                              << hex4(its_session) << "]";
             its_data.queue_.pop_front();
             recalculate_queue_size(its_data);
         }
@@ -579,8 +575,14 @@ template<typename Protocol>
 void server_endpoint_impl<Protocol>::flush_cbk(endpoint_type _key, const boost::system::error_code& _error_code) {
 
     if (!_error_code) {
-
         (void)flush(_key);
+    } else if (_error_code != boost::asio::error::operation_aborted) {
+        std::scoped_lock its_lock(mutex_);
+        auto it = targets_.find(_key);
+        if (it != targets_.end()) {
+            VSOMEIP_ERROR_P << "Received error: " << _error_code.message() << " (" << _error_code.value() << ") "
+                            << get_remote_information(it) << " endpoint -> " << this;
+        }
     }
 }
 
