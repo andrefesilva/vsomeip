@@ -15,8 +15,7 @@ fi
 # the testcase simply executes this script. This script then runs the services
 # and checks that all exit successfully.
 
-if [ $# -lt 1 ]
-then
+if [ $# -lt 1 ]; then
     echo "Please pass a json file to this script."
     echo "For example: $0 initial_event_test_diff_client_ids_diff_ports_master.json"
     echo "To use the same service id but different instances on the node pass SAME_SERVICE_ID as third parameter"
@@ -54,6 +53,14 @@ PID_SERVICE_THREE=$!
 
 unset VSOMEIP_APPLICATION_NAME
 
+# Verify the routing daemon is still alive before starting clients.
+if ! kill -0 $PID_SERVICE_ONE 2>/dev/null; then
+    echo "ERROR: Routing daemon (service_one) died before clients started" >&2
+    kill $PID_SERVICE_TWO $PID_SERVICE_THREE 2>/dev/null
+    wait $PID_SERVICE_ONE $PID_SERVICE_TWO $PID_SERVICE_THREE 2>/dev/null
+    exit 1
+fi
+
 # Array for client pids
 CLIENT_PIDS=()
 
@@ -76,45 +83,48 @@ PID_SERVICE=$!
 REMAINING_OPTIONS=${REMAINING_OPTIONS%SUBSCRIBE_ONLY_ONE}
 REMAINING_OPTIONS=${REMAINING_OPTIONS#SUBSCRIBE_ONLY_ONE}
 
-
 # wait until the services on the remote node were started as well
 echo "WAITING FOR SERVICE AVAILABILITY"
 wait $PID_AVAILABILITY_CHECKER
 echo "ALL SERVICES ARE AVAILABLE NOW"
 
-for client_number in $(seq 9003 9013)
-do
+for client_number in $(seq 9003 9013); do
     export VSOMEIP_APPLICATION_NAME="master_initial_event_test_client_$client_number"
-   ./initial_event_test_client $client_number $REMAINING_OPTIONS &
-   CLIENT_PIDS+=($!)
+    ./initial_event_test_client $client_number $REMAINING_OPTIONS &
+    CLIENT_PIDS+=($!)
 done
 
-
 # Wait until all clients are finished
-for job in ${CLIENT_PIDS[*]}
-do
+for job in ${CLIENT_PIDS[*]}; do
     # Fail gets incremented if a client exits with a non-zero exit code
-    wait $job || FAIL=$(($FAIL+1))
+    wait $job || FAIL=$(($FAIL + 1))
 done
 
 echo "Starting stop service | Master"
 
-# wait until all clients exited on slave side
-export VSOMEIP_APPLICATION_NAME=master_initial_event_test_stop_service
-./initial_event_test_stop_service MASTER $REMAINING_OPTIONS $PID_SERVICE_TWO $PID_SERVICE_THREE || FAIL=$(($FAIL+1))
+# Skip stop_service if the routing daemon is already dead — it would loop
+# forever trying to connect to the routing manager socket.
+if kill -0 $PID_SERVICE_ONE 2>/dev/null; then
+    # wait until all clients exited on slave side
+    export VSOMEIP_APPLICATION_NAME=master_initial_event_test_stop_service
+    ./initial_event_test_stop_service MASTER $REMAINING_OPTIONS $PID_SERVICE_TWO $PID_SERVICE_THREE || FAIL=$(($FAIL + 1))
+else
+    echo "WARNING: Routing daemon (service_one) is dead, skipping stop_service" >&2
+    FAIL=$(($FAIL + 1))
+fi
 
 # shutdown all clients/services
 kill $FIRST_PID
 
 # wait for slave
-wait $PID_SERVICE || FAIL=$(($FAIL+1))
+wait $PID_SERVICE || FAIL=$(($FAIL + 1))
 
-wait $FIRST_PID || FAIL=$(($FAIL+1))
-wait $PID_SERVICE_THREE || FAIL=$(($FAIL+1))
-wait $PID_SERVICE_TWO || FAIL=$(($FAIL+1))
+wait $FIRST_PID || FAIL=$(($FAIL + 1))
+wait $PID_SERVICE_THREE || FAIL=$(($FAIL + 1))
+wait $PID_SERVICE_TWO || FAIL=$(($FAIL + 1))
 
 # after everything, because this application is the router
 kill $PID_SERVICE_ONE
-wait $PID_SERVICE_ONE || FAIL=$(($FAIL+1))
+wait $PID_SERVICE_ONE || FAIL=$(($FAIL + 1))
 
 exit $FAIL
