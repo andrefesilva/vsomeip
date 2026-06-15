@@ -19,7 +19,7 @@ struct policy;
 
 namespace protocol {
 
-class security_policy_response_command_base : public command {
+class [[deprecated("security_policy_response_command_base is deprecated")]] security_policy_response_command_base : public command {
 public:
     security_policy_response_command_base(id_e _id);
 
