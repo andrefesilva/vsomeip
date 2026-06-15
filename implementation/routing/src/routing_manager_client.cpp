@@ -809,11 +809,9 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         bool is_from_routing = (_peer_data.id_ == VSOMEIP_ROUTING_CLIENT);
 
-        if (configuration_->is_security_enabled() && routing_mode_ == routing_mode_e::UDS_ONLY && !is_from_routing
-            && _peer_data.id_ != its_client) {
-            VSOMEIP_WARNING_P << "Client 0x" << hex4(get_client()) << " received a message with command " << static_cast<int>(its_id)
-                              << " from " << hex4(its_client) << " which doesn't match the bound client " << hex4(_peer_data.id_)
-                              << " ~> skip message!";
+        if (!is_from_routing && _peer_data.id_ != its_client) {
+            VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a message with command " << its_id << " from "
+                            << hex4(its_client) << " which doesn't match the bound client " << hex4(_peer_data.id_) << " ~> skip message!";
             return;
         }
 
@@ -900,10 +898,10 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                 const bool is_notification = utility::is_notification(its_message->get_message_type());
 
                                 if (is_notification) {
-                                    auto const sec_client = get_sec_client();
+                                    auto const my_sec_client = get_sec_client();
                                     const bool is_access_member_ok = (VSOMEIP_SEC_OK
                                                                       == configuration_->get_security()->is_client_allowed_to_access_member(
-                                                                              &sec_client, its_message->get_service(),
+                                                                              &my_sec_client, its_message->get_service(),
                                                                               its_message->get_instance(), its_message->get_method()));
 
                                     if (!is_access_member_ok) {
@@ -947,10 +945,11 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                             // local policy only allows specific events in the eventgroup to be
                             // received.
 
-                            auto const sec_client = get_sec_client();
+                            auto const my_sec_client = get_sec_client();
                             if (VSOMEIP_SEC_OK
                                 != configuration_->get_security()->is_client_allowed_to_access_member(
-                                        &sec_client, its_message->get_service(), its_message->get_instance(), its_message->get_method())) {
+                                        &my_sec_client, its_message->get_service(), its_message->get_instance(),
+                                        its_message->get_method())) {
                                 VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
                                                 << " : routing_manager_client::on_message: "
                                                 << " isn't allowed to receive a notification from service/instance/event "
