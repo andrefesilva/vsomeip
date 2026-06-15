@@ -99,6 +99,38 @@ TEST(ut_commands_roundtrip, resend_provided_events_roundtrip) {
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
 
+// --- Service commands (composite payload) ---
+
+TEST(ut_commands_roundtrip, release_service_roundtrip) {
+    auto cmd = create_release_service_cmd(0x1234, 0xABCD, 0x0001);
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, unregister_event_roundtrip) {
+    auto cmd = create_unregister_event_cmd(0x1234, 0xABCD, 0x0001, 0x4242, true);
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, unsubscribe_ack_roundtrip) {
+    auto cmd = create_unsubscribe_ack_cmd(0x1234, 0xABCD, 0x0001, 0x0005, 0x1111);
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, remove_security_policy_roundtrip) {
+    auto cmd = create_remove_security_policy_cmd(0x1234, 0x00ABCDEF, 0x000003E8, 0x000003E9);
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, update_security_policy_response_roundtrip) {
+    auto cmd = create_update_security_policy_response_cmd(0x1234, 0x0000BEEF);
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, remove_security_policy_response_roundtrip) {
+    auto cmd = create_remove_security_policy_response_cmd(0x1234, 0x0000BEEF);
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
 // --- Non-owning commands
 TEST(ut_commands_roundtrip, request_service_command) {
     std::vector<protocol::service_data> no{};

@@ -18,7 +18,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class unregister_event_command : public command {
+class [[deprecated("unregister_event_command is deprecated.")]] unregister_event_command : public command {
 public:
     unregister_event_command();
 
