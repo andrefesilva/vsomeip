@@ -10,7 +10,8 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class remove_security_policy_response_command : public security_policy_response_command_base {
+class [[deprecated("remove_security_policy_response_command is deprecated.")]] remove_security_policy_response_command
+    : public security_policy_response_command_base {
 
 public:
     remove_security_policy_response_command();

@@ -48,6 +48,14 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.id_, _value.version_, _value.client_, _value.length_);
     } else if constexpr (std::is_same_v<T, service_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.major_version_, _value.minor_version_);
+    } else if constexpr (std::is_same_v<T, release_service_data>) {
+        return write_fields(_mem, _value.service_, _value.instance_);
+    } else if constexpr (std::is_same_v<T, unregister_event_data>) {
+        return write_fields(_mem, _value.service_, _value.instance_, _value.event_, _value.is_provided_);
+    } else if constexpr (std::is_same_v<T, unsubscribe_ack_data>) {
+        return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.pending_id_);
+    } else if constexpr (std::is_same_v<T, remove_security_policy_data>) {
+        return write_fields(_mem, _value.update_id_, _value.uid_, _value.gid_);
     } else if constexpr (std::ranges::range<T>) {
         // covers span, vector, set, map etc..
         uint32_t written = 0;

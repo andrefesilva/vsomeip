@@ -12,7 +12,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class release_service_command : public command {
+class [[deprecated("release_service_command is deprecated.")]] release_service_command : public command {
 public:
     release_service_command();
 

@@ -32,21 +32,15 @@
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/register_events_command.hpp"
-#include "../../protocol/include/release_service_command.hpp"
-#include "../../protocol/include/remove_security_policy_command.hpp"
-#include "../../protocol/include/remove_security_policy_response_command.hpp"
 #include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
 #include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/subscribe_nack_command.hpp"
-#include "../../protocol/include/unregister_event_command.hpp"
-#include "../../protocol/include/unsubscribe_ack_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
 #include "../../protocol/include/update_security_credentials_command.hpp"
 #include "../../protocol/include/update_security_policy_command.hpp"
-#include "../../protocol/include/update_security_policy_response_command.hpp"
 #include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../protocol/include/serialize.hpp"
@@ -318,22 +312,19 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::UNSUBSCRIBE_ACK_ID: {
-        protocol::unsubscribe_ack_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        if (protocol::unsubscribe_ack_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            its_client = its_command.get_client();
-            its_service = its_command.get_service();
-            its_instance = its_command.get_instance();
-            its_eventgroup = its_command.get_eventgroup();
-            its_subscription_id = its_command.get_pending_id();
+            its_service = its_data.service_;
+            its_instance = its_data.instance_;
+            its_eventgroup = its_data.eventgroup_;
+            its_subscription_id = its_data.pending_id_;
 
             host_->on_unsubscribe_ack(its_client, its_service, its_instance, its_eventgroup, its_subscription_id);
 
             VSOMEIP_INFO << "UNSUBSCRIBE ACK(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
                          << hex4(its_eventgroup) << "] id=" << hex4(its_subscription_id);
         } else
-            VSOMEIP_ERROR_P << "Deserializing unsubscribe ack failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Deserializing unsubscribe ack failed, memory: " << utility::dump(_data, _size);
         break;
     }
 
@@ -442,13 +433,12 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::RELEASE_SERVICE_ID: {
-        protocol::release_service_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
-
-            host_->release_service(its_command.get_client(), its_command.get_service(), its_command.get_instance());
-        } else
-            VSOMEIP_ERROR_P << "Release service deserialization failed (" << static_cast<int>(its_error) << ")";
+        if (protocol::release_service_data its_release_data;
+            protocol::deserialize(its_release_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            host_->release_service(its_client, its_release_data.service_, its_release_data.instance_);
+        } else {
+            VSOMEIP_ERROR_P << "Release service deserialization failed, memory: " << utility::dump(_data, _size);
+        }
         break;
     }
 
@@ -487,18 +477,14 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::UNREGISTER_EVENT_ID: {
-        protocol::unregister_event_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        if (protocol::unregister_event_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            host_->unregister_shadow_event(its_command.get_client(), its_command.get_service(), its_command.get_instance(),
-                                           its_command.get_event(), its_command.is_provided());
+            host_->unregister_shadow_event(its_client, its_data.service_, its_data.instance_, its_data.event_, its_data.is_provided_);
 
-            VSOMEIP_INFO << "UNREGISTER EVENT(" << hex4(its_command.get_client()) << "): [" << hex4(its_command.get_service()) << "."
-                         << hex4(its_command.get_instance()) << "." << hex4(its_command.get_event()) << ":is_provider=" << std::boolalpha
-                         << its_command.is_provided() << "]";
+            VSOMEIP_INFO << "UNREGISTER EVENT(" << hex4(its_client) << "): [" << hex4(its_data.service_) << "." << hex4(its_data.instance_)
+                         << "." << hex4(its_data.event_) << ":is_provider=" << std::boolalpha << its_data.is_provided_ << "]";
         } else
-            VSOMEIP_ERROR_P << "Unregister event deserialization failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Unregister event deserialization failed, memory: " << utility::dump(_data, _size);
         break;
     }
 
@@ -522,22 +508,18 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 #ifndef VSOMEIP_DISABLE_SECURITY
     case protocol::id_e::UPDATE_SECURITY_POLICY_RESPONSE_ID: {
-        protocol::update_security_policy_response_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
-            on_security_update_response(its_command.get_update_id(), its_client);
+        if (uint32_t its_update_id; protocol::deserialize(its_update_id, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            on_security_update_response(its_update_id, its_client);
         } else
-            VSOMEIP_ERROR_P << "Update security policy deserialization failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Update security policy deserialization failed, memory: " << utility::dump(_data, _size);
         break;
     }
 
     case protocol::id_e::REMOVE_SECURITY_POLICY_RESPONSE_ID: {
-        protocol::remove_security_policy_response_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
-            on_security_update_response(its_command.get_update_id(), its_client);
+        if (uint32_t its_update_id; protocol::deserialize(its_update_id, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            on_security_update_response(its_update_id, its_client);
         } else
-            VSOMEIP_ERROR_P << "Update security policy deserialization failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Remove security policy deserialization failed, memory: " << utility::dump(_data, _size);
         break;
     }
 #endif // !VSOMEIP_DISABLE_SECURITY
@@ -1298,17 +1280,8 @@ bool routing_manager_stub::send_cached_security_policies(client_t _client) {
 bool routing_manager_stub::send_remove_security_policy_request(client_t _client, pending_security_update_id_t _update_id, uid_t _uid,
                                                                gid_t _gid) {
 
-    protocol::remove_security_policy_command its_command;
-    its_command.set_client(_client);
-    its_command.set_update_id(_update_id);
-    its_command.set_uid(_uid);
-    its_command.set_gid(_gid);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
     if (auto its_endpoint = find_local_routing_endpoint(_client); its_endpoint) {
-        return send_local(its_endpoint, its_buffer);
+        return its_endpoint->send(protocol::create_remove_security_policy_cmd(_client, _update_id, _uid, _gid));
     } else {
         VSOMEIP_ERROR_P << "Cannot find local client endpoint for client 0x" << hex4(_client);
     }

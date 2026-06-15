@@ -10,7 +10,8 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class update_security_policy_response_command : public security_policy_response_command_base {
+class [[deprecated("update_security_policy_response_command is deprecated.")]] update_security_policy_response_command
+    : public security_policy_response_command_base {
 
 public:
     update_security_policy_response_command();
