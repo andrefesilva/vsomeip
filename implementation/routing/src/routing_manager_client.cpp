@@ -43,21 +43,15 @@
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/register_events_command.hpp"
-#include "../../protocol/include/release_service_command.hpp"
-#include "../../protocol/include/remove_security_policy_command.hpp"
-#include "../../protocol/include/remove_security_policy_response_command.hpp"
 #include "../../protocol/include/request_service_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
 #include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/subscribe_nack_command.hpp"
-#include "../../protocol/include/unregister_event_command.hpp"
-#include "../../protocol/include/unsubscribe_ack_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
 #include "../../protocol/include/update_security_credentials_command.hpp"
 #include "../../protocol/include/update_security_policy_command.hpp"
-#include "../../protocol/include/update_security_policy_response_command.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../protocol/include/serialize.hpp"
 #include "../../service_discovery/include/runtime.hpp"
@@ -397,7 +391,12 @@ void routing_manager_client::release_service(client_t _client, service_t _servic
         already_requested = requests_.remove(request);
     }
     if (already_requested && state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
-        send_release_service(_client, _service, _instance);
+        std::scoped_lock its_sender_lock{sender_mutex_};
+        if (sender_) {
+            sender_->send(protocol::create_release_service_cmd(_client, _service, _instance));
+        } else {
+            VSOMEIP_ERROR_P << "Failed due to a missing sender";
+        }
     }
 }
 
@@ -474,18 +473,9 @@ void routing_manager_client::unregister_event(client_t _client, service_t _servi
     }
     if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
 
-        protocol::unregister_event_command its_command;
-        its_command.set_client(get_client());
-        its_command.set_service(_service);
-        its_command.set_instance(_instance);
-        its_command.set_event(_notifier);
-        its_command.set_provided(_is_provided);
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
         std::scoped_lock its_sender_lock{sender_mutex_};
         if (sender_) {
-            sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            sender_->send(protocol::create_unregister_event_cmd(get_client(), _service, _instance, _notifier, _is_provided));
         } else {
             VSOMEIP_ERROR_P << "Failed due to a missing sender";
         }
@@ -1195,7 +1185,13 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                     unsubscribe_base(VSOMEIP_ROUTING_CLIENT, its_service, its_instance, its_eventgroup, its_event,
                                                      its_lock);
                                 }
-                                send_unsubscribe_ack(its_service, its_instance, its_eventgroup, its_pending_id);
+                                std::scoped_lock its_sender_lock{sender_mutex_};
+                                if (sender_) {
+                                    sender_->send(protocol::create_unsubscribe_ack_cmd(get_client(), its_service, its_instance,
+                                                                                       its_eventgroup, its_pending_id));
+                                } else {
+                                    VSOMEIP_ERROR_P << "Failed due to a missing sender";
+                                }
                             }
                             VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
                                          << "." << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
@@ -1350,7 +1346,13 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                         if (is_internal_policy_update
                             || configuration_->get_policy_manager()->is_policy_update_allowed(its_uid, its_policy)) {
                             configuration_->get_policy_manager()->update_security_policy(its_uid, its_gid, its_policy);
-                            send_update_security_policy_response(its_command.get_update_id());
+                            std::scoped_lock its_sender_lock{sender_mutex_};
+                            if (sender_) {
+                                sender_->send(
+                                        protocol::create_update_security_policy_response_cmd(get_client(), its_command.get_update_id()));
+                            } else {
+                                VSOMEIP_ERROR_P << "Failed due to a missing sender";
+                            }
                         }
                     } else {
                         VSOMEIP_ERROR << "vSomeIP Security: Policy has no valid uid/gid!";
@@ -1368,19 +1370,23 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::REMOVE_SECURITY_POLICY_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
-                protocol::remove_security_policy_command its_command;
-                its_command.deserialize(its_buffer, its_error);
-                if (its_error == protocol::error_e::ERROR_OK) {
+                if (protocol::remove_security_policy_data its_data;
+                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-                    uid_t its_uid(its_command.get_uid());
-                    gid_t its_gid(its_command.get_gid());
+                    uid_t its_uid(its_data.uid_);
+                    gid_t its_gid(its_data.gid_);
 
                     if (configuration_->get_policy_manager()->is_policy_removal_allowed(its_uid)) {
                         configuration_->get_policy_manager()->remove_security_policy(its_uid, its_gid);
-                        send_remove_security_policy_response(its_command.get_update_id());
+                        std::scoped_lock its_sender_lock{sender_mutex_};
+                        if (sender_) {
+                            sender_->send(protocol::create_remove_security_policy_response_cmd(get_client(), its_data.update_id_));
+                        } else {
+                            VSOMEIP_ERROR_P << "Failed due to a missing sender";
+                        }
                     }
                 } else
-                    VSOMEIP_ERROR_P << "Remove security policy command deserialization failed (" << static_cast<int>(its_error) << ")";
+                    VSOMEIP_ERROR_P << "Remove security policy command deserialization failed, memory: " << utility::dump(_data, _size);
             } else
                 VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " : routing_manager_client::on_message: "
                                 << "received a security policy removal from a client which isn't the routing manager"
@@ -1662,25 +1668,6 @@ bool routing_manager_client::send_request_services(std::span<protocol::service_d
     VSOMEIP_ERROR_P << "Failed to send requested services";
 
     return false;
-}
-
-void routing_manager_client::send_release_service(client_t _client, service_t _service, instance_t _instance) {
-
-    (void)_client;
-
-    protocol::release_service_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_service(_service);
-    its_command.set_instance(_instance);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-    std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_) {
-        sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
-    } else {
-        VSOMEIP_ERROR_P << "Failed due to a missing sender";
-    }
 }
 
 bool routing_manager_client::send_pending_event_registrations(client_t _client) {
@@ -2053,27 +2040,6 @@ void routing_manager_client::send_get_offered_services_info(client_t _client, of
     }
 }
 
-void routing_manager_client::send_unsubscribe_ack(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
-                                                  remote_subscription_id_t _id) {
-
-    protocol::unsubscribe_ack_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_service(_service);
-    its_command.set_instance(_instance);
-    its_command.set_eventgroup(_eventgroup);
-    its_command.set_pending_id(_id);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
-    std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_) {
-        sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
-    } else {
-        VSOMEIP_ERROR_P << "Failed due to a missing sender";
-    }
-}
-
 void routing_manager_client::resend_provided_event_registrations() {
     std::scoped_lock its_lock(pending_event_registrations_mutex_);
     for (const event_data_t& ed : pending_event_registrations_) {
@@ -2085,39 +2051,6 @@ void routing_manager_client::resend_provided_event_registrations() {
 }
 
 #ifndef VSOMEIP_DISABLE_SECURITY
-void routing_manager_client::send_update_security_policy_response(pending_security_update_id_t _update_id) {
-
-    protocol::update_security_policy_response_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_update_id(_update_id);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
-    std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_) {
-        sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
-    } else {
-        VSOMEIP_ERROR_P << "Failed due to a missing sender";
-    }
-}
-
-void routing_manager_client::send_remove_security_policy_response(pending_security_update_id_t _update_id) {
-
-    protocol::remove_security_policy_response_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_update_id(_update_id);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
-    std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_) {
-        sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
-    } else {
-        VSOMEIP_ERROR_P << "Failed due to a missing sender";
-    }
-}
 
 void routing_manager_client::on_update_security_credentials(const protocol::update_security_credentials_command& _command) {
     for (const auto& c : _command.get_credentials()) {

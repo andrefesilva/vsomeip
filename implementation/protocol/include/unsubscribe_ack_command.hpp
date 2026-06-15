@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class unsubscribe_ack_command : public command {
+class [[deprecated("unsubscribe_ack_command is deprecated.")]] unsubscribe_ack_command : public command {
 
 public:
     unsubscribe_ack_command();

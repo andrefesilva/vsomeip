@@ -48,6 +48,22 @@ inline uint32_t deserialize(service_data& _out, unsigned char const* _mem, uint3
     return parse(_mem, _size, _out.service_, _out.instance_, _out.major_version_, _out.minor_version_);
 }
 
+inline uint32_t deserialize(release_service_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.service_, _out.instance_);
+}
+
+inline uint32_t deserialize(unregister_event_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.service_, _out.instance_, _out.event_, _out.is_provided_);
+}
+
+inline uint32_t deserialize(unsubscribe_ack_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.service_, _out.instance_, _out.eventgroup_, _out.pending_id_);
+}
+
+inline uint32_t deserialize(remove_security_policy_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.update_id_, _out.uid_, _out.gid_);
+}
+
 inline uint32_t deserialize(std::vector<service_data>& _out, unsigned char const* _mem, uint32_t _size) {
     uint32_t acc = 0;
     auto elems = _size / service_data::wire_size_;

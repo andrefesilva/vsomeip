@@ -173,8 +173,6 @@ private:
 
     bool send_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
 
-    void send_release_service(client_t _client, service_t _service, instance_t _instance);
-
     [[nodiscard]] bool send_pending_event_registrations(client_t _client);
 
     void send_register_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
@@ -218,14 +216,10 @@ private:
 
     bool send_request_services(std::span<protocol::service_data const> _requests);
 
-    void send_unsubscribe_ack(service_t _service, instance_t _instance, eventgroup_t _eventgroup, remote_subscription_id_t _id);
-
     void resend_provided_event_registrations();
     void status_log_timer_cbk(boost::system::error_code const& _error);
     void version_log_timer_cbk(boost::system::error_code const& _error);
 #ifndef VSOMEIP_DISABLE_SECURITY
-    void send_update_security_policy_response(pending_security_update_id_t _update_id);
-    void send_remove_security_policy_response(pending_security_update_id_t _update_id);
     void on_update_security_credentials(const protocol::update_security_credentials_command& _command);
 #endif
     void on_client_assign_ack(const client_t& _client, bool _is_tcp);
