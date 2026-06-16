@@ -280,17 +280,7 @@ void fake_udp_socket_handle::consume(std::vector<unsigned char> _buffer, boost::
                                      boost::asio::ip::udp::endpoint _dst) {
     auto const lock = std::scoped_lock(mtx_);
 
-    if (someip_message message; parse(_buffer, message) > 0) {
-        LOCAL_LOG << socket_id_ << " @ " << *local_ep_ << " received message from " << _src.address() << " data: " << message;
-        if (message.sd_) {
-            for (auto const& entry : message.sd_->get_entries()) {
-                someip_sd_record_message received_entry{entry->get_type(), entry->get_ttl()};
-                received_sd_record_.record(received_entry);
-            }
-        }
-    } else {
-        LOCAL_LOG << "Failure parsing data, not recording received message";
-    }
+    LOCAL_LOG << socket_id_ << " @ " << *local_ep_ << " received datagram from " << _src.address() << " (" << _buffer.size() << " bytes)";
 
     control_data_t data = {.buffer_ = _buffer, .addresses_ = std::optional<addresses>{{_src, _dst}}};
     receiver_pipe_->add_data(data);

@@ -397,18 +397,6 @@ public:
     void ignore_router_all_multicast_joins(std::string _router, bool _ignore);
 
     /**
-     * @brief Waits for _message to be received by the router _ep for _timeout amount of time.
-     * @return false, if the _messaage was not received within time.
-     */
-    [[nodiscard]] bool wait_for_sd_message(boost::asio::ip::udp::endpoint const& _ep, someip_sd_record_message _message,
-                                           std::chrono::milliseconds _timeout);
-
-    /**
-     * Clears the sd message record for \param _ep.
-     **/
-    void clear_sd_message_record(boost::asio::ip::udp::endpoint const& _ep);
-
-    /**
      * Set the netlink connector state to the provided one by calling its handler.
      */
     void set_netlink_connector_state(std::string const& _client, fake_netlink_connector::state_e _state);

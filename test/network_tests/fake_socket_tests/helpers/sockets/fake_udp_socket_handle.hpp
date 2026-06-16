@@ -137,8 +137,6 @@ struct fake_udp_socket_handle : public fake_socket_handle {
      */
     void set_block_communication(bool _block_comm);
 
-    attribute_recorder<someip_sd_record_message> received_sd_record_;
-
 private:
     void update_reception_unlocked();
 
