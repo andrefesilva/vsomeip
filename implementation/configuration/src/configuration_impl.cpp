@@ -421,7 +421,7 @@ bool configuration_impl::remote_offer_info_remove(service_t _service, instance_t
     } else {
         std::scoped_lock its_lock(services_mutex_);
         const auto search = services_.find(service_instance_t{_service, _instance});
-        if (services_.contains(service_instance_t{_service, _instance})) {
+        if (services_.count(service_instance_t{_service, _instance}) > 0) {
             VSOMEIP_INFO << "Removing remote configuration for service [" << hex4(_service) << "." << hex4(_instance) << "]";
             if (_reliable) {
                 search->second->reliable_ = ILLEGAL_PORT;
@@ -959,7 +959,7 @@ void configuration_impl::load_application_data(const boost::property_tree::ptree
         }
     }
     if (its_name != "") {
-        if (!applications_.contains(its_name)) {
+        if (applications_.count(its_name) == 0) {
             if (its_id != VSOMEIP_CLIENT_UNSET) {
                 if (!is_configured_client_id(its_id)) {
                     client_identifiers_.insert(its_id);
@@ -1916,9 +1916,9 @@ void configuration_impl::load_service(const boost::property_tree::ptree& _tree, 
         }
 
         // Initialize service_instance_ from the loaded service and instance values
-        its_service->service_instance_ = service_instance_t(service_id, instance_id);
+        its_service->service_instance_ = service_instance_t{service_id, instance_id};
 
-        if (services_.contains(its_service->service_instance_)) {
+        if (services_.count(its_service->service_instance_) > 0) {
             VSOMEIP_WARNING << "Multiple configurations for service [" << its_service->service_instance_ << "]";
             is_loaded = false;
         }
@@ -2870,7 +2870,7 @@ client_t configuration_impl::get_id(const std::string& _name) const {
 }
 
 bool configuration_impl::is_configured_client_id(client_t _id) const {
-    return (client_identifiers_.contains(_id));
+    return (client_identifiers_.count(_id) > 0);
 }
 
 uint32_t configuration_impl::get_version_log_interval(const std::string& _name, bool _is_host) const {
@@ -3088,7 +3088,7 @@ bool configuration_impl::find_port(uint16_t& _port, uint16_t _remote, bool _reli
                 }
             }
             while (its_port <= (*it)->client_ports_[_reliable].second) {
-                if (!_used_client_ports[_reliable].contains(its_port)) {
+                if (_used_client_ports[_reliable].count(its_port) == 0) {
                     _port = its_port;
                     (*it)->last_used_client_port_[_reliable] = its_port;
                     return true;
@@ -3111,7 +3111,7 @@ bool configuration_impl::find_port(uint16_t& _port, uint16_t _remote, bool _reli
             uint16_t its_port(ILLEGAL_PORT);
             its_port = (*it)->client_ports_[_reliable].first;
             while (its_port <= (*it)->client_ports_[_reliable].second) {
-                if (!_used_client_ports[_reliable].contains(its_port)) {
+                if (_used_client_ports[_reliable].count(its_port) == 0) {
                     _port = its_port;
                     (*it)->last_used_client_port_[_reliable] = its_port;
                     return true;
@@ -3154,7 +3154,7 @@ bool configuration_impl::find_specific_port(uint16_t& _port, service_t _service,
 
     auto try_allocate = [&](auto from, auto to) {
         for (auto it = from; it != to; ++it) {
-            if (!_used_client_ports[_reliable].contains(*it)) {
+            if (_used_client_ports[_reliable].count(*it) == 0) {
                 _port = *it;
                 last_used_port = *it;
                 VSOMEIP_INFO_P << "service/instance: [" << hex4(_service) << "." << hex4(_instance) << "] reliable: " << _reliable
@@ -3304,7 +3304,7 @@ std::uint32_t configuration_impl::get_buffer_shrink_threshold() const {
 }
 
 bool configuration_impl::supports_selective_broadcasts(const boost::asio::ip::address& _address) const {
-    return supported_selective_addresses.contains(_address.to_string());
+    return supported_selective_addresses.count(_address.to_string()) > 0;
 }
 
 bool configuration_impl::log_version() const {
@@ -4348,7 +4348,7 @@ std::uint32_t configuration_impl::get_max_tcp_connect_time() const {
 
 bool configuration_impl::is_protected_device(const boost::asio::ip::address& _address) const {
     std::scoped_lock its_lock(sd_acceptance_required_ips_mutex_);
-    return (sd_acceptance_rules_active_.contains(_address));
+    return (sd_acceptance_rules_active_.count(_address) > 0);
 }
 
 bool configuration_impl::is_protected_port(const boost::asio::ip::address& _address, std::uint16_t _port, bool _reliable) const {
@@ -4410,7 +4410,7 @@ void configuration_impl::set_sd_acceptance_rule(const boost::asio::ip::address& 
     const auto its_secure_client_spare = boost::icl::interval<std::uint16_t>::closed(32898, 32998);
     const auto its_secure_server = boost::icl::interval<std::uint16_t>::closed(32501, 32599);
 
-    const bool rules_active = (sd_acceptance_rules_active_.contains(_address));
+    const bool rules_active = (sd_acceptance_rules_active_.count(_address) > 0);
 
     const auto found_address = sd_acceptance_rules_.find(_address);
     if (found_address != sd_acceptance_rules_.end()) {
@@ -4526,7 +4526,7 @@ bool configuration_impl::is_secure_service(service_t _service, instance_t _insta
     std::scoped_lock its_lock(secure_services_mutex_);
     const auto its_service = secure_services_.find(_service);
     if (its_service != secure_services_.end())
-        return (its_service->second.contains(_instance));
+        return (its_service->second.count(_instance) > 0);
     return false;
 }
 
@@ -4540,7 +4540,7 @@ bool configuration_impl::is_tp_client(service_t _service, instance_t _instance, 
     bool ret(false);
 
     if (auto its_service = find_service({_service, _instance}); its_service) {
-        ret = (its_service->tp_client_config_.contains(_method));
+        ret = (its_service->tp_client_config_.count(_method) > 0);
     }
 
     return ret;
@@ -4550,7 +4550,7 @@ bool configuration_impl::is_tp_service(service_t _service, instance_t _instance,
 
     bool ret(false);
     if (auto its_service = find_service({_service, _instance}); its_service) {
-        ret = (its_service->tp_service_config_.contains(_method));
+        ret = (its_service->tp_service_config_.count(_method) > 0);
     }
 
     return ret;

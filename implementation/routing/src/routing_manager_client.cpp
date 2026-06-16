@@ -412,7 +412,7 @@ void routing_manager_client::register_event(client_t _client, service_t _service
     bool is_first(false);
     {
         std::scoped_lock its_lock(pending_event_registrations_mutex_);
-        is_first = !pending_event_registrations_.contains(registration);
+        is_first = pending_event_registrations_.count(registration) == 0;
         if (is_first) {
             pending_event_registrations_.insert(registration);
         }
@@ -2342,7 +2342,7 @@ bool routing_manager_client::is_response_allowed(client_t _sender, service_t _se
         }
 
         if (auto found_si = available_services_history_.find({_service, _instance}); found_si != available_services_history_.end()) {
-            if (found_si->second.contains(_sender)) {
+            if (found_si->second.count(_sender) > 0) {
                 // sender was offering the service and is still connected
                 return true;
             }
@@ -2405,7 +2405,7 @@ void routing_manager_client::collect_pending_subscriptions(service_t _service, i
                                                            std::vector<subscription_data_t>& _collected_subscriptions,
                                                            std::scoped_lock<std::mutex> const&) {
     for (auto& ps : pending_subscriptions_) {
-        if (ps.service_instance_ == service_instance_t(_service, _instance) && ps.major_ == _major) {
+        if (ps.service_instance_ == service_instance_t{_service, _instance} && ps.major_ == _major) {
             _collected_subscriptions.push_back(ps);
         }
     }
@@ -2415,15 +2415,15 @@ void routing_manager_client::remove_pending_subscription(service_t _service, ins
                                                          std::scoped_lock<std::mutex> const&) {
     if (_eventgroup == 0xFFFF) {
         std::erase_if(pending_subscriptions_, [&_service, &_instance](const subscription_data_t& ps) {
-            return ps.service_instance_ == service_instance_t(_service, _instance);
+            return ps.service_instance_ == service_instance_t{_service, _instance};
         });
     } else if (_event == ANY_EVENT) {
         std::erase_if(pending_subscriptions_, [&_service, &_instance, &_eventgroup](const subscription_data_t& ps) {
-            return ps.service_instance_ == service_instance_t(_service, _instance) && ps.eventgroup_ == _eventgroup;
+            return ps.service_instance_ == service_instance_t{_service, _instance} && ps.eventgroup_ == _eventgroup;
         });
     } else {
         std::erase_if(pending_subscriptions_, [&_service, &_instance, &_eventgroup, &_event](const subscription_data_t& ps) {
-            return ps.service_instance_ == service_instance_t(_service, _instance) && ps.eventgroup_ == _eventgroup && ps.event_ == _event;
+            return ps.service_instance_ == service_instance_t{_service, _instance} && ps.eventgroup_ == _eventgroup && ps.event_ == _event;
         });
     }
 }

@@ -102,7 +102,7 @@ bool utility::is_routing_manager(const std::string& _network) {
 
     std::scoped_lock its_lock(get_utility_mutex());
     auto& data = get_utility_data();
-    if (data.contains(_network))
+    if (data.count(_network) > 0)
         return false;
 
     auto r = data.insert(std::make_pair(_network, data_t()));
@@ -337,7 +337,7 @@ client_t utility::request_client_id(const std::shared_ptr<configuration>& _confi
                             << "applications reached (" << r->second.used_clients_.size() << ").";
             return VSOMEIP_CLIENT_UNSET;
         }
-    } while (r->second.used_clients_.contains(r->second.next_client_) || _config->is_configured_client_id(r->second.next_client_));
+    } while (r->second.used_clients_.count(r->second.next_client_) > 0 || _config->is_configured_client_id(r->second.next_client_));
 
     r->second.used_clients_[r->second.next_client_] = _name;
     return r->second.next_client_;
