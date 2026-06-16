@@ -279,7 +279,7 @@ std::set<eventgroup_t> event::get_eventgroups(client_t _client) const {
 
     std::scoped_lock its_lock(eventgroups_mutex_);
     for (auto e : eventgroups_) {
-        if (e.second.contains(_client))
+        if (e.second.count(_client) > 0)
             its_eventgroups.insert(e.first);
     }
     return its_eventgroups;
@@ -288,7 +288,7 @@ std::set<eventgroup_t> event::get_eventgroups(client_t _client) const {
 void event::add_eventgroup(eventgroup_t _eventgroup) {
 
     std::scoped_lock its_lock(eventgroups_mutex_);
-    if (!eventgroups_.contains(_eventgroup))
+    if (eventgroups_.count(_eventgroup) == 0)
         eventgroups_[_eventgroup] = std::set<client_t>();
 }
 
@@ -558,7 +558,7 @@ bool event::has_subscriber(eventgroup_t _eventgroup, client_t _client) {
         if (_client == ANY_CLIENT) {
             return (find_eventgroup->second.size() > 0);
         } else {
-            return (find_eventgroup->second.contains(_client));
+            return (find_eventgroup->second.count(_client) > 0);
         }
     }
     return false;
@@ -723,7 +723,7 @@ bool event::is_subscribed(client_t _client) {
 
     std::scoped_lock its_lock(eventgroups_mutex_);
     for (const auto& egp : eventgroups_) {
-        if (egp.second.contains(_client)) {
+        if (egp.second.count(_client) > 0) {
             return true;
         }
     }

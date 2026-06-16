@@ -100,7 +100,7 @@ void config_command::insert(const std::string& _key, const std::string&& _value)
 }
 
 bool config_command::contains(const std::string& _key) const {
-    return configs_.contains(_key);
+    return configs_.count(_key) > 0;
 }
 
 const std::string& config_command::at(const std::string& _key) const {

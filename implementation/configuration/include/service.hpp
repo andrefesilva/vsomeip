@@ -20,7 +20,7 @@ struct service {
     service() = delete;
 
     explicit service(service_t _service, instance_t _instance) :
-        service_instance_(_service, _instance), reliable_(0), unreliable_(0), protocol_("someip") { }
+        service_instance_{_service, _instance}, reliable_(0), unreliable_(0), protocol_("someip") { }
 
     service_instance_t service_instance_;
 

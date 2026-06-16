@@ -3,6 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#include <algorithm>
 #include <future>
 #include <thread>
 #include <iomanip>
@@ -744,7 +745,7 @@ availability_state_e application_impl::are_available_unlocked(available_t& _avai
         }
     } else {
         // check if specific service is available
-        if (available_.contains(_service)) {
+        if (available_.count(_service) > 0) {
             _available[_service];
         }
     }
@@ -762,7 +763,7 @@ availability_state_e application_impl::are_available_unlocked(available_t& _avai
                     _available[its_available_services_it->first][its_available_instances_it->first];
                 }
             } else {
-                if (found_available_service->second.contains(_instance)) {
+                if (found_available_service->second.count(_instance) > 0) {
                     _available[its_available_services_it->first][_instance];
                 }
             }
@@ -788,7 +789,7 @@ availability_state_e application_impl::are_available_unlocked(available_t& _avai
                             _available[its_available_services_it->first][its_available_instances_it->first][its_available_major_it->first];
                         }
                     } else {
-                        if (found_available_instance->second.contains(_major)) {
+                        if (found_available_instance->second.count(_major) > 0) {
                             _available[its_available_services_it->first][its_available_instances_it->first][_major];
                         }
                     }
@@ -1827,8 +1828,8 @@ bool application_impl::has_active_dispatcher() const {
     if (!is_dispatching_) {
         return false;
     }
-    return std::ranges::any_of(dispatchers_, [this](const auto& d) {
-        return !running_dispatchers_.contains(d.first) && !elapsed_dispatchers_.contains(d.first);
+    return std::any_of(dispatchers_.begin(), dispatchers_.end(), [this](const auto& d) {
+        return running_dispatchers_.count(d.first) == 0 && elapsed_dispatchers_.count(d.first) == 0;
     });
 }
 
@@ -1836,11 +1837,11 @@ bool application_impl::is_active_dispatcher(const std::thread::id& _id) const {
     if (!is_dispatching_) {
         return false;
     }
-    if (!dispatchers_.contains(_id)) {
+    if (dispatchers_.count(_id) == 0) {
         return false;
     }
-    return std::ranges::none_of(dispatchers_, [&](const auto& d) {
-        return d.first != _id && !running_dispatchers_.contains(d.first) && !elapsed_dispatchers_.contains(d.first);
+    return std::none_of(dispatchers_.begin(), dispatchers_.end(), [&](const auto& d) {
+        return d.first != _id && running_dispatchers_.count(d.first) == 0 && elapsed_dispatchers_.count(d.first) == 0;
     });
 }
 

@@ -663,7 +663,7 @@ void service_discovery_impl::insert_find_entries(std::vector<std::shared_ptr<mes
         std::scoped_lock its_lock(requested_mutex_);
 
         // check if release_service was called / offer was received
-        if (requested_.contains(its_si)) {
+        if (requested_.count(its_si) > 0) {
             uint8_t its_sent_counter = its_request->get_sent_counter();
             if (its_sent_counter != repetitions_max_ + 1) {
                 auto its_entry = std::make_shared<serviceentry_impl>();
@@ -1337,7 +1337,7 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
         auto expire_subscriptions_and_services = [this, &_sd_ac_state, _service, _instance](const boost::asio::ip::address& _address,
                                                                                             std::uint16_t _port, bool _reliable) {
             const auto its_port_pair = std::make_pair(_reliable, _port);
-            if (!_sd_ac_state.expired_ports_.contains(its_port_pair)) {
+            if (_sd_ac_state.expired_ports_.count(its_port_pair) == 0) {
                 VSOMEIP_WARNING << "sdi::Do not accept offer [" << hex4(_service) << "." << hex4(_instance) << "] from "
                                 << _address.to_string() << ":" << _port << " reliable=" << _reliable;
                 remove_remote_offer_type_by_ip(_address, _port, _reliable);
@@ -3347,7 +3347,7 @@ void service_discovery_impl::check_offer_services(const boost::system::error_cod
 
 void service_discovery_impl::observed_host(const boost::asio::ip::address& _host, const bool _multicast) {
     // Add en entry if it doesn't already exist.
-    if (!observed_hosts.contains(_host)) {
+    if (observed_hosts.count(_host) == 0) {
         observed_hosts[_host] = std::make_tuple(false, false);
     }
 
