@@ -656,20 +656,20 @@ std::string tcp_client_endpoint_impl::get_address_port_remote() const {
 }
 
 std::string tcp_client_endpoint_impl::get_address_port_local() const {
-    std::string its_address_port;
-    its_address_port.reserve(21);
+    std::stringstream its_address_port;
     boost::system::error_code ec;
     if (socket_->is_open()) {
         endpoint_type its_local_endpoint = socket_->local_endpoint(ec);
         if (!ec) {
-            its_address_port += its_local_endpoint.address().to_string();
-            its_address_port += ":";
-            its_address_port.append(std::to_string(its_local_endpoint.port()));
+            its_address_port << its_local_endpoint.address().to_string();
+            its_address_port << ":";
+            its_address_port << (std::to_string(its_local_endpoint.port()));
+            its_address_port << ", " << socket_.get();
         } else {
             VSOMEIP_WARNING_P << "Coudn't get local endpoint: (" << ec.value() << "): " << ec.message();
         }
     }
-    return its_address_port;
+    return its_address_port.str();
 }
 
 void tcp_client_endpoint_impl::handle_recv_buffer_exception(const std::exception& _e, const message_buffer_ptr_t& _recv_buffer,

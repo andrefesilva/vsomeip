@@ -98,6 +98,6 @@ public:
      * @brief Returns a human-readable string representation of this socket.
      * @return String containing role, endpoints, and memory address.
      */
-    virtual std::string const& to_string() const = 0;
+    virtual std::string to_string() const = 0;
 };
 } // namespace vsomeip_v3

@@ -66,7 +66,7 @@ public:
     void async_receive(boost::asio::mutable_buffer _buffer, read_handler) override;
     void async_send(std::vector<uint8_t> _data, write_handler) override;
 
-    std::string const& to_string() const override;
+    std::string to_string() const override;
     bool update(vsomeip_sec_client_t& _client, configuration const& _configuration) override;
     port_t own_port() const override;
 

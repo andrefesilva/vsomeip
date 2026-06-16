@@ -162,8 +162,8 @@ void local_socket_tcp_impl::async_send(std::vector<uint8_t> _data, write_handler
     }
 }
 
-std::string const& local_socket_tcp_impl::to_string() const {
-    return name_;
+std::string local_socket_tcp_impl::to_string() const {
+    return name_ + ", fd: " + std::to_string(socket_->native_handle());
 }
 
 bool local_socket_tcp_impl::update(vsomeip_sec_client_t& _client, configuration const& _configuration) {

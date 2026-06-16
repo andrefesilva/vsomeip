@@ -899,18 +899,18 @@ std::string tcp_server_endpoint_impl::connection::get_address_port_remote() cons
 }
 
 std::string tcp_server_endpoint_impl::connection::get_address_port_local() const {
-    std::string its_address_port;
-    its_address_port.reserve(21);
+    std::stringstream its_address_port;
     boost::system::error_code ec;
     if (socket_->is_open()) {
         endpoint_type its_local_endpoint = socket_->local_endpoint(ec);
         if (!ec) {
-            its_address_port += its_local_endpoint.address().to_string();
-            its_address_port += ":";
-            its_address_port += std::to_string(its_local_endpoint.port());
+            its_address_port << its_local_endpoint.address().to_string();
+            its_address_port << ":";
+            its_address_port << std::to_string(its_local_endpoint.port());
+            its_address_port << ", " << socket_.get();
         }
     }
-    return its_address_port;
+    return its_address_port.str();
 }
 
 void tcp_server_endpoint_impl::connection::handle_recv_buffer_exception(const std::exception& _e) {
