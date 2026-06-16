@@ -54,7 +54,11 @@ void header_factory_test_client::on_message(const std::shared_ptr<vsomeip::messa
         number_of_acknowledged_messages_++;
         EXPECT_EQ(_response->get_service(), vsomeip_test::TEST_SERVICE_SERVICE_ID);
         EXPECT_EQ(_response->get_instance(), vsomeip_test::TEST_SERVICE_INSTANCE_ID);
-        EXPECT_EQ(_response->get_session(), static_cast<vsomeip::session_t>(number_of_acknowledged_messages_));
+        // Session ID must be in valid range and not a duplicate (response order is not guaranteed with concurrent dispatch).
+        EXPECT_EQ(received_sessions_.count(_response->get_session()), 0u);
+        EXPECT_GE(_response->get_session(), static_cast<vsomeip::session_t>(1u));
+        EXPECT_LE(_response->get_session(), static_cast<vsomeip::session_t>(number_of_messages_to_send_));
+        received_sessions_.insert(_response->get_session());
         if (number_of_acknowledged_messages_ == number_of_messages_to_send_) {
             stop = true;
         }
