@@ -350,15 +350,9 @@ private:
         std::set<eventgroup_t> eventgroups_;
 
         bool operator<(const event_data_t& _other) const {
-            if (service_instance_.service() != _other.service_instance_.service()) {
-                return service_instance_.service() < _other.service_instance_.service();
-            }
-            if (service_instance_.instance() != _other.service_instance_.instance()) {
-                return service_instance_.instance() < _other.service_instance_.instance();
-            }
-            return std::tie(notifier_, type_, reliability_, is_provided_, is_cyclic_, eventgroups_)
-                    < std::tie(_other.notifier_, _other.type_, _other.reliability_, _other.is_provided_, _other.is_cyclic_,
-                               _other.eventgroups_);
+            return std::tie(service_instance_, notifier_, type_, reliability_, is_provided_, is_cyclic_, eventgroups_)
+                    < std::tie(_other.service_instance_, _other.notifier_, _other.type_, _other.reliability_, _other.is_provided_,
+                               _other.is_cyclic_, _other.eventgroups_);
         }
     };
     std::mutex pending_event_registrations_mutex_;
@@ -417,16 +411,7 @@ private:
         std::shared_ptr<debounce_filter_impl_t> filter_;
 
         bool operator<(const subscription_data_t& _other) const {
-            if (service_instance_.service() != _other.service_instance_.service()) {
-                return service_instance_.service() < _other.service_instance_.service();
-            }
-            if (service_instance_.instance() != _other.service_instance_.instance()) {
-                return service_instance_.instance() < _other.service_instance_.instance();
-            }
-            if (eventgroup_ != _other.eventgroup_) {
-                return eventgroup_ < _other.eventgroup_;
-            }
-            return event_ < _other.event_;
+            return std::tie(service_instance_, eventgroup_, event_) < std::tie(_other.service_instance_, _other.eventgroup_, _other.event_);
         }
     };
     std::set<subscription_data_t> pending_subscriptions_;
