@@ -19,6 +19,7 @@ public:
 
 private:
     [[nodiscard]] bool is_open() const override { return socket_.is_open(); }
+    [[nodiscard]] int native_handle() override { return socket_.native_handle(); }
     void open(endpoint::protocol_type _pt, boost::system::error_code& _ec) override { socket_.open(_pt, _ec); }
 
     void close(boost::system::error_code& _ec) override { socket_.close(_ec); }
