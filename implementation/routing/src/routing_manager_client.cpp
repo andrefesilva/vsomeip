@@ -419,8 +419,8 @@ void routing_manager_client::register_event(client_t _client, service_t _service
         bool insert = true;
         if (is_first) {
             for (auto iter = pending_event_registrations_.begin(); iter != pending_event_registrations_.end();) {
-                if (iter->service_instance_.service() == _service && iter->service_instance_.instance() == _instance
-                    && iter->notifier_ == _notifier && iter->is_provided_ == _is_provided && iter->type_ == event_type_e::ET_EVENT
+                if (iter->service_instance_ == service_instance_t{_service, _instance} && iter->notifier_ == _notifier
+                    && iter->is_provided_ == _is_provided && iter->type_ == event_type_e::ET_EVENT
                     && _type == event_type_e::ET_SELECTIVE_EVENT) {
                     iter = pending_event_registrations_.erase(iter);
                     iter = pending_event_registrations_.insert(registration).first;
@@ -462,8 +462,8 @@ void routing_manager_client::unregister_event(client_t _client, service_t _servi
     {
         std::scoped_lock its_lock(pending_event_registrations_mutex_);
         for (auto iter = pending_event_registrations_.begin(); iter != pending_event_registrations_.end();) {
-            if (iter->service_instance_.service() == _service && iter->service_instance_.instance() == _instance
-                && iter->notifier_ == _notifier && iter->is_provided_ == _is_provided) {
+            if (iter->service_instance_ == service_instance_t{_service, _instance} && iter->notifier_ == _notifier
+                && iter->is_provided_ == _is_provided) {
                 pending_event_registrations_.erase(iter);
                 break;
             } else {
@@ -1502,8 +1502,8 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
                 }
             }
             for (auto const& sub : collected_subscriptions) {
-                send_subscribe(get_client(), sub.service_instance_.service(), sub.service_instance_.instance(), sub.eventgroup_, sub.major_,
-                               sub.event_, sub.filter_);
+                const auto& [its_service, its_instance] = sub.service_instance_;
+                send_subscribe(get_client(), its_service, its_instance, sub.eventgroup_, sub.major_, sub.event_, sub.filter_);
             }
             break;
         }
@@ -1680,9 +1680,9 @@ bool routing_manager_client::send_pending_event_registrations(client_t _client) 
     auto it = pending_event_registrations_.begin();
     while (it != pending_event_registrations_.end()) {
         for (; it != pending_event_registrations_.end(); it++) {
-            protocol::register_event reg(it->service_instance_.service(), it->service_instance_.instance(), it->notifier_, it->type_,
-                                         it->is_provided_, it->reliability_, it->is_cyclic_, static_cast<uint16_t>(it->eventgroups_.size()),
-                                         it->eventgroups_);
+            const auto& [its_service, its_instance] = it->service_instance_;
+            protocol::register_event reg(its_service, its_instance, it->notifier_, it->type_, it->is_provided_, it->reliability_,
+                                         it->is_cyclic_, static_cast<uint16_t>(it->eventgroups_.size()), it->eventgroups_);
             if (!its_command.add_registration(reg)) {
                 break;
             }
@@ -2044,8 +2044,9 @@ void routing_manager_client::resend_provided_event_registrations() {
     std::scoped_lock its_lock(pending_event_registrations_mutex_);
     for (const event_data_t& ed : pending_event_registrations_) {
         if (ed.is_provided_) {
-            send_register_event(get_client(), ed.service_instance_.service(), ed.service_instance_.instance(), ed.notifier_,
-                                ed.eventgroups_, ed.type_, ed.reliability_, ed.is_provided_, ed.is_cyclic_);
+            const auto& [its_service, its_instance] = ed.service_instance_;
+            send_register_event(get_client(), its_service, its_instance, ed.notifier_, ed.eventgroups_, ed.type_, ed.reliability_,
+                                ed.is_provided_, ed.is_cyclic_);
         }
     }
 }
@@ -2146,7 +2147,7 @@ void routing_manager_client::clear_remote_subscriptions(std::scoped_lock<std::mu
     // Unsubscribe everything that is left over.
     for (const auto& [si, eventgroups] : remote_subscriber_count_) {
         for (const auto& [eg, _] : eventgroups) {
-            unsubscribe_base(VSOMEIP_ROUTING_CLIENT, si.service(), si.instance(), eg, ANY_EVENT, _provider_lock);
+            unsubscribe_base(VSOMEIP_ROUTING_CLIENT, si.service, si.instance, eg, ANY_EVENT, _provider_lock);
         }
     }
 
@@ -2245,7 +2246,7 @@ void routing_manager_client::remove_local(bool _due_to_error, client_t _client, 
         for (const auto& [si, clients] : available_services_history_) {
             for (const auto& c : clients) {
                 if (c == _client) {
-                    its_clients.insert(std::make_tuple(si.service(), si.instance(), c));
+                    its_clients.insert(std::make_tuple(si.service, si.instance, c));
                 }
             }
         }
@@ -2285,8 +2286,8 @@ void routing_manager_client::cleanup_subscriber(std::scoped_lock<std::mutex> con
     std::set<sub_tuple> unique_tuples;
 
     for (auto const& [si, evs] : provided_events_) {
-        auto const service = si.service();
-        auto const instance = si.instance();
+        auto const service = si.service;
+        auto const instance = si.instance;
         for (auto const& [event_id, event] : evs) {
             for (auto const group : event->get_eventgroups()) {
                 for (auto const client : event->get_subscribers(group)) {
@@ -2834,7 +2835,7 @@ routing_manager_client::get_subscriptions(const client_t _client,
         for (auto [event_id, event] : eventmap) {
             auto its_eventgroups = event->get_eventgroups(_client);
             for (const auto& e : its_eventgroups) {
-                result.insert(std::make_tuple(key.service(), key.instance(), e));
+                result.insert(std::make_tuple(key.service, key.instance, e));
             }
         }
     }

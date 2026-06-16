@@ -828,7 +828,7 @@ std::string udp_server_endpoint_impl::get_address_port_local_unlocked(bool _is_m
 
 bool udp_server_endpoint_impl::tp_segmentation_enabled(service_instance_t _si, method_t _method) const {
 
-    return configuration_->is_tp_service(_si.service(), _si.instance(), _method);
+    return configuration_->is_tp_service(_si.service, _si.instance, _method);
 }
 
 void udp_server_endpoint_impl::set_multicast_option(const boost::asio::ip::address& _address, bool _is_join,

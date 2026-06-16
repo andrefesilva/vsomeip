@@ -545,7 +545,7 @@ void routing_manager_stub::on_deregister_application(client_t _client) {
     auto its_info = routing_info_.find(_client);
     if (its_info != routing_info_.end()) {
         for (const auto& [si, version] : its_info->second) {
-            services_to_report.push_back(std::make_tuple(si.service(), si.instance(), version.first, version.second));
+            services_to_report.push_back(std::make_tuple(si.service, si.instance, version.first, version.second));
         }
     }
 
@@ -568,15 +568,15 @@ void routing_manager_stub::on_offered_service_request(client_t _client, offer_ty
         // skip services which are offered on remote hosts
         if (found_client.first != VSOMEIP_ROUTING_CLIENT) {
             for (const auto& [si, version] : found_client.second) {
-                uint16_t its_reliable_port = configuration_->get_reliable_port(si.service(), si.instance());
-                uint16_t its_unreliable_port = configuration_->get_unreliable_port(si.service(), si.instance());
+                const auto& [its_service, its_instance] = si;
+                uint16_t its_reliable_port = configuration_->get_reliable_port(its_service, its_instance);
+                uint16_t its_unreliable_port = configuration_->get_unreliable_port(its_service, its_instance);
                 bool has_port = (its_reliable_port != ILLEGAL_PORT || its_unreliable_port != ILLEGAL_PORT);
 
                 if (_offer_type == offer_type_e::OT_ALL || (_offer_type == offer_type_e::OT_LOCAL && !has_port)
                     || (_offer_type == offer_type_e::OT_REMOTE && has_port)) {
-
-                    table.insert(protocol::service_data{.service_ = si.service(),
-                                                        .instance_ = si.instance(),
+                    table.insert(protocol::service_data{.service_ = its_service,
+                                                        .instance_ = its_instance,
                                                         .major_version_ = version.first,
                                                         .minor_version_ = version.second});
                 }
@@ -1005,19 +1005,18 @@ void routing_manager_stub::on_ping_timer_expired(boost::system::error_code const
         std::scoped_lock its_lock{pinged_clients_mutex_};
         const std::chrono::steady_clock::time_point now(std::chrono::steady_clock::now());
 
-        for (auto client_iter = pinged_clients_.begin(); client_iter != pinged_clients_.end();) {
-            if ((now - client_iter->second) >= std::chrono::milliseconds(VSOMEIP_DEFAULT_PING_TIMEOUT)) {
+        std::erase_if(pinged_clients_, [&now, this](const auto& _entry) {
+            if ((now - _entry.second) >= std::chrono::milliseconds(VSOMEIP_DEFAULT_PING_TIMEOUT)) {
                 // Trigger the error under the pinged_clients_mutex_, to ensure that a concurrent clean-up
                 // of the client is not racing with this timer.
-                if (auto ep = host_->get_endpoint_manager()->find_routing_endpoint(client_iter->first); ep) {
-                    VSOMEIP_WARNING_P << "Triggering a client error for: " << hex4(client_iter->first);
+                if (auto ep = host_->get_endpoint_manager()->find_routing_endpoint(_entry.first); ep) {
+                    VSOMEIP_WARNING_P << "Triggering a client error for: " << hex4(_entry.first);
                     ep->trigger_error();
                 }
-                client_iter = pinged_clients_.erase(client_iter);
-            } else {
-                ++client_iter;
+                return true;
             }
-        }
+            return false;
+        });
         pinged_clients_remaining = (pinged_clients_.size() > 0);
 
         if (pinged_clients_remaining) {
@@ -1141,7 +1140,7 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
             if (const auto found_client = routing_info_.find(c); found_client != routing_info_.end()) {
                 if (request.instance_ == ANY_INSTANCE) {
                     for (const auto& [si, version] : found_client->second) {
-                        if (si.service() == request.service_) {
+                        if (si.service == request.service_) {
                             protocol::routing_info_entry its_entry;
                             its_entry.set_type(protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE);
                             its_entry.set_client(c);
@@ -1149,7 +1148,7 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
                                 its_entry.set_address(its_address);
                                 its_entry.set_port(its_port);
                             }
-                            its_entry.add_service({request.service_, si.instance(), version.first, version.second});
+                            its_entry.add_service({request.service_, si.instance, version.first, version.second});
                             its_entries.emplace_back(its_entry);
                         }
                     }
