@@ -43,8 +43,11 @@ void header_factory_test_service::on_message(const std::shared_ptr<vsomeip::mess
         // TR_SOMEIP_00055
         ASSERT_EQ(_request->get_message_type(), vsomeip::message_type_e::MT_REQUEST);
 
-        // check the session id.
-        ASSERT_EQ(_request->get_session(), static_cast<vsomeip::session_t>(number_of_received_messages_));
+        // check the session id: must be in valid range and not a duplicate (order is not guaranteed with concurrent dispatch).
+        ASSERT_EQ(received_sessions_.count(_request->get_session()), 0u);
+        ASSERT_GE(_request->get_session(), static_cast<vsomeip::session_t>(1u));
+        ASSERT_LE(_request->get_session(), static_cast<vsomeip::session_t>(vsomeip_test::NUMBER_OF_MESSAGES_TO_SEND));
+        received_sessions_.insert(_request->get_session());
 
         // send response
         std::shared_ptr<vsomeip::message> its_response = vsomeip::runtime::get()->create_response(_request);
