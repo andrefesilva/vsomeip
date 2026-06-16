@@ -500,7 +500,7 @@ bool endpoint_manager_base::get_local_server_port(port_t& _port, const std::set<
     for (const auto& [begin, end] : its_port_ranges) {
         for (int r = begin; r < end; r += SERVER_PORT_OFFSET) {
 
-            if (!_used_ports.contains(port_t(r)) && r != configuration_->get_routing_host_port()) {
+            if (_used_ports.count(port_t(r)) == 0 && r != configuration_->get_routing_host_port()) {
 
                 _port = port_t(r);
                 return true;

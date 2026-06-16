@@ -10,6 +10,7 @@
 
 #include "protocol.hpp"
 
+#include <compare>
 #include <cstring>
 #include <type_traits>
 #include <span>

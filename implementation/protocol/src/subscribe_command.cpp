@@ -103,7 +103,7 @@ void subscribe_command::deserialize(const std::vector<byte_t>& _buffer, error_e&
             byte_t its_value;
 
             std::memcpy(&its_key, &_buffer[its_offset], sizeof(its_key));
-            if (filter_->ignore_.contains(its_key)) {
+            if (filter_->ignore_.count(its_key) > 0) {
 
                 _error = error_e::ERROR_MALFORMED;
                 return;

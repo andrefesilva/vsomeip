@@ -542,7 +542,7 @@ void endpoint_manager_impl::clear_multicast_endpoints(service_t _service, instan
                     its_multicast_endpoint = found_unreliable->second;
                     server_endpoints_[its_port].erase(false);
                 }
-                if (!found_port->second.contains(true)) {
+                if (found_port->second.count(true) == 0) {
                     server_endpoints_.erase(its_port);
                 }
             }
@@ -1252,7 +1252,7 @@ bool endpoint_manager_impl::is_used_endpoint(boardnet_endpoint* const _endpoint)
         std::scoped_lock its_lock(endpoint_mutex_);
         // Do we still use the endpoint to offer a service instance?
         for (const auto& si : service_instances_)
-            if (si.second.contains(_endpoint))
+            if (si.second.count(_endpoint) > 0)
                 return true;
     }
 
