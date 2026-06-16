@@ -7,6 +7,7 @@
 
 #include "data_pipe.hpp"
 #include "someip_message.hpp"
+#include "attribute_recorder.hpp"
 
 #include <memory>
 #include <mutex>
@@ -91,6 +92,16 @@ public:
 
     /// Waits until the gate transitions to the BLOCKED state.
     [[nodiscard]] bool wait_for_blocked(std::chrono::milliseconds _timeout = std::chrono::seconds(2)) const;
+
+    /// Records every forwarded regular SOME/IP message. The message that triggers a
+    /// block is blocked (not forwarded), so it is recorded only if it is later let
+    /// through after reopening. Populated from operator(); tests assert on this.
+    attribute_recorder<someip_record_message> someip_record_;
+
+    /// Records every forwarded Service Discovery entry. An entry that triggers a block
+    /// is blocked (not forwarded), so it is recorded only if it is later let through
+    /// after reopening. Populated from operator(); tests assert on this.
+    attribute_recorder<someip_sd_record_message> sd_record_;
 
 private:
     std::shared_ptr<data_pipe> pipe_;

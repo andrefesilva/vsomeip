@@ -13,6 +13,9 @@
 #include "to_string.hpp"
 #include "message_common.hpp"
 
+#include <iomanip>
+#include <ostream>
+
 namespace vsomeip_v3::testing {
 struct someip_message {
     std::shared_ptr<message_impl> msg_;
@@ -25,6 +28,45 @@ struct someip_sd_record_message {
 
     bool operator==(const someip_sd_record_message& _other) const { return id_ == _other.id_ && ttl_ == _other.ttl_; }
 };
+
+/// Lightweight struct capturing the header fields of a SOME/IP message for recording.
+/// Used with attribute_recorder to allow tests to assert on boardnet SOME/IP traffic.
+struct someip_record_message {
+    /// Wildcard sentinels for client_ / session_: when either side of a comparison holds
+    /// these, that field is ignored and matches any value. Using dedicated sentinels
+    /// (rather than 0) keeps 0 usable as a real value one might want to test against.
+    static constexpr client_t ANY_CLIENT = 0xFFFF;
+    static constexpr session_t ANY_SESSION = 0xFFFF;
+
+    service_t service_{};
+    method_t method_{};
+    client_t client_{ANY_CLIENT};
+    session_t session_{ANY_SESSION};
+    message_type_e message_type_{message_type_e::MT_UNKNOWN};
+    return_code_e return_code_{return_code_e::E_UNKNOWN};
+
+    /// Equality comparison. ANY_CLIENT / ANY_SESSION act as wildcards matching any value.
+    [[nodiscard]] bool operator==(someip_record_message const& _other) const {
+        if (service_ != _other.service_ || method_ != _other.method_) {
+            return false;
+        }
+        if (client_ != ANY_CLIENT && _other.client_ != ANY_CLIENT && client_ != _other.client_) {
+            return false;
+        }
+        if (session_ != ANY_SESSION && _other.session_ != ANY_SESSION && session_ != _other.session_) {
+            return false;
+        }
+        return message_type_ == _other.message_type_ && return_code_ == _other.return_code_;
+    }
+    [[nodiscard]] bool operator!=(someip_record_message const& _other) const { return !(*this == _other); }
+};
+
+inline std::ostream& operator<<(std::ostream& _out, someip_record_message const& _m) {
+    _out << "{service=0x" << std::hex << std::setfill('0') << std::setw(4) << _m.service_ << " method=0x" << std::setw(4) << _m.method_
+         << " client=0x" << std::setw(4) << _m.client_ << " session=0x" << std::setw(4) << _m.session_ << std::dec
+         << " type=" << static_cast<int>(_m.message_type_) << " rc=" << static_cast<int>(_m.return_code_) << "}";
+    return _out;
+}
 
 [[nodiscard]] size_t parse(std::vector<unsigned char>& message, someip_message& _out_message);
 [[nodiscard]] size_t parse_sequential_someip(unsigned char* _message, size_t _message_size, someip_message& _out_message);

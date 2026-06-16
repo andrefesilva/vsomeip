@@ -9,6 +9,7 @@
 #include "../../../implementation/endpoints/include/tcp_socket.hpp"
 #include "../../../implementation/endpoints/include/uds_socket.hpp"
 #include "../attribute_recorder.hpp"
+#include "../someip_message.hpp"
 #include "../command_message.hpp"
 #include "../data_pipe.hpp"
 #include "../vsomeip_command_handler.hpp"

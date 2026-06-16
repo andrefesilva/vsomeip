@@ -5,6 +5,7 @@
 
 #include "fake_tcp_socket_handle.hpp"
 #include "../socket_manager.hpp"
+#include "../someip_message.hpp"
 #include "fake_tcp_socket.hpp"
 #include "fake_uds_socket.hpp"
 #include "../test_logging.hpp"
