@@ -30,40 +30,58 @@ std::shared_ptr<data_pipe> someip_gate::get_data_pipe() const {
 data_pipe_state someip_gate::operator()(someip_message const& _msg) {
     std::scoped_lock lock{mtx_};
 
-    if (state_ == gate_state::BLOCKED) {
-        return data_pipe_state::CLOSED;
-    }
-    if (!search_) {
-        return data_pipe_state::OPEN;
-    }
+    auto const decision = [&]() -> data_pipe_state {
+        if (state_ == gate_state::BLOCKED) {
+            return data_pipe_state::CLOSED;
+        }
+        if (!search_) {
+            return data_pipe_state::OPEN;
+        }
 
-    bool matched = false;
-    if (auto const* t = std::get_if<trigger>(&search_->trigger_)) {
-        if (!_msg.msg_)
-            return data_pipe_state::OPEN;
-        bool const service_match = (_msg.msg_->get_service() == t->service_);
-        bool const method_match = (_msg.msg_->get_method() == t->method_);
-        bool const type_match = (!t->type_ || _msg.msg_->get_message_type() == *t->type_);
-        bool const payload_match = (!t->payload_ || (*t->payload_)(_msg.msg_->get_payload()));
-        matched = service_match && method_match && type_match && payload_match;
-    } else if (auto const* t = std::get_if<sd_trigger>(&search_->trigger_)) {
-        if (!_msg.sd_)
-            return data_pipe_state::OPEN;
-        for (auto const& entry : _msg.sd_->get_entries()) {
-            if (t->id_ == entry->get_type() && t->ttl_ == entry->get_ttl()) {
-                matched = true;
-                break;
+        bool matched = false;
+        if (auto const* t = std::get_if<trigger>(&search_->trigger_)) {
+            if (!_msg.msg_)
+                return data_pipe_state::OPEN;
+            bool const service_match = (_msg.msg_->get_service() == t->service_);
+            bool const method_match = (_msg.msg_->get_method() == t->method_);
+            bool const type_match = (!t->type_ || _msg.msg_->get_message_type() == *t->type_);
+            bool const payload_match = (!t->payload_ || (*t->payload_)(_msg.msg_->get_payload()));
+            matched = service_match && method_match && type_match && payload_match;
+        } else if (auto const* t = std::get_if<sd_trigger>(&search_->trigger_)) {
+            if (!_msg.sd_)
+                return data_pipe_state::OPEN;
+            for (auto const& entry : _msg.sd_->get_entries()) {
+                if (t->id_ == entry->get_type() && t->ttl_ == entry->get_ttl()) {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+
+        if (matched && ++search_->count_ >= search_->barrier_) {
+            state_ = gate_state::BLOCKED;
+            cv_.notify_all();
+            return data_pipe_state::CLOSED;
+        }
+
+        return data_pipe_state::OPEN;
+    }();
+
+    // Record every forwarded message. Regular SOME/IP messages populate
+    // someip_record_, Service Discovery entries populate sd_record_.
+    if (decision == data_pipe_state::OPEN) {
+        if (_msg.msg_) {
+            someip_record_.record(someip_record_message{_msg.msg_->get_service(), _msg.msg_->get_method(), _msg.msg_->get_client(),
+                                                        _msg.msg_->get_session(), _msg.msg_->get_message_type(),
+                                                        _msg.msg_->get_return_code()});
+        } else if (_msg.sd_) {
+            for (auto const& entry : _msg.sd_->get_entries()) {
+                sd_record_.record(someip_sd_record_message{entry->get_type(), entry->get_ttl()});
             }
         }
     }
 
-    if (matched && ++search_->count_ >= search_->barrier_) {
-        state_ = gate_state::BLOCKED;
-        cv_.notify_all();
-        return data_pipe_state::CLOSED;
-    }
-
-    return data_pipe_state::OPEN;
+    return decision;
 }
 
 void someip_gate::block_at(trigger _trigger, uint32_t _count) {

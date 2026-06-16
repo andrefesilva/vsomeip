@@ -290,17 +290,6 @@ struct base_fake_socket_fixture : ::testing::Test {
     void ignore_router_all_multicast_joins(std::string _router, bool _ignore);
 
     /**
-     * @see socket_manager::wait_for_sd_message
-     */
-    [[nodiscard]] bool wait_for_sd_message(boost::asio::ip::udp::endpoint const& _ep, someip_sd_record_message _message,
-                                           std::chrono::milliseconds _timeout = std::chrono::seconds(3)) const;
-
-    /**
-     * @see socket_manager::clear_sd_message_record
-     **/
-    void clear_sd_message_record(boost::asio::ip::udp::endpoint const& _ep);
-
-    /**
      * @see socket_manager::send_someip
      */
     void send_someip_sd_message(std::vector<unsigned char> const& _buffer, boost::asio::ip::udp::endpoint const& _src,

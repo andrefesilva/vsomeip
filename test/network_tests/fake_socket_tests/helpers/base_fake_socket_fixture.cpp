@@ -243,16 +243,6 @@ void base_fake_socket_fixture::ignore_router_all_multicast_joins(std::string _ro
     socket_manager_->ignore_router_all_multicast_joins(_router, _ignore);
 }
 
-[[nodiscard]] bool base_fake_socket_fixture::wait_for_sd_message(boost::asio::ip::udp::endpoint const& _ep,
-                                                                 someip_sd_record_message _message,
-                                                                 std::chrono::milliseconds _timeout) const {
-    return socket_manager_->wait_for_sd_message(_ep, _message, _timeout);
-}
-
-void base_fake_socket_fixture::clear_sd_message_record(boost::asio::ip::udp::endpoint const& _ep) {
-    socket_manager_->clear_sd_message_record(_ep);
-}
-
 void base_fake_socket_fixture::send_someip_sd_message(std::vector<unsigned char> const& _buffer, boost::asio::ip::udp::endpoint const& _src,
                                                       boost::asio::ip::udp::endpoint const& _dst) {
     socket_manager_->send_someip(_buffer, _src, _dst);
