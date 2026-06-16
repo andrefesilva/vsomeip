@@ -200,9 +200,9 @@ public:
 
     /**
      * @brief Returns a human-readable name for this endpoint.
-     * @return String containing role, endpoints, and memory address.
+     * @return String containing role, endpoints, memory address and file descriptor.
      */
-    std::string const& name() const;
+    std::string name() const;
 
     /**
      * Sets an internal flag to reject any new send and trigger the

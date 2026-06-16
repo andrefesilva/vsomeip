@@ -65,4 +65,9 @@ public:
     virtual void async_send_to(boost::asio::const_buffer const&, boost::asio::ip::udp::endpoint, rw_handler) = 0;
 };
 
+inline std::ostream& operator<<(std::ostream& _out, udp_socket* _socket) {
+    _out << "fd: " << (_socket ? _socket->native_handle() : -1);
+
+    return _out;
+}
 }

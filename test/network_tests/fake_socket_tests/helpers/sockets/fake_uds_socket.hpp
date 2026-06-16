@@ -22,6 +22,7 @@ public:
 
 private:
     [[nodiscard]] bool is_open() const { return state_->is_open(); }
+    [[nodiscard]] int native_handle() override { return -1; }
     void open([[maybe_unused]] endpoint::protocol_type _type, boost::system::error_code& _ec) override {
         _ec = boost::system::error_code();
         state_->open();

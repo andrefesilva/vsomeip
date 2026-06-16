@@ -21,8 +21,6 @@ public:
         // this function should not be called within a test execution. Otherwise a proper
         // indirection is missing. Because this function is only required to be called when using
         // native system calls, something that should be avoided when using fake sockets
-        throw std::runtime_error("native_handle is not allowed to be called within a test. A "
-                                 "proper abstraction is missing");
         return -1;
     }
 

@@ -155,4 +155,9 @@ public:
     static constexpr auto max_connection = boost::asio::ip::tcp::acceptor::max_listen_connections;
 };
 
+inline std::ostream& operator<<(std::ostream& _out, tcp_base_socket* _socket) {
+    _out << "fd: " << (_socket ? _socket->native_handle() : -1);
+
+    return _out;
+}
 }
