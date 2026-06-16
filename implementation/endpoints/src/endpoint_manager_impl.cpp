@@ -872,7 +872,7 @@ void endpoint_manager_impl::on_connect(std::shared_ptr<boardnet_endpoint> _endpo
         for (auto& [its_si, its_reliability_map] : remote_services_) {
             if (auto found_endpoint = its_reliability_map.find(endpoint_is_reliable); found_endpoint != its_reliability_map.end()) {
                 if (found_endpoint->second == _endpoint) {
-                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service(), its_si.instance()));
+                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service, its_si.instance));
                     if (!its_info) {
                         _endpoint->set_established(true);
                         return;
@@ -882,7 +882,7 @@ void endpoint_manager_impl::on_connect(std::shared_ptr<boardnet_endpoint> _endpo
                     const auto its_other_endpoint = its_info->get_endpoint(!endpoint_is_reliable);
 
                     if (!its_other_endpoint || (its_other_endpoint && its_other_endpoint->is_established_or_connected())) {
-                        services_to_report_.push_back({its_si.service(), its_si.instance(), its_info->get_major(), its_info->get_minor(), 0,
+                        services_to_report_.push_back({its_si.service, its_si.instance, its_info->get_major(), its_info->get_minor(), 0,
                                                        true}); // the last 2 parameters will not be used
                         services_to_report_.back().set_endpoint(_endpoint,
                                                                 true); // In this case, we don't care if the endpoint is reliable or not
@@ -909,11 +909,11 @@ void endpoint_manager_impl::on_disconnect(std::shared_ptr<boardnet_endpoint> _en
             const bool is_reliable = _endpoint->is_reliable();
             if (auto found_endpoint = its_reliability_map.find(is_reliable); found_endpoint != its_reliability_map.end()) {
                 if (found_endpoint->second == _endpoint) {
-                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service(), its_si.instance()));
+                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service, its_si.instance));
                     if (!its_info) {
                         return;
                     }
-                    services_to_report_.push_back({its_si.service(), its_si.instance(), its_info->get_major(), its_info->get_minor(), 0,
+                    services_to_report_.push_back({its_si.service, its_si.instance, its_info->get_major(), its_info->get_minor(), 0,
                                                    true}); // the last 2 parameters will not be used
                 }
             }
@@ -938,7 +938,7 @@ bool endpoint_manager_impl::on_bind_error(std::shared_ptr<boardnet_endpoint> _en
 
                 std::map<bool, std::set<port_t>> its_used_client_ports;
                 get_used_client_ports(_remote_address, _remote_port, its_used_client_ports);
-                if (configuration_->get_client_port(its_si.service(), its_si.instance(), _remote_port, is_reliable, its_used_client_ports,
+                if (configuration_->get_client_port(its_si.service, its_si.instance, _remote_port, is_reliable, its_used_client_ports,
                                                     _local_port)) {
                     release_used_client_port(_remote_address, _remote_port, _endpoint->is_reliable(), its_old_local_port);
                     return true;

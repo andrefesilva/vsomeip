@@ -1906,8 +1906,7 @@ void routing_manager_impl::expire_subscriptions(const boost::asio::ip::address& 
         for (auto& [eventgroup_id, its_info] : its_eventgroup) {
             for (auto its_subscription : its_info->get_remote_subscriptions()) {
                 std::stringstream subscription_details;
-                subscription_details << " eventgroup=" << hex4(key.service()) << "." << hex4(key.instance()) << "." << hex4(eventgroup_id)
-                                     << " id=" << hex4(its_subscription->get_id());
+                subscription_details << " eventgroup=" << key << "." << hex4(eventgroup_id) << " id=" << hex4(its_subscription->get_id());
 
                 if (its_subscription->is_forwarded()) {
                     VSOMEIP_WARNING_P << log_header.str() << "Subscription replaced." << subscription_details.str();
@@ -2303,12 +2302,10 @@ std::chrono::steady_clock::time_point routing_manager_impl::expire_subscriptions
         for (const auto& [eventgroup_id, its_info] : its_eventgroup) {
             for (auto s : its_info->get_remote_subscriptions()) {
                 if (!s) {
-                    VSOMEIP_ERROR_P << "Remote subscription is NULL for eventgroup [" << hex4(key.service()) << "." << hex4(key.instance())
-                                    << "." << hex4(eventgroup_id) << "]";
+                    VSOMEIP_ERROR_P << "Remote subscription is NULL for eventgroup [" << key << "." << hex4(eventgroup_id) << "]";
                     continue;
                 } else if (s->is_forwarded()) {
-                    VSOMEIP_WARNING_P << "New remote subscription replaced expired [" << hex4(key.service()) << "." << hex4(key.instance())
-                                      << "." << hex4(eventgroup_id) << "]";
+                    VSOMEIP_WARNING_P << "New remote subscription replaced expired [" << key << "." << hex4(eventgroup_id) << "]";
                     continue;
                 }
                 for (auto its_client : s->get_clients()) {
@@ -2548,8 +2545,7 @@ void routing_manager_impl::on_pong(client_t _client) {
                 // received pong from an application were another application wants
                 // to offer its service, delete the other applications offer as
                 // the current offering application is still alive
-                VSOMEIP_ERROR << "OFFER(" << hex4(new_client) << "): [" << hex4(service_iter.first.service()) << "."
-                              << hex4(service_iter.first.instance()) << ":" << std::uint32_t(major) << "." << minor
+                VSOMEIP_ERROR << "OFFER(" << hex4(new_client) << "): [" << service_iter.first << ":" << std::uint32_t(major) << "." << minor
                               << "] was rejected as application: " << hex4(_client) << " is still alive";
                 return true;
             }
@@ -2575,8 +2571,8 @@ void routing_manager_impl::on_pong(client_t _client) {
     // Only this thread can access it, and no other thread can obtain a reference to it.
     // This defers processing outside the critical section to maintain lock ordering.
     for (const auto& [service_instance, requesting_clients] : requests_to_process) {
-        auto service_id = service_instance.service();
-        auto instance_id = service_instance.instance();
+        auto service_id = service_instance.service;
+        auto instance_id = service_instance.instance;
         protocol::service its_request(service_id, instance_id, ANY_MAJOR, ANY_MINOR);
         std::set<protocol::service> requests;
         requests.insert(its_request);
@@ -2622,11 +2618,11 @@ void routing_manager_impl::cleanup_client(client_t _client) {
         std::erase_if(pending_offers_, [&its_offers, _client](const auto& pending_offer) {
             const auto& [service_instance, offer_info] = pending_offer;
             const auto& [major, minor, new_client, old_client] = offer_info;
+            const auto& [its_service, its_instance] = service_instance;
             if (old_client == _client) {
-                VSOMEIP_WARNING << "OFFER(" << hex4(new_client) << "): [" << hex4(service_instance.service()) << "."
-                                << hex4(service_instance.instance()) << ":" << std::uint32_t(major) << "." << minor
+                VSOMEIP_WARNING << "OFFER(" << hex4(new_client) << "): [" << service_instance << ":" << std::uint32_t(major) << "." << minor
                                 << "] is not pending anymore as application: " << hex4(old_client) << " is dead. Offering again!";
-                its_offers.push_front(std::make_tuple(new_client, service_instance.service(), service_instance.instance(), major, minor));
+                its_offers.push_front(std::make_tuple(new_client, its_service, its_instance, major, minor));
                 return true;
             }
             return false;
@@ -3701,8 +3697,8 @@ void routing_manager_impl::remove_pending_requests_unlocked(pending_request_remo
 
     for (auto iter = pending_requests_.begin(); iter != pending_requests_.end();) {
         const auto& its_key = iter->first;
-        auto its_service = its_key.service();
-        auto its_instance = its_key.instance();
+        auto its_service = its_key.service;
+        auto its_instance = its_key.instance;
 
         // Skip if we're filtering by service and this isn't the one
         if (_service != ANY_SERVICE && its_service != _service) {
@@ -4308,7 +4304,7 @@ std::set<std::tuple<service_t, instance_t, eventgroup_t>> routing_manager_impl::
         for (auto [event_id, event] : eventmap) {
             auto its_eventgroups = event->get_eventgroups(_client);
             for (const auto& e : its_eventgroups) {
-                result.insert(std::make_tuple(key.service(), key.instance(), e));
+                result.insert(std::make_tuple(key.service, key.instance, e));
             }
         }
     }
@@ -4459,9 +4455,8 @@ void routing_manager_impl::stop_offer_graceful_timeout(const boost::system::erro
         it = last_stop_offer_.erase(it);
 
         if (offer_pending) {
-            VSOMEIP_INFO << "Graceful stop-offer window expired for service 0x" << hex4(si.service()) << "." << hex4(si.instance())
-                         << ". Service can be offered again.";
-            offer_remote_service(si.service(), si.instance(), is_external_routing_ready());
+            VSOMEIP_INFO << "Graceful stop-offer window expired for service [" << si << "]. Service can be offered again.";
+            offer_remote_service(si.service, si.instance, is_external_routing_ready());
         }
     }
 

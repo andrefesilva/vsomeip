@@ -509,23 +509,22 @@ void service_discovery_impl::unsubscribe_all_on_suspend() {
     {
         std::scoped_lock its_lock(subscribed_mutex_);
         for (auto& [its_si, its_eventgroups] : subscribed_) {
+            const auto& [its_service, its_instance] = its_si;
             for (auto& [its_eventgroup_id, its_subscription] : its_eventgroups) {
                 boost::asio::ip::address its_address;
                 auto its_current_message = std::make_shared<message_impl>();
                 its_subscription->set_ttl(0);
                 const reliability_type_e its_reliability =
-                        get_eventgroup_reliability(its_si.service(), its_si.instance(), its_eventgroup_id, its_subscription);
-                auto its_data =
-                        create_eventgroup_entry(its_si.service(), its_si.instance(), its_eventgroup_id, its_subscription, its_reliability);
+                        get_eventgroup_reliability(its_service, its_instance, its_eventgroup_id, its_subscription);
+                auto its_data = create_eventgroup_entry(its_service, its_instance, its_eventgroup_id, its_subscription, its_reliability);
                 auto its_reliable = its_subscription->get_endpoint(true);
                 auto its_unreliable = its_subscription->get_endpoint(false);
                 get_subscription_address(its_reliable, its_unreliable, its_address);
                 if (its_data.entry_ && its_current_message->add_entry_data(its_data.entry_, its_data.options_)) {
                     its_stopsubscribes[its_address].push_back(its_current_message);
                 } else {
-                    VSOMEIP_WARNING_P << "Failed to create StopSubscribe entry for: " << hex4(its_si.service()) << "."
-                                      << hex4(its_si.instance()) << "." << hex4(its_eventgroup_id)
-                                      << " address: " << its_address.to_string();
+                    VSOMEIP_WARNING_P << "Failed to create StopSubscribe entry for: " << hex4(its_service) << "." << hex4(its_instance)
+                                      << "." << hex4(its_eventgroup_id) << " address: " << its_address.to_string();
                 }
             }
         }
@@ -670,8 +669,8 @@ void service_discovery_impl::insert_find_entries(std::vector<std::shared_ptr<mes
                 auto its_entry = std::make_shared<serviceentry_impl>();
                 if (its_entry) {
                     its_entry->set_type(entry_type_e::FIND_SERVICE);
-                    its_entry->set_service(its_si.service());
-                    its_entry->set_instance(its_si.instance());
+                    its_entry->set_service(its_si.service);
+                    its_entry->set_instance(its_si.instance);
                     its_entry->set_major_version(its_request->get_major());
                     its_entry->set_minor_version(its_request->get_minor());
                     its_entry->set_ttl(its_request->get_ttl());
@@ -3329,8 +3328,7 @@ void service_discovery_impl::check_stopped_services_on_suspend(const boost::syst
         std::scoped_lock lock{suspend_stop_offer_mutex_};
         for (const auto& [its_si, majors] : suspend_stop_offer_services_) {
             for (const auto& major : majors) {
-                VSOMEIP_ERROR_P << "Stop offer not sent for [" << hex4(its_si.service()) << "." << hex4(its_si.instance()) << "."
-                                << hex4(+major) << "]";
+                VSOMEIP_ERROR_P << "Stop offer not sent for [" << its_si << "." << hex4(+major) << "]";
             }
         }
         suspend_stop_offer_services_.clear();
