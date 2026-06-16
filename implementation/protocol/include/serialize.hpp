@@ -8,7 +8,7 @@
 #include "command_types.hpp"
 
 #include <cstring> // memcpy
-#include <concepts>
+#include <iterator>
 #include <iostream>
 namespace vsomeip_v3::protocol {
 
@@ -16,6 +16,11 @@ template<typename T>
 concept has_header = requires(T t) { t.header_; };
 template<typename T>
 concept has_payload = requires(T t) { t.payload_; };
+template<typename T>
+concept is_serializable_range = requires(T const& t) {
+    std::begin(t);
+    std::end(t);
+};
 
 static_assert(has_header<service_command_data>);
 static_assert(has_payload<service_command_data>);
@@ -56,7 +61,7 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.pending_id_);
     } else if constexpr (std::is_same_v<T, remove_security_policy_data>) {
         return write_fields(_mem, _value.update_id_, _value.uid_, _value.gid_);
-    } else if constexpr (std::ranges::range<T>) {
+    } else if constexpr (is_serializable_range<T>) {
         // covers span, vector, set, map etc..
         uint32_t written = 0;
         for (auto const& v : _value) {

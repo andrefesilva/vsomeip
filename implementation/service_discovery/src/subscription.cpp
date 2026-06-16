@@ -107,7 +107,7 @@ bool subscription::has_client() const {
 
 bool subscription::has_client(const client_t _client) const {
     std::scoped_lock its_lock(clients_mutex_);
-    return clients_.contains(_client);
+    return clients_.count(_client) > 0;
 }
 
 void subscription::set_eventgroupinfo(const std::shared_ptr<eventgroupinfo> _info) {
