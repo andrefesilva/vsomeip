@@ -904,51 +904,6 @@ void socket_manager::ignore_router_all_multicast_joins(std::string _router, bool
     }
 }
 
-[[nodiscard]] bool socket_manager::wait_for_sd_message(boost::asio::ip::udp::endpoint const& _ep, someip_sd_record_message _message,
-                                                       std::chrono::milliseconds _timeout) {
-    std::shared_ptr<fake_udp_socket_handle> udp_handle;
-    {
-        std::scoped_lock lock(mtx_);
-        auto const ep_it = endpoint_udp_to_fd_.find(_ep);
-        if (ep_it == endpoint_udp_to_fd_.end()) {
-            LOCAL_LOG << "Sender endpoint not yet bound" << _ep;
-            return false;
-        }
-        auto const h_it = fd_to_handle_.find(ep_it->second);
-        if (h_it == fd_to_handle_.end()) {
-            return false;
-        }
-        udp_handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(h_it->second.lock());
-    }
-    if (!udp_handle) {
-        return false;
-    }
-
-    return udp_handle->received_sd_record_.wait_for_any(_message, _timeout);
-}
-
-void socket_manager::clear_sd_message_record(boost::asio::ip::udp::endpoint const& _ep) {
-    std::shared_ptr<fake_udp_socket_handle> udp_handle;
-    {
-        std::scoped_lock lock(mtx_);
-        auto const ep_it = endpoint_udp_to_fd_.find(_ep);
-        if (ep_it == endpoint_udp_to_fd_.end()) {
-            LOCAL_LOG << "Sender endpoint not yet bound" << _ep;
-            return;
-        }
-        auto const h_it = fd_to_handle_.find(ep_it->second);
-        if (h_it == fd_to_handle_.end()) {
-            return;
-        }
-        udp_handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(h_it->second.lock());
-    }
-    if (!udp_handle) {
-        return;
-    }
-
-    udp_handle->received_sd_record_.clear();
-}
-
 void socket_manager::set_netlink_connector_state(std::string const& _client, fake_netlink_connector::state_e _state) {
     std::scoped_lock lock(mtx_);
     auto const it_context = name_to_context_.find(_client);

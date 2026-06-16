@@ -319,6 +319,10 @@ TEST_F(test_boardnet_helper, subscription_without_own_offer) {
     // router.
     ignore_router_all_multicast_joins(router_two_name_, true);
 
+    // Observe SD traffic received on ecu_one's unicast SD endpoint.
+    auto sd_gate = someip_gate::create();
+    ASSERT_TRUE(setup_data_pipe(ecu_one_sd_comm_, router_one_name_, socket_role::client, sd_gate->get_data_pipe()));
+
     // Create router and clients.
     start_all_apps();
 
@@ -330,11 +334,15 @@ TEST_F(test_boardnet_helper, subscription_without_own_offer) {
     ecu_two_server_->offer(boardnet_interface_);
 
     // Previously, this would fail as a subscription nack would be sent.
-    EXPECT_FALSE(wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
+    EXPECT_FALSE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
 }
 
 TEST_F(test_boardnet_helper, offer_service_before_event) {
     /// Test subscription handling when the event/field offering is delayed from the service offer.
+
+    // Observe SD traffic received on ecu_one's unicast SD endpoint.
+    auto sd_gate = someip_gate::create();
+    ASSERT_TRUE(setup_data_pipe(ecu_one_sd_comm_, router_one_name_, socket_role::client, sd_gate->get_data_pipe()));
 
     start_all_apps();
 
@@ -346,13 +354,12 @@ TEST_F(test_boardnet_helper, offer_service_before_event) {
     ecu_two_server_->offer(boardnet_interface_.instance_);
 
     // Client receives service availability and tries to subscribe to field, NACK must be received.
-    EXPECT_TRUE(wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}));
-    EXPECT_FALSE(
-            wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}, std::chrono::milliseconds(500)));
+    EXPECT_TRUE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}));
+    EXPECT_FALSE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}, std::chrono::milliseconds(500)));
 
     // Release service
     ecu_one_client_->release_service(service_instance_);
-    clear_sd_message_record(ecu_one_sd_comm_);
+    sd_gate->sd_record_.clear();
 
     // Offer events and fields
     for (auto const& event : boardnet_interface_.events_) {
@@ -369,7 +376,7 @@ TEST_F(test_boardnet_helper, offer_service_before_event) {
     ecu_two_server_->send_event(offered_field_, {0x5, 0x3});
 
     // ACK must be received, no NACKs.
-    EXPECT_FALSE(wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
+    EXPECT_FALSE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
     EXPECT_TRUE(ecu_one_client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(offered_field_)));
 
     field_checker_.payload_ = {0x5, 0x3};
@@ -379,6 +386,10 @@ TEST_F(test_boardnet_helper, offer_service_before_event) {
 
 TEST_F(test_boardnet_helper, offer_event_before_service) {
     /// Test subscription handling when the event/field are offered before the service.
+
+    // Observe SD traffic received on ecu_one's unicast SD endpoint.
+    auto sd_gate = someip_gate::create();
+    ASSERT_TRUE(setup_data_pipe(ecu_one_sd_comm_, router_one_name_, socket_role::client, sd_gate->get_data_pipe()));
 
     start_all_apps();
 
@@ -395,15 +406,15 @@ TEST_F(test_boardnet_helper, offer_event_before_service) {
     }
 
     // No ACK or NACK should be received, SD must not offer service only based on event and field.
-    EXPECT_FALSE(wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
-    EXPECT_FALSE(wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}, std::chrono::seconds(1)));
+    EXPECT_FALSE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
+    EXPECT_FALSE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}, std::chrono::seconds(1)));
 
     // Server offers service.
     ecu_two_server_->offer(boardnet_interface_.instance_);
 
     // Successful subscription.
-    EXPECT_FALSE(wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
-    EXPECT_TRUE(wait_for_sd_message(ecu_one_sd_comm_, {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}));
+    EXPECT_FALSE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}, std::chrono::seconds(1)));
+    EXPECT_TRUE(sd_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}));
     EXPECT_TRUE(ecu_one_client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(offered_field_)));
 
     ecu_two_server_->send_event(offered_field_, {0x5, 0x3});
@@ -1067,11 +1078,15 @@ TEST_F(guest_offering, replicate_vhal_behavior) {
     // Create and setup sd gates to replicate high scheduling delays in network stack.
     std::shared_ptr<someip_gate> router_one_multicast_sd_gate = someip_gate::create();
     std::shared_ptr<someip_gate> router_one_sending_sd_gate = someip_gate::create();
+    // Observe SD traffic received on ecu_one's unicast SD endpoint (e.g. the SubscribeAck).
+    std::shared_ptr<someip_gate> router_one_unicast_sd_receive_gate = someip_gate::create();
 
     ASSERT_TRUE(setup_data_pipe(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), ecu_one_.sd_endpoint().port()),
                                 router_one_name_, socket_role::client, router_one_multicast_sd_gate->get_data_pipe()));
     ASSERT_TRUE(
             setup_data_pipe(ecu_one_.sd_endpoint(), router_one_name_, socket_role::server, router_one_sending_sd_gate->get_data_pipe()));
+    ASSERT_TRUE(setup_data_pipe(ecu_one_.sd_endpoint(), router_one_name_, socket_role::client,
+                                router_one_unicast_sd_receive_gate->get_data_pipe()));
 
     // Block the offer to ensure the no client request is sent before the service is offered, as this would be the trigger a unicast offer,
     // so offer and when the datagram reaches the "network stack", allow the client to request the service.
@@ -1103,7 +1118,7 @@ TEST_F(guest_offering, replicate_vhal_behavior) {
 
     // Release the client subscription and wait for the sub ack.
     router_one_sending_sd_gate->block(false);
-    EXPECT_TRUE(wait_for_sd_message(ecu_one_.sd_endpoint(), {sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}));
+    EXPECT_TRUE(router_one_unicast_sd_receive_gate->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 3}));
 
     // Initial event never received as the client endpoint has been destroyed when the stop offer was received.
     message expected_message{client_session{0, 1},
@@ -2467,5 +2482,116 @@ TEST_F(test_offer_stop_offer_subscription, subscriptions_are_acknowledged_after_
     server_->offer(interface_);
 
     EXPECT_TRUE(client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_)));
+}
+
+struct test_someip_record : public base_fake_socket_fixture {
+    // UDP boardnet (unreliable)
+    ecu_setup ecu_one_{"ecu_one", boardnet::ecu_one_config, *socket_manager_};
+    ecu_setup ecu_two_{"ecu_two", boardnet::ecu_two_config, *socket_manager_};
+
+    // TCP boardnet (reliable)
+    std::vector<interface::event_spec> const tcp_events_{{0x8001, 0x1, vsomeip::reliability_type_e::RT_RELIABLE}};
+    interface tcp_interface_{0x4455, tcp_events_, {}};
+
+    ecu_config ecu_three_cfg_{boardnet::ecu_one_config};
+    ecu_config ecu_four_cfg_ = [this]() {
+        ecu_config cfg{{tcp_interface_}};
+        cfg.apps_ = {application_config{"router_two", 0x6311}};
+        cfg.unicast_ip_ = boost::asio::ip::make_address("160.48.199.98");
+        cfg.routing_config_ = local_tcp_config{.router_name_ = "router_two",
+                                               .host_ = boost::asio::ip::make_address("160.48.199.181"),
+                                               .guest_ = boost::asio::ip::make_address("160.48.199.181")};
+        cfg.network_ = "vsomeip-two";
+        return cfg;
+    }();
+
+    boost::asio::ip::udp::endpoint client_endpoint() { return {boardnet::ecu_one_config.unicast_ip_, 30491}; }
+};
+
+TEST_F(test_someip_record, record_notification_on_udp_endpoint) {
+    // Verifies that a SOME/IP notification over UDP boardnet is captured
+    // by the SOME/IP recorder on the receiving client endpoint.
+    ecu_one_.add_guest({"guest_client", std::nullopt});
+    ecu_two_.add_guest({"guest_server", std::nullopt});
+    ecu_one_.prepare();
+    ecu_two_.prepare();
+
+    // Install a non-blocking someip_gate on the client's receiving UDP endpoint so it
+    // records the forwarded SOME/IP notification. Must be set before the endpoint binds.
+    auto record_gate = someip_gate::create();
+    ASSERT_TRUE(setup_data_pipe(client_endpoint(), ecu_one_.router_name_, socket_role::client, record_gate->get_data_pipe()));
+
+    ecu_one_.start_apps();
+    ecu_two_.start_apps();
+
+    auto* server = ecu_two_.apps_["guest_server"];
+    auto* client = ecu_one_.apps_["guest_client"];
+
+    server->offer_event(interfaces::boardnet::service_3344.events_[0]);
+    server->offer(interfaces::boardnet::service_3344);
+
+    client->request_service(interfaces::boardnet::service_3344.instance_);
+    ASSERT_TRUE(client->availability_record_.wait_for_last(service_availability::available(interfaces::boardnet::service_3344.instance_)));
+    client->subscribe_event(interfaces::boardnet::service_3344.events_[0]);
+    ASSERT_TRUE(client->subscription_record_.wait_for_last(
+            event_subscription::successfully_subscribed_to(interfaces::boardnet::service_3344.events_[0])));
+
+    server->send_event(interfaces::boardnet::service_3344.events_[0], {0xAB, 0xCD});
+
+    someip_record_message notification_record{interfaces::boardnet::service_3344.instance_.service_,
+                                              interfaces::boardnet::service_3344.events_[0].event_id_,
+                                              someip_record_message::ANY_CLIENT,
+                                              someip_record_message::ANY_SESSION,
+                                              message_type_e::MT_NOTIFICATION,
+                                              return_code_e::E_OK};
+    EXPECT_TRUE(record_gate->someip_record_.wait_for_any(notification_record))
+            << "SOME/IP notification not recorded on client UDP endpoint";
+
+    record_gate->someip_record_.clear();
+    EXPECT_FALSE(record_gate->someip_record_.wait_for_any(notification_record, std::chrono::milliseconds(100)))
+            << "Record should be empty after clear";
+}
+
+TEST_F(test_someip_record, record_notification_on_tcp_boardnet_connection) {
+    // Verifies that a reliable (TCP) notification between routers is captured
+    // by the SOME/IP recorder on the TCP boardnet handle.
+    ecu_setup ecu_tcp_one{"ecu_tcp_one", ecu_three_cfg_, *socket_manager_};
+    ecu_setup ecu_tcp_two{"ecu_tcp_two", ecu_four_cfg_, *socket_manager_};
+
+    ecu_tcp_one.add_app("ecu_one_client");
+    ecu_tcp_two.add_app("ecu_two_server");
+    ecu_tcp_one.prepare();
+    ecu_tcp_two.prepare();
+    ecu_tcp_one.start_apps();
+    ecu_tcp_two.start_apps();
+
+    // Install a non-blocking someip_gate on the receiving (client) side of the
+    // router_one -> router_two TCP connection so it records the forwarded
+    // SOME/IP messages. Must be set before the connection forms.
+    auto record_gate = someip_gate::create();
+    ASSERT_TRUE(setup_data_pipe("router_one", "router_two", socket_role::client, record_gate->get_data_pipe()));
+
+    auto* router_one = ecu_tcp_one.router_;
+    auto* ecu_two_server = ecu_tcp_two.apps_["ecu_two_server"];
+
+    ecu_two_server->offer_event(tcp_interface_.events_[0]);
+    ecu_two_server->offer(tcp_interface_);
+
+    router_one->request_service(tcp_interface_.instance_);
+    ASSERT_TRUE(router_one->availability_record_.wait_for_last(service_availability::available(tcp_interface_.instance_)));
+    router_one->subscribe_event(tcp_interface_.events_[0]);
+    ASSERT_TRUE(router_one->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(tcp_interface_.events_[0])));
+
+    ecu_two_server->send_event(tcp_interface_.events_[0], {0xCA, 0xFE});
+
+    someip_record_message tcp_notification{tcp_interface_.instance_.service_, tcp_interface_.events_[0].event_id_,
+                                           someip_record_message::ANY_CLIENT, someip_record_message::ANY_SESSION,
+                                           message_type_e::MT_NOTIFICATION,   return_code_e::E_OK};
+    EXPECT_TRUE(record_gate->someip_record_.wait_for_any(tcp_notification))
+            << "SOME/IP notification not recorded on TCP boardnet connection";
+
+    record_gate->someip_record_.clear();
+    EXPECT_FALSE(record_gate->someip_record_.wait_for_any(tcp_notification, std::chrono::milliseconds(100)))
+            << "Record should be empty after clear";
 }
 }
