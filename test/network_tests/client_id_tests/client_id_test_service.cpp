@@ -25,7 +25,7 @@
 class client_id_test_service {
 public:
     client_id_test_service(struct client_id_test::service_info _service_info) :
-        service_info_(_service_info), app_(vsomeip::runtime::get()->create_application()), blocked_(false),
+        service_info_(_service_info), app_(vsomeip::runtime::get()->create_application()), blocked_(false), all_services_available_(false),
         offer_thread_(std::bind(&client_id_test_service::run, this)), stopped_(false),
         stop_thread_(std::bind(&client_id_test_service::wait_for_stop, this)) {
         if (!app_->init()) {
@@ -87,6 +87,7 @@ public:
             VSOMEIP_INFO << std::hex << std::setfill('0') << "[" << std::setw(4) << service_info_.service_id << "] Service ["
                          << std::setw(4) << _service << "." << _instance << "] is " << (_is_available ? "available." : "NOT available.");
 
+            std::scoped_lock its_lock(mutex_);
             auto its_service = other_services_available_.find(std::make_pair(_service, _instance));
             if (its_service != other_services_available_.end()) {
                 its_service->second = true;
@@ -95,8 +96,7 @@ public:
             if (std::all_of(
                         other_services_available_.cbegin(), other_services_available_.cend(),
                         [](const std::map<std::pair<vsomeip::service_t, vsomeip::instance_t>, bool>::value_type& v) { return v.second; })) {
-                std::scoped_lock its_lock(mutex_);
-                blocked_ = true;
+                all_services_available_ = true;
                 condition_.notify_one();
             }
         }
@@ -156,8 +156,8 @@ public:
         VSOMEIP_DEBUG << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id << "] Offering";
         offer();
 
-        condition_.wait(its_lock, [this] { return blocked_; });
-        blocked_ = false;
+        condition_.wait(its_lock, [this] { return all_services_available_; });
+        all_services_available_ = false;
 
         VSOMEIP_DEBUG << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id << "] Sending";
         // send a message to all other services
@@ -212,6 +212,7 @@ private:
     std::map<vsomeip::client_t, std::uint32_t> other_services_received_request_;
 
     bool blocked_;
+    bool all_services_available_;
     std::mutex mutex_;
     std::condition_variable condition_;
     std::thread offer_thread_;
