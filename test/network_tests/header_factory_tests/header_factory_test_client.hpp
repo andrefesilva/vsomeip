@@ -10,6 +10,7 @@
 #include <vsomeip/vsomeip.hpp>
 
 #include <mutex>
+#include <set>
 
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
@@ -27,4 +28,5 @@ private:
     std::mutex sync_mtx_;
     std::uint32_t number_of_messages_to_send_;
     std::uint32_t number_of_acknowledged_messages_;
+    std::set<vsomeip::session_t> received_sessions_;
 };
