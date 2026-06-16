@@ -419,9 +419,9 @@ std::string local_endpoint::status() const {
 }
 std::string local_endpoint::status_unlock() const {
     std::stringstream s;
-    s << "Client: " << hex4(peer_data_.id_) << " (" << peer_data_.lc_token_ << "), connection : " << socket_->to_string()
-      << ", send_queue: " << send_queue_.size() << ", receive_buffer: " << *receive_buffer_ << ", is_sending: " << std::boolalpha
-      << is_sending_ << ", is_flushing: " << is_flushing_ << ", state: " << state_;
+    s << "Client: " << hex4(peer_data_.id_) << " (" << peer_data_.lc_token_ << "), connection : " << socket_->to_string() << ", "
+      << socket_.get() << ", send_queue: " << send_queue_.size() << ", receive_buffer: " << *receive_buffer_
+      << ", is_sending: " << std::boolalpha << is_sending_ << ", is_flushing: " << is_flushing_ << ", state: " << state_;
     return s.str();
 }
 
@@ -639,7 +639,7 @@ client_t local_endpoint::connected_client() const {
     return peer_data_.id_;
 }
 
-std::string const& local_endpoint::name() const {
+std::string local_endpoint::name() const {
     return socket_->to_string();
 }
 

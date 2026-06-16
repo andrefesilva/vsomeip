@@ -21,6 +21,7 @@ public:
     virtual ~uds_socket() = default;
 
     [[nodiscard]] virtual bool is_open() const = 0;
+    [[nodiscard]] virtual int native_handle() = 0;
     virtual void open(endpoint::protocol_type _pt, boost::system::error_code& _ec) = 0;
 
     virtual void close(boost::system::error_code& _ec) = 0;
@@ -33,5 +34,4 @@ public:
     virtual void async_receive(boost::asio::mutable_buffer _buffer, rw_handler _handler) = 0;
     virtual void async_write(boost::asio::const_buffer const& _buffer, rw_handler _handler) = 0;
 };
-
 }

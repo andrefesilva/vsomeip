@@ -244,8 +244,8 @@ void udp_server_endpoint_impl::start_unlocked() {
     }
 
     is_stopped_ = false;
-
-    VSOMEIP_INFO_P << instance_name_ << "Start unicast data handler, lifecycle_idx=" << lifecycle_idx_.load();
+    VSOMEIP_INFO_P << instance_name_ << "Start unicast data handler, lifecycle_idx=" << lifecycle_idx_.load() << ", "
+                   << unicast_socket_.get();
     receive_unicast_unlocked(nullptr);
 
     VSOMEIP_INFO_P << instance_name_ << "Join " << joined_.size() << " groups";
@@ -607,7 +607,6 @@ void udp_server_endpoint_impl::on_multicast_received(const boost::system::error_
 void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system::error_code& _error, std::size_t _bytes, bool _is_multicast,
                                                             const endpoint_type& _remote, const message_buffer_t& _buffer) {
     // The caller shall not hold the lock
-
     // reject UDP packets larger than 1416 (16 bytes full header + 1400 payload); see Section 4.1.2.9 "Payload" in AUTOSAR FO R22-11
     // "With UDP the SOME/IP payload shall be between 0 and 1400 Bytes. The limitation to 1400
     // Bytes is needed in order to allow for future changes to protocol stack (e.g. changing to
@@ -636,8 +635,8 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                 uint64_t read_message_size = utility::get_message_size(&_buffer[i], remaining_bytes);
                 if (read_message_size > max_message_size_) {
                     VSOMEIP_ERROR_P << instance_name_ << "Message size exceeds allowed maximum: " << read_message_size
-                                    << " local: " << get_address_port_local_unlocked() << " remote: " << its_remote_address << ":"
-                                    << its_remote_port;
+                                    << " local: " << get_address_port_local_unlocked(_is_multicast) << " remote: " << its_remote_address
+                                    << ":" << its_remote_port;
                     return;
                 }
                 auto current_message_size = static_cast<uint32_t>(read_message_size);
@@ -656,22 +655,23 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                         if (_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION) {
                             VSOMEIP_ERROR_P << instance_name_ << "Wrong protocol version: 0x"
                                             << hex2(_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS])
-                                            << " local: " << get_address_port_local_unlocked() << " remote: " << its_remote_address << ":"
-                                            << its_remote_port;
+                                            << " local: " << get_address_port_local_unlocked(_is_multicast)
+                                            << " remote: " << its_remote_address << ":" << its_remote_port;
                             // ensure to send back a message w/ wrong protocol version
                             its_host->on_message(&_buffer[i], VSOMEIP_SOMEIP_HEADER_SIZE + 8, this, its_remote_address, its_remote_port,
                                                  _is_multicast);
                         } else if (!utility::is_valid_message_type(tp::tp::tp_flag_unset(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS]))) {
                             VSOMEIP_ERROR_P << instance_name_ << "Invalid message type: 0x" << hex2(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS])
-                                            << " local: " << get_address_port_local_unlocked() << " remote: " << its_remote_address << ":"
-                                            << its_remote_port;
+                                            << " local: " << get_address_port_local_unlocked(_is_multicast)
+                                            << " remote: " << its_remote_address << ":" << its_remote_port;
                         } else if (!utility::is_valid_return_code(static_cast<return_code_e>(_buffer[i + VSOMEIP_RETURN_CODE_POS]))) {
                             VSOMEIP_ERROR_P << instance_name_ << "Invalid return code: 0x" << hex2(_buffer[i + VSOMEIP_RETURN_CODE_POS])
-                                            << " local: " << get_address_port_local_unlocked() << " remote: " << its_remote_address << ":"
-                                            << its_remote_port;
+                                            << " local: " << get_address_port_local_unlocked(_is_multicast)
+                                            << " remote: " << its_remote_address << ":" << its_remote_port;
                         } else if (tp::tp::tp_flag_is_set(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS])
                                    && get_local_port() == configuration_->get_sd_port()) {
-                            VSOMEIP_WARNING_P << instance_name_ << "Not a SD message, local: " << get_address_port_local_unlocked()
+                            VSOMEIP_WARNING_P << instance_name_
+                                              << "Not a SD message, local: " << get_address_port_local_unlocked(_is_multicast)
                                               << " remote: " << its_remote_address << ":" << its_remote_port;
                         } else {
                             // Nothing to do, else clang-tidy complains
@@ -697,8 +697,8 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                             if (!tp_segmentation_enabled({its_service, its_instance}, its_method)) {
                                 VSOMEIP_WARNING_P << instance_name_ << "SomeIP/TP message for service: 0x" << hex4(its_service)
                                                   << " method: 0x" << hex4(its_method) << " which is not configured for TP:"
-                                                  << " local: " << get_address_port_local_unlocked() << " remote: " << its_remote_address
-                                                  << ":" << its_remote_port;
+                                                  << " local: " << get_address_port_local_unlocked(_is_multicast)
+                                                  << " remote: " << its_remote_address << ":" << its_remote_port;
                                 return;
                             }
                         }
@@ -722,15 +722,15 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                         } else {
                             // ignore messages for service discovery with shorter SomeIP length
                             VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP SD message with too short length field local: "
-                                            << get_address_port_local_unlocked() << " remote: " << its_remote_address << ":"
+                                            << get_address_port_local_unlocked(_is_multicast) << " remote: " << its_remote_address << ":"
                                             << its_remote_port;
                         }
                     }
                     i += current_message_size;
                 } else {
-                    VSOMEIP_ERROR_P << instance_name_
-                                    << "Unreliable SomeIP message with bad length field local: " << get_address_port_local_unlocked()
-                                    << " remote: " << its_remote_address << ":" << its_remote_port;
+                    VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP message with bad length field local: "
+                                    << get_address_port_local_unlocked(_is_multicast) << " remote: " << its_remote_address << ":"
+                                    << its_remote_port;
                     if (remaining_bytes > VSOMEIP_SERVICE_POS_MAX) {
                         service_t its_service = bithelper::read_uint16_be(&_buffer[i + VSOMEIP_SERVICE_POS_MIN]);
                         if (its_service != VSOMEIP_SD_SERVICE) {
@@ -797,27 +797,33 @@ bool udp_server_endpoint_impl::is_reliable() const {
     return false;
 }
 
-std::string udp_server_endpoint_impl::get_address_port_local_unlocked() const {
+std::string udp_server_endpoint_impl::get_address_port_local_unlocked(bool _is_multicast) const {
     // The caller shall not hold the lock
 
     std::scoped_lock its_lock(sync_);
 
-    std::string its_address_port;
-    its_address_port.reserve(21);
-    its_address_port = "ERR!";
+    std::stringstream its_address_port;
+    its_address_port << "ERR!";
 
     boost::system::error_code ec;
 
     if (unicast_socket_ && unicast_socket_->is_open()) {
         endpoint_type its_local_endpoint = unicast_socket_->local_endpoint(ec);
         if (!ec) {
-            its_address_port = its_local_endpoint.address().to_string();
-            its_address_port += ":";
-            its_address_port += std::to_string(its_local_endpoint.port());
+            its_address_port << its_local_endpoint.address().to_string();
+            its_address_port << ":";
+            its_address_port << its_local_endpoint.port();
+            if (!_is_multicast) {
+                its_address_port << ", " << unicast_socket_.get();
+            }
         }
     }
 
-    return its_address_port;
+    if (_is_multicast && multicast_socket_ && multicast_socket_->is_open()) {
+        its_address_port << multicast_socket_.get();
+    }
+
+    return its_address_port.str();
 }
 
 bool udp_server_endpoint_impl::tp_segmentation_enabled(service_instance_t _si, method_t _method) const {
@@ -958,7 +964,8 @@ void udp_server_endpoint_impl::set_multicast_option(const boost::asio::ip::addre
             }
 #endif
 
-            VSOMEIP_INFO_P << instance_name_ << "Start multicast data handler, lifecycle_idx=" << lifecycle_idx_.load();
+            VSOMEIP_INFO_P << instance_name_ << "Start multicast data handler, lifecycle_idx=" << lifecycle_idx_.load() << ", "
+                           << multicast_socket_.get();
             receive_multicast_unlocked(nullptr, nullptr);
         }
 

@@ -265,7 +265,8 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
         // IPv6 or adding security means)"
         if (_bytes > VSOMEIP_MAX_UDP_MESSAGE_SIZE) {
             VSOMEIP_ERROR_P << "Received a packet that is bigger than VSOMEIP_MAX_UDP_MESSAGE_SIZE (" << VSOMEIP_MAX_UDP_MESSAGE_SIZE
-                            << ") bytes with " << _bytes << " bytes in " << local_ << " from " << remote_ << ". Message will be dropped";
+                            << ") bytes with " << _bytes << " bytes in " << local_ << ", " << socket_.get() << " from " << remote_
+                            << ". Message will be dropped";
             receive();
             return;
         } else if (_bytes < VSOMEIP_FULL_HEADER_SIZE) {
@@ -365,18 +366,18 @@ std::string udp_client_endpoint_impl::get_address_port_remote() const {
 
 std::string udp_client_endpoint_impl::get_address_port_local() const {
     std::scoped_lock its_lock{socket_mutex_};
-    std::string its_address_port;
-    its_address_port.reserve(21);
+    std::stringstream its_address_port;
     boost::system::error_code ec;
     if (socket_->is_open()) {
         endpoint_type its_local_endpoint = socket_->local_endpoint(ec);
         if (!ec) {
-            its_address_port += its_local_endpoint.address().to_string();
-            its_address_port += ":";
-            its_address_port.append(std::to_string(its_local_endpoint.port()));
+            its_address_port << its_local_endpoint.address().to_string();
+            its_address_port << ":";
+            its_address_port << its_local_endpoint.port();
+            its_address_port << ", " << socket_.get();
         }
     }
-    return its_address_port;
+    return its_address_port.str();
 }
 
 void udp_client_endpoint_impl::print_status() {
