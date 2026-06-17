@@ -2357,6 +2357,9 @@ TEST_F(interface_manipulation, interface_down_after_successful_subscription) {
     ASSERT_TRUE(ecu_one_.set_routing(fake_netlink_connector::state_e::DOWN));
     ASSERT_TRUE(ecu_two_.set_routing(fake_netlink_connector::state_e::DOWN));
 
+    // wait for the remote service to become unavailable to ensure related callbacks have been handled
+    EXPECT_TRUE(router_two->availability_record_.wait_for_any(service_availability::unavailable(interface_.instance_)));
+
     // clear record as to not check for previous available services
     router_two->availability_record_.clear();
 
