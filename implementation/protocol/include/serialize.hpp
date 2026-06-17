@@ -6,7 +6,9 @@
 #pragma once
 
 #include "command_types.hpp"
+#include "vsomeip/defines.hpp"
 
+#include <cstdint>
 #include <cstring> // memcpy
 #include <iterator>
 #include <iostream>
@@ -45,6 +47,31 @@ uint32_t write_fields(unsigned char* _mem, Ts const&... _fields) {
 }
 
 template<typename T>
+uint32_t write_be_field(unsigned char* _mem, T _value) {
+    if constexpr (std::is_same_v<T, uint8_t>) {
+        _mem[0] = _value;
+    } else if constexpr (std::is_same_v<T, uint16_t>) {
+        _mem[0] = static_cast<uint8_t>(_value >> 8);
+        _mem[1] = static_cast<uint8_t>(_value);
+    } else if constexpr (std::is_same_v<T, uint32_t>) {
+        _mem[0] = static_cast<uint8_t>(_value >> 24);
+        _mem[1] = static_cast<uint8_t>(_value >> 16);
+        _mem[2] = static_cast<uint8_t>(_value >> 8);
+        _mem[3] = static_cast<uint8_t>(_value);
+    } else {
+        static_assert(!std::is_same_v<T, T>);
+    }
+    return sizeof(T);
+}
+
+template<typename... Ts>
+uint32_t write_be(unsigned char* _mem, Ts const&... _fields) {
+    uint32_t written{0};
+    ((written += write_be_field(_mem + written, _fields)), ...);
+    return written;
+}
+
+template<typename T>
 uint32_t serialize(T const& _value, unsigned char* _mem) {
     if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
         std::memcpy(_mem, &_value, sizeof(T));
@@ -53,6 +80,34 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.id_, _value.version_, _value.client_, _value.length_);
     } else if constexpr (std::is_same_v<T, service_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.major_version_, _value.minor_version_);
+    } else if constexpr (std::is_same_v<T, ipc_message_header>) {
+        return write_fields(_mem, _value.instance_, _value.reliable_, _value.status_, _value.target_);
+    } else if constexpr (std::is_same_v<T, extended_someip_message>) {
+        uint32_t written = serialize(_value.auxiliary_header_, _mem);
+        // the remainder is standard someip-encoding
+        return written + serialize(_value.data_, _mem + written);
+    } else if constexpr (std::is_same_v<T, raw_someip_message>) {
+        uint32_t written = serialize(_value.auxiliary_header_, _mem);
+        std::memcpy(_mem + written, _value.data_, _value.size_);
+        return written + _value.size_;
+    } else if constexpr (std::is_same_v<T, std::shared_ptr<message>>) {
+        if (!_value) {
+            return 0;
+        }
+        auto payload = _value->get_payload();
+        uint32_t const length = payload ? payload->get_length() : 0;
+        // SOME/IP header is big-endian (network byte order)
+        uint32_t written =
+                write_be(_mem, _value->get_service(), _value->get_method(), length + VSOMEIP_SOMEIP_HEADER_SIZE, _value->get_client(),
+                         _value->get_session(), _value->get_protocol_version(), _value->get_interface_version(),
+                         static_cast<uint8_t>(_value->get_message_type()), static_cast<uint8_t>(_value->get_return_code()));
+
+        // the payload needs encoding only
+        if (length > 0) {
+            std::memcpy(_mem + written, payload->get_data(), length);
+        }
+        written += length;
+        return written;
     } else if constexpr (std::is_same_v<T, release_service_data>) {
         return write_fields(_mem, _value.service_, _value.instance_);
     } else if constexpr (std::is_same_v<T, unregister_event_data>) {

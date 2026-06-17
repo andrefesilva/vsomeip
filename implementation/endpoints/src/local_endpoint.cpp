@@ -15,6 +15,7 @@
 #include "../../protocol/include/serialize.hpp"
 #include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/logging.hpp"
+#include "../../tracing/include/connector_impl.hpp"
 #include "logger_ext.hpp"
 
 #include <boost/asio/deadline_timer.hpp>
@@ -187,7 +188,7 @@ bool local_endpoint::send(byte_t const* _data, uint32_t _size) {
 }
 
 template<typename T>
-bool local_endpoint::send(T const& _in) {
+bool local_endpoint::send(T const& _in, [[maybe_unused]] std::shared_ptr<trace::connector_impl> const& _tc) {
     std::scoped_lock const lock{mutex_};
     auto const wire_size = protocol::wire_size(_in);
     auto const id = _in.header_.id_;
@@ -216,6 +217,17 @@ bool local_endpoint::send(T const& _in) {
     send_queue_.resize(former_size + wire_size);
 
     protocol::serialize(_in, send_queue_.data() + former_size);
+    if constexpr (std::is_same_v<T, protocol::send_command_data>) {
+        if (_tc) {
+            trace::header its_header;
+            if (its_header.prepare(this, true, _in.payload_.auxiliary_header_.instance_)) {
+                uint32_t offset = protocol::wire_size(_in.header_) + protocol::ipc_message_header::wire_size_;
+                if (offset < wire_size) {
+                    _tc->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, send_queue_.data() + former_size + offset, wire_size - offset);
+                }
+            }
+        }
+    }
     send_unlock();
     return true;
 }
@@ -643,16 +655,29 @@ std::string local_endpoint::name() const {
     return socket_->to_string();
 }
 
-template bool local_endpoint::send<protocol::service_command_data>(protocol::service_command_data const&);
-template bool local_endpoint::send<protocol::release_service_command_data>(protocol::release_service_command_data const&);
-template bool local_endpoint::send<protocol::multiple_service_command_data>(protocol::multiple_service_command_data const&);
-template bool local_endpoint::send<protocol::simple_command_data>(protocol::simple_command_data const&);
+template bool local_endpoint::send<protocol::send_command_data>(protocol::send_command_data const&,
+                                                                std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::send_command_raw>(protocol::send_command_raw const&,
+                                                               std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::service_command_data>(protocol::service_command_data const&,
+                                                                   std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::multiple_service_command_data>(protocol::multiple_service_command_data const&,
+                                                                            std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::simple_command_data>(protocol::simple_command_data const&,
+                                                                  std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::release_service_command_data>(protocol::release_service_command_data const&,
+                                                                           std::shared_ptr<trace::connector_impl> const&);
 template bool
-local_endpoint::send<protocol::single_field_command_data<offer_type_e>>(protocol::single_field_command_data<offer_type_e> const&);
-template bool local_endpoint::send<protocol::single_field_command_data<client_t>>(protocol::single_field_command_data<client_t> const&);
+local_endpoint::send<protocol::single_field_command_data<offer_type_e>>(protocol::single_field_command_data<offer_type_e> const&,
+                                                                        std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::single_field_command_data<client_t>>(protocol::single_field_command_data<client_t> const&,
+                                                                                  std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::single_field_command_data<pending_remote_offer_id_t>>(
-        protocol::single_field_command_data<pending_remote_offer_id_t> const&);
-template bool local_endpoint::send<protocol::unregister_event_command_data>(protocol::unregister_event_command_data const&);
-template bool local_endpoint::send<protocol::unsubscribe_ack_command_data>(protocol::unsubscribe_ack_command_data const&);
-template bool local_endpoint::send<protocol::remove_security_policy_command_data>(protocol::remove_security_policy_command_data const&);
+        protocol::single_field_command_data<pending_remote_offer_id_t> const&, std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::unregister_event_command_data>(protocol::unregister_event_command_data const&,
+                                                                            std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::unsubscribe_ack_command_data>(protocol::unsubscribe_ack_command_data const&,
+                                                                           std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::remove_security_policy_command_data>(protocol::remove_security_policy_command_data const&,
+                                                                                  std::shared_ptr<trace::connector_impl> const&);
 }

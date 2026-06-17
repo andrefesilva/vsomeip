@@ -46,7 +46,6 @@ class connector_impl;
 } // namespace trace
 
 class configuration;
-class deserializer;
 class eventgroupinfo;
 class routing_manager_host;
 class routing_manager_stub;
@@ -408,10 +407,6 @@ private:
     std::queue<std::shared_ptr<serializer>> serializers_;
     std::mutex serializer_mutex_;
     std::condition_variable serializer_condition_;
-
-    std::queue<std::shared_ptr<deserializer>> deserializers_;
-    std::mutex deserializer_mutex_;
-    std::condition_variable deserializer_condition_;
 
     const std::string env_;
 
