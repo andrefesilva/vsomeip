@@ -7,13 +7,17 @@
 
 #include <vsomeip/enumeration_types.hpp>
 #include <vsomeip/primitive_types.hpp>
+#include <vsomeip/message.hpp>
+#include <vsomeip/payload.hpp>
 
 #include "protocol.hpp"
+#include "vsomeip/defines.hpp"
 
 #include <compare>
 #include <cstring>
 #include <type_traits>
 #include <span>
+#include <memory>
 
 namespace vsomeip_v3::protocol {
 
@@ -105,6 +109,35 @@ struct single_field_command_data {
     T payload_;
 };
 
+struct ipc_message_header {
+    static constexpr uint32_t wire_size_ = sizeof(instance_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(client_t);
+    instance_t instance_;
+    bool reliable_;
+    uint8_t status_;
+    client_t target_;
+};
+
+struct extended_someip_message {
+    ipc_message_header auxiliary_header_;
+    std::shared_ptr<message> data_;
+};
+
+struct raw_someip_message {
+    ipc_message_header auxiliary_header_;
+    byte_t const* data_;
+    uint32_t size_;
+};
+
+struct send_command_data {
+    command_header header_;
+    extended_someip_message payload_;
+};
+
+struct send_command_raw {
+    command_header header_;
+    raw_someip_message payload_;
+};
+
 struct unregister_event_data {
     auto operator<=>(unregister_event_data const&) const = default;
 
@@ -184,6 +217,14 @@ constexpr uint32_t wire_size(service_data const&) {
     return service_data::wire_size_;
 }
 
+inline uint32_t wire_size(std::shared_ptr<message> const& _input) {
+    if (!_input) {
+        return 0;
+    }
+    auto p = _input->get_payload();
+    return VSOMEIP_FULL_HEADER_SIZE + (p ? p->get_length() : 0);
+}
+
 constexpr uint32_t wire_size(release_service_data const&) {
     return release_service_data::wire_size_;
 }
@@ -258,6 +299,28 @@ inline auto create_request_service_cmd(client_t _client, std::span<service_data 
 
 inline auto create_offered_services_response_cmd(client_t _client, std::span<service_data const> _data) {
     return multiple_service_command_data::create(id_e::OFFERED_SERVICES_RESPONSE_ID, _client, std::move(_data));
+}
+
+// _sender is the client that emits the command (command header client).
+// _target is the addressee carried in the IPC header. For requests/responses
+// this equals the message's own client, but for NOTIFY_ONE it is the specific
+// subscriber, which is NOT encoded in the (shared) notification message — see
+// event::notify(), which reuses one message object for every subscriber. The
+// legacy send_command carried this in a dedicated target field for the same
+// reason. The header sender drives the routing manager's bound-client security
+// check, while the IPC target tells the router which client to deliver to.
+inline auto create_send_cmd(id_e _id, client_t _sender, std::shared_ptr<message> const& _msg, client_t _target) {
+    return send_command_data{.header_ = command_header::create(_id, ipc_message_header::wire_size_ + wire_size(_msg), _sender),
+                             .payload_ = extended_someip_message{.auxiliary_header_ = {.instance_ = _msg->get_instance(),
+                                                                                       .reliable_ = _msg->is_reliable(),
+                                                                                       .status_ = _msg->get_check_result(),
+                                                                                       .target_ = _target},
+                                                                 .data_ = _msg}};
+}
+
+inline auto create_send_cmd_raw(id_e _id, client_t _sender, byte_t const* _data, uint32_t _size, ipc_message_header _message_header) {
+    return send_command_raw{.header_ = command_header::create(_id, ipc_message_header::wire_size_ + _size, _sender),
+                            .payload_ = raw_someip_message{.auxiliary_header_ = _message_header, .data_ = _data, .size_ = _size}};
 }
 
 inline auto create_unregister_event_cmd(client_t _client, service_t _service, instance_t _instance, event_t _event, bool _is_provided) {

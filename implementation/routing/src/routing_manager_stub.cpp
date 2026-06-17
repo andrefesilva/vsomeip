@@ -34,7 +34,6 @@
 #include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
-#include "../../protocol/include/send_command.hpp"
 #include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/subscribe_nack_command.hpp"
@@ -329,20 +328,21 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::SEND_ID: {
-        protocol::send_command its_command(its_id);
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        protocol::ipc_message_header its_ipc{};
+        if (auto const ipc_bytes = protocol::deserialize(its_ipc, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            auto its_message_data(its_command.get_message());
-            if (its_message_data.size() > VSOMEIP_MESSAGE_TYPE_POS) {
+            auto const* its_message_data = _data + parsed_hdr_bytes + ipc_bytes;
+            auto const its_message_size = _size - parsed_hdr_bytes - ipc_bytes;
+
+            if (its_message_size > VSOMEIP_MESSAGE_TYPE_POS) {
 
                 its_service = bithelper::read_uint16_be(&its_message_data[VSOMEIP_SERVICE_POS_MIN]);
                 its_method = bithelper::read_uint16_be(&its_message_data[VSOMEIP_METHOD_POS_MIN]);
                 its_client = bithelper::read_uint16_be(&its_message_data[VSOMEIP_CLIENT_POS_MIN]);
 
-                its_instance = its_command.get_instance();
-                is_reliable = its_command.is_reliable();
-                its_check_status = its_command.get_status();
+                its_instance = its_ipc.instance_;
+                is_reliable = its_ipc.reliable_;
+                its_check_status = its_ipc.status_;
 
                 // Allow response messages from local proxies as answer to remote requests
                 // but check requests sent by local proxies to remote against policy.
@@ -357,43 +357,47 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
                         return;
                     }
                 }
-                // reduce by size of instance, flush, reliable, client and is_valid_crc flag
                 uint32_t its_contained_size = bithelper::read_uint32_be(&its_message_data[VSOMEIP_LENGTH_POS_MIN]);
-                if (its_message_data.size() != its_contained_size + VSOMEIP_SOMEIP_HEADER_SIZE) {
+                if (its_message_size != its_contained_size + VSOMEIP_SOMEIP_HEADER_SIZE) {
                     VSOMEIP_WARNING_P << "Received a SEND command containing message with invalid size -> skip!";
                     break;
                 }
-                host_->on_message(its_service, its_instance, &its_message_data[0], length_t(its_message_data.size()), is_reliable,
-                                  _peer_data.id_, &_peer_data.sec_client_, its_check_status, false);
+                host_->on_message(its_service, its_instance, its_message_data, length_t(its_message_size), is_reliable, _peer_data.id_,
+                                  &_peer_data.sec_client_, its_check_status, false);
             }
+        } else {
+            VSOMEIP_ERROR_P << "SEND_ID deserialization failed: " << utility::dump(_data, _size);
         }
         break;
     }
 
     case protocol::id_e::NOTIFY_ID:
     case protocol::id_e::NOTIFY_ONE_ID: {
-        protocol::send_command its_command(its_id);
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        protocol::ipc_message_header its_ipc{};
+        if (auto const ipc_bytes = protocol::deserialize(its_ipc, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            auto its_message_data(its_command.get_message());
-            if (its_message_data.size() > VSOMEIP_MESSAGE_TYPE_POS) {
+            auto const* its_message_data = _data + parsed_hdr_bytes + ipc_bytes;
+            auto const its_message_size = _size - parsed_hdr_bytes - ipc_bytes;
 
-                its_client = its_command.get_target();
+            if (its_message_size > VSOMEIP_MESSAGE_TYPE_POS) {
+
+                its_client = its_ipc.target_;
                 its_service = bithelper::read_uint16_be(&its_message_data[VSOMEIP_SERVICE_POS_MIN]);
-                its_instance = its_command.get_instance();
+                its_instance = its_ipc.instance_;
 
                 uint32_t its_contained_size = bithelper::read_uint32_be(&its_message_data[VSOMEIP_LENGTH_POS_MIN]);
 
-                if (its_message_data.size() != its_contained_size + VSOMEIP_SOMEIP_HEADER_SIZE) {
+                if (its_message_size != its_contained_size + VSOMEIP_SOMEIP_HEADER_SIZE) {
                     VSOMEIP_WARNING_P << "Received a NOTIFY command containing message with invalid size -> skip!";
                     break;
                 }
 
-                host_->on_notification(its_client, its_service, its_instance, &its_message_data[0], length_t(its_message_data.size()),
+                host_->on_notification(its_client, its_service, its_instance, its_message_data, length_t(its_message_size),
                                        its_id == protocol::id_e::NOTIFY_ONE_ID);
                 break;
             }
+        } else {
+            VSOMEIP_ERROR_P << "NOTIFY deserialization failed: " << utility::dump(_data, _size);
         }
         break;
     }
