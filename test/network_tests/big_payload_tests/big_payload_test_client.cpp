@@ -129,9 +129,11 @@ void big_payload_test_client::on_message(const std::shared_ptr<vsomeip::message>
     VSOMEIP_INFO << "Received a response from Service [" << std::hex << std::setfill('0') << std::setw(4) << _response->get_service() << "."
                  << std::setw(4) << _response->get_instance() << "] to Client/Session [" << std::setw(4) << _response->get_client() << "/"
                  << std::setw(4) << _response->get_session() << "] size: " << std::dec << _response->get_payload()->get_length();
-    static vsomeip::session_t last_session(0);
-    ASSERT_GT(_response->get_session(), last_session);
-    last_session = _response->get_session();
+    {
+        std::scoped_lock its_lock(mutex_);
+        ASSERT_GT(_response->get_session(), last_session_);
+        last_session_ = _response->get_session();
+    }
 
     if (test_mode_ == big_payload_test::test_mode::RANDOM) {
         ASSERT_LT(_response->get_payload()->get_length(), big_payload_test::BIG_PAYLOAD_SIZE_RANDOM);

@@ -45,4 +45,5 @@ private:
     std::atomic<std::uint32_t> number_of_acknowledged_messages_;
     std::thread sender_;
     vsomeip::service_t service_id_;
+    vsomeip::session_t last_session_{0};
 };
