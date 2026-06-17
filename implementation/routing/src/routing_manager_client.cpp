@@ -34,9 +34,7 @@
 #include "../../endpoints/include/abstract_socket_factory.hpp"
 #include "../../endpoints/include/local_server.hpp"
 #include "../../endpoints/include/local_endpoint.hpp"
-#include "../../message/include/deserializer.hpp"
 #include "../../message/include/message_impl.hpp"
-#include "../../message/include/serializer.hpp"
 #include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/distribute_security_policies_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
@@ -85,14 +83,6 @@ routing_manager_client::routing_manager_client(routing_manager_host* _host, bool
                           : configuration_->is_uds_preferred() ? routing_mode_e::UDS_AND_TCP
                                                                : routing_mode_e::TCP_ONLY),
     request_debounce_timer_running_(false), request_debounce_timer_(io_) {
-
-    const std::size_t its_max = configuration_->get_io_thread_count(host_->get_name());
-    const uint32_t its_buffer_shrink_threshold = configuration_->get_buffer_shrink_threshold();
-
-    for (std::size_t i = 0; i < its_max; ++i) {
-        serializers_.push(std::make_shared<serializer>(its_buffer_shrink_threshold));
-        deserializers_.push(std::make_shared<deserializer>(its_buffer_shrink_threshold));
-    }
 
     ep_mgr_ = std::make_shared<endpoint_manager_base>(*this, io_, configuration_, get_name(), get_client_host());
 }
@@ -668,113 +658,6 @@ void routing_manager_client::unsubscribe(client_t _client, service_t _service, i
     }
 }
 
-bool routing_manager_client::send(client_t _client, const byte_t* _data, length_t _size, instance_t _instance, bool _reliable,
-                                  client_t _bound_client, const vsomeip_sec_client_t* _sec_client, uint8_t _status_check,
-                                  bool _sent_from_remote, [[maybe_unused]] bool _force) {
-
-    (void)_bound_client;
-    (void)_sec_client;
-    (void)_sent_from_remote;
-    bool is_sent{false};
-    bool has_remote_subscribers{false};
-    if (auto const state = state_machine_->state(); state != routing_client_state_e::ST_REGISTERED) {
-        VSOMEIP_WARNING_P << "(" << hex4(get_client()) << "): Dropping message for client: " << hex4(_client)
-                          << ", due to unexpected state: " << state;
-        return false;
-    }
-    if (client_side_logging_) {
-        if (_size > VSOMEIP_MESSAGE_TYPE_POS) {
-            service_t its_service = bithelper::read_uint16_be(&_data[VSOMEIP_SERVICE_POS_MIN]);
-            if (client_side_logging_filter_.empty() || (1 == client_side_logging_filter_.count(std::make_tuple(its_service, ANY_INSTANCE)))
-                || (1 == client_side_logging_filter_.count(std::make_tuple(its_service, _instance)))) {
-                method_t its_method = bithelper::read_uint16_be(&_data[VSOMEIP_METHOD_POS_MIN]);
-                session_t its_session = bithelper::read_uint16_be(&_data[VSOMEIP_SESSION_POS_MIN]);
-                client_t its_client = bithelper::read_uint16_be(&_data[VSOMEIP_CLIENT_POS_MIN]);
-                VSOMEIP_INFO_P << "(" << hex4(get_client()) << "): [" << hex4(its_service) << "." << hex4(_instance) << "."
-                               << hex4(its_method) << ":" << hex4(its_session) << ":" << hex4(its_client) << "] "
-                               << "type=" << std::hex << static_cast<std::uint32_t>(_data[VSOMEIP_MESSAGE_TYPE_POS])
-                               << " thread=" << std::hex << std::this_thread::get_id();
-            }
-        } else {
-            VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << ": message too short to log: " << _size;
-        }
-    }
-    if (_size > VSOMEIP_MESSAGE_TYPE_POS) {
-        std::shared_ptr<local_endpoint> its_target;
-        if (utility::is_request(_data[VSOMEIP_MESSAGE_TYPE_POS])) {
-            // Request
-            service_t its_service = bithelper::read_uint16_be(&_data[VSOMEIP_SERVICE_POS_MIN]);
-            client_t its_client = find_local_client(its_service, _instance);
-            if (its_client != VSOMEIP_ROUTING_CLIENT) {
-                its_target = ep_mgr_->find_or_create_local_client(its_client);
-                if (!its_target) {
-                    VSOMEIP_WARNING_P << "No endpoint to service to client: " << hex4(its_client) << " found or created";
-                }
-            }
-        } else if (!utility::is_notification(_data[VSOMEIP_MESSAGE_TYPE_POS])) {
-            // Response
-            client_t its_client = bithelper::read_uint16_be(&_data[VSOMEIP_CLIENT_POS_MIN]);
-            if (its_client != VSOMEIP_ROUTING_CLIENT) {
-                its_target = ep_mgr_->find_local_server_endpoint(its_client);
-            }
-        } else if (utility::is_notification(_data[VSOMEIP_MESSAGE_TYPE_POS]) && _client == VSOMEIP_ROUTING_CLIENT) {
-            // router (remote) will be notified below
-            has_remote_subscribers = true;
-        } else if (utility::is_notification(_data[VSOMEIP_MESSAGE_TYPE_POS]) && _client != VSOMEIP_ROUTING_CLIENT) {
-            // notify_one
-            its_target = ep_mgr_->find_local_server_endpoint(_client);
-            if (its_target) {
-                is_sent = send_local(its_target, get_client(), _data, _size, _instance, _reliable, protocol::id_e::SEND_ID, _status_check,
-                                     get_client());
-                if (is_sent) {
-                    trace::header its_header;
-                    if (its_header.prepare(its_target, true, _instance))
-                        tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data, _size);
-                }
-
-                return is_sent;
-            }
-        }
-        // If no direct endpoint could be found
-        // or for notifications ~> route to routing_manager_stub
-        bool message_to_stub(false);
-        if (!its_target) {
-            std::scoped_lock its_sender_lock{sender_mutex_};
-            if (sender_) {
-                its_target = sender_;
-                message_to_stub = true;
-            } else {
-                VSOMEIP_WARNING_P << "No connection to router. Message will be dropped";
-                return false;
-            }
-        }
-
-        bool send(true);
-        protocol::id_e its_command(protocol::id_e::SEND_ID);
-
-        if (utility::is_notification(_data[VSOMEIP_MESSAGE_TYPE_POS])) {
-            if (_client != VSOMEIP_ROUTING_CLIENT) {
-                its_command = protocol::id_e::NOTIFY_ONE_ID;
-            } else {
-                its_command = protocol::id_e::NOTIFY_ID;
-                // Do we need to deliver a notification to the routing manager?
-                // Only for services which already have remote clients subscribed to
-                send = has_remote_subscribers;
-            }
-        }
-        if (send) {
-            auto its_client{its_command == protocol::id_e::NOTIFY_ONE_ID ? _client : get_client()};
-            is_sent = send_local(its_target, its_client, _data, _size, _instance, _reliable, its_command, _status_check, get_client());
-            if (is_sent && !utility::is_notification(VSOMEIP_MESSAGE_TYPE_POS) && !message_to_stub) {
-                trace::header its_header;
-                if (its_header.prepare(its_target, true, _instance))
-                    tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data, _size);
-            }
-        }
-    }
-    return is_sent;
-}
-
 void routing_manager_client::on_message(const byte_t* _data, length_t _size, const local_client_data& _peer_data) {
     protocol::id_e its_id;
     client_t its_client;
@@ -788,7 +671,6 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 #ifndef VSOMEIP_DISABLE_SECURITY
     bool is_internal_policy_update(false);
 #endif // !VSOMEIP_DISABLE_SECURITY
-    std::vector<byte_t> its_buffer(_data, _data + _size);
     protocol::error_e its_error;
 
     protocol::command_header its_header{};
@@ -807,175 +689,152 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         switch (its_id) {
         case protocol::id_e::SEND_ID: {
-            protocol::send_command its_send_command(protocol::id_e::SEND_ID);
-            its_send_command.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
+            if (std::shared_ptr<message_impl> its_message;
+                protocol::deserialize(its_message, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+                its_message->set_sec_client(_peer_data.sec_client_);
+                its_message->set_env(_peer_data.env_);
 
-                auto a_deserializer = get_deserializer();
-                a_deserializer->set_data(its_send_command.get_message());
-                std::shared_ptr<message_impl> its_message = a_deserializer->deserialize_message();
-                a_deserializer->reset();
-                put_deserializer(a_deserializer);
+                if (!is_from_routing) {
+                    if (utility::is_request(its_message->get_message_type())) {
+                        if (configuration_->is_security_enabled() && routing_mode_ == routing_mode_e::UDS_ONLY
+                            && its_message->get_client() != _peer_data.id_) {
+                            VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " received a request from client 0x"
+                                            << hex4(its_message->get_client()) << " to service/instance/method "
+                                            << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                            << hex4(its_message->get_method()) << " which doesn't match the bound client 0x"
+                                            << hex4(_peer_data.id_) << " ~> skip message!";
+                            return;
+                        }
+                        if (VSOMEIP_SEC_OK
+                            != configuration_->get_security()->is_client_allowed_to_access_member(
+                                    &_peer_data.sec_client_, its_message->get_service(), its_message->get_instance(),
+                                    its_message->get_method())) {
+                            VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
+                                            << " : routing_manager_client::on_message: " << hex4(its_message->get_client())
+                                            << " isn't allowed to send a request to service/instance/method "
+                                            << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                            << hex4(its_message->get_method()) << " ~> Skip message!";
+                            return;
+                        }
+                    } else { // Notification or Response
+                        // TODO for external security ports are checked.
+                        // Notification and responses were originally send out by the "sender".
+                        // With the refactoring towards client-server we have to temporarily "lie"
+                        // to security about the port we received the message from...
+                        auto sec_client = _peer_data.sec_client_;
 
-                if (its_message) {
-                    its_message->set_instance(its_send_command.get_instance());
-                    its_message->set_reliable(its_send_command.is_reliable());
-                    its_message->set_check_result(its_send_command.get_status());
-                    its_message->set_sec_client(_peer_data.sec_client_);
-                    its_message->set_env(_peer_data.env_);
+                        // If port is VSOMEIP_SEC_PORT_UNUSED (0) the connection is over UDS.
+                        // Subtracting 1 from 0 would wrap around to VSOMEIP_SEC_PORT_UNSET
+                        // (0xFFFF) which is not a valid registered port
+                        if (ntohs(_peer_data.sec_client_.port) != VSOMEIP_SEC_PORT_UNUSED) {
+                            sec_client.port = htons(ntohs(_peer_data.sec_client_.port) - 1);
+                        }
 
-                    if (!is_from_routing) {
-                        if (utility::is_request(its_message->get_message_type())) {
-                            if (configuration_->is_security_enabled() && routing_mode_ == routing_mode_e::UDS_ONLY
-                                && its_message->get_client() != _peer_data.id_) {
-                                VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                                << " received a request from client 0x" << hex4(its_message->get_client())
-                                                << " to service/instance/method " << hex4(its_message->get_service()) << "/"
-                                                << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
-                                                << " which doesn't match the bound client 0x" << hex4(_peer_data.id_)
-                                                << " ~> skip message!";
-                                return;
-                            }
-                            if (VSOMEIP_SEC_OK
-                                != configuration_->get_security()->is_client_allowed_to_access_member(
-                                        &_peer_data.sec_client_, its_message->get_service(), its_message->get_instance(),
-                                        its_message->get_method())) {
-                                VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
-                                                << " : routing_manager_client::on_message: " << hex4(its_message->get_client())
-                                                << " isn't allowed to send a request to service/instance/method "
-                                                << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                                << hex4(its_message->get_method()) << " ~> Skip message!";
-                                return;
-                            }
-                        } else { // Notification or Response
-                            // TODO for external security ports are checked.
-                            // Notification and responses were originally send out by the "sender".
-                            // With the refactoring towards client-server we have to temporarily "lie"
-                            // to security about the port we received the message from...
-                            auto sec_client = _peer_data.sec_client_;
+                        // Verifies security offer rule for messages (notifications and
+                        // responses)
+                        bool is_offer_access_ok = (configuration_->is_security_external()
+                                                   && VSOMEIP_SEC_OK
+                                                           == configuration_->get_security()->is_client_allowed_to_offer(
+                                                                   &sec_client, its_message->get_service(), its_message->get_instance()));
 
-                            // If port is VSOMEIP_SEC_PORT_UNUSED (0) the connection is over UDS.
-                            // Subtracting 1 from 0 would wrap around to VSOMEIP_SEC_PORT_UNSET
-                            // (0xFFFF) which is not a valid registered port
-                            if (ntohs(_peer_data.sec_client_.port) != VSOMEIP_SEC_PORT_UNUSED) {
-                                sec_client.port = htons(ntohs(_peer_data.sec_client_.port) - 1);
-                            }
+                        if (!is_offer_access_ok && configuration_->is_security_external()) {
+                            VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
+                                            << " : routing_manager_client::on_message: received a "
+                                            << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
+                                            << " from client 0x" << hex4(_peer_data.id_) << " which does not offer service/instance/method "
+                                            << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                            << hex4(its_message->get_method()) << " ~> Skip message!";
+                            return;
+                        }
 
-                            // Verifies security offer rule for messages (notifications and
-                            // responses)
-                            bool is_offer_access_ok =
-                                    (configuration_->is_security_external()
-                                     && VSOMEIP_SEC_OK
-                                             == configuration_->get_security()->is_client_allowed_to_offer(
-                                                     &sec_client, its_message->get_service(), its_message->get_instance()));
-
-                            if (!is_offer_access_ok && configuration_->is_security_external()) {
-                                VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                                << " : routing_manager_client::on_message: received a "
-                                                << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
-                                                << " from client 0x" << hex4(_peer_data.id_)
-                                                << " which does not offer service/instance/method " << hex4(its_message->get_service())
-                                                << "/" << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
-                                                << " ~> Skip message!";
-                                return;
-                            }
-
-                            bool is_intern_resp_allowed = (!configuration_->is_security_external()
-                                                           && is_response_allowed(_peer_data.id_, its_message->get_service(),
-                                                                                  its_message->get_instance(), its_message->get_method()));
-
-                            if (is_intern_resp_allowed || is_offer_access_ok) {
-                                const bool is_notification = utility::is_notification(its_message->get_message_type());
-
-                                if (is_notification) {
-                                    auto const my_sec_client = get_sec_client();
-                                    const bool is_access_member_ok = (VSOMEIP_SEC_OK
-                                                                      == configuration_->get_security()->is_client_allowed_to_access_member(
-                                                                              &my_sec_client, its_message->get_service(),
+                        bool is_intern_resp_allowed = (!configuration_->is_security_external()
+                                                       && is_response_allowed(_peer_data.id_, its_message->get_service(),
                                                                               its_message->get_instance(), its_message->get_method()));
 
-                                    if (!is_access_member_ok) {
-                                        VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
-                                                        << " : routing_manager_client::on_message: " << hex4(get_client())
-                                                        << " : routing_manager_client::on_message: isn't allowed to receive a "
-                                                        << " notification from service/instance/method " << hex4(its_message->get_service())
-                                                        << "/" << hex4(its_message->get_instance()) << "/"
-                                                        << hex4(its_message->get_method()) << " respectively from client 0x"
-                                                        << hex4(_peer_data.id_) << " ~> Skip message!";
-                                        return;
-                                    }
-                                    cache_event_payload(its_message);
+                        if (is_intern_resp_allowed || is_offer_access_ok) {
+                            const bool is_notification = utility::is_notification(its_message->get_message_type());
+
+                            if (is_notification) {
+                                auto const sec_client = get_sec_client();
+                                const bool is_access_member_ok = (VSOMEIP_SEC_OK
+                                                                  == configuration_->get_security()->is_client_allowed_to_access_member(
+                                                                          &sec_client, its_message->get_service(),
+                                                                          its_message->get_instance(), its_message->get_method()));
+
+                                if (!is_access_member_ok) {
+                                    VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
+                                                    << " : routing_manager_client::on_message: " << hex4(get_client())
+                                                    << " : routing_manager_client::on_message: isn't allowed to receive a "
+                                                    << " notification from service/instance/method " << hex4(its_message->get_service())
+                                                    << "/" << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
+                                                    << " respectively from client 0x" << hex4(_peer_data.id_) << " ~> Skip message!";
+                                    return;
                                 }
-                            } else {
-                                VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                                << " : routing_manager_client::on_message: received a "
-                                                << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
-                                                << " from client 0x" << hex4(_peer_data.id_)
-                                                << " which does not offer service/instance/method " << hex4(its_message->get_service())
-                                                << "/" << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
-                                                << " ~> Skip message!";
-                                return;
+                                cache_event_payload(its_message);
                             }
-                        }
-                    } else {
-                        if (!configuration_->is_remote_access_allowed()) {
-                            // if the message is from routing manager, check if
-                            // policy allows remote requests.
+                        } else {
                             VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                            << " : routing_manager_client::on_message: Security: Remote clients via routing manager with "
-                                            << "client ID 0x" << hex4(its_client)
-                                            << " are not allowed to communicate with service/instance/method "
+                                            << " : routing_manager_client::on_message: received a "
+                                            << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
+                                            << " from client 0x" << hex4(_peer_data.id_) << " which does not offer service/instance/method "
                                             << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                            << hex4(its_message->get_method()) << " respectively with client 0x" << hex4(get_client())
-                                            << " ~> Skip message!";
+                                            << hex4(its_message->get_method()) << " ~> Skip message!";
                             return;
-                        } else if (utility::is_notification(its_message->get_message_type())) {
-                            // As subscription is sent on eventgroup level, incoming remote event
-                            // ID's need to be checked as well if remote clients are allowed and the
-                            // local policy only allows specific events in the eventgroup to be
-                            // received.
-
-                            auto const my_sec_client = get_sec_client();
-                            if (VSOMEIP_SEC_OK
-                                != configuration_->get_security()->is_client_allowed_to_access_member(
-                                        &my_sec_client, its_message->get_service(), its_message->get_instance(),
-                                        its_message->get_method())) {
-                                VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                                << " : routing_manager_client::on_message: "
-                                                << " isn't allowed to receive a notification from service/instance/event "
-                                                << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                                << hex4(its_message->get_method()) << " ~> Skip message!";
-                                return;
-                            }
-                            cache_event_payload(its_message);
                         }
                     }
+                } else {
+                    if (!configuration_->is_remote_access_allowed()) {
+                        // if the message is from routing manager, check if
+                        // policy allows remote requests.
+                        VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
+                                        << " : routing_manager_client::on_message: Security: Remote clients via routing manager with "
+                                        << "client ID 0x" << hex4(its_client)
+                                        << " are not allowed to communicate with service/instance/method "
+                                        << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                        << hex4(its_message->get_method()) << " respectively with client 0x" << hex4(get_client())
+                                        << " ~> Skip message!";
+                        return;
+                    } else if (utility::is_notification(its_message->get_message_type())) {
+                        // As subscription is sent on eventgroup level, incoming remote event
+                        // ID's need to be checked as well if remote clients are allowed and the
+                        // local policy only allows specific events in the eventgroup to be
+                        // received.
 
-                    if (client_side_logging_
-                        && (client_side_logging_filter_.empty()
-                            || (1 == client_side_logging_filter_.count(std::make_tuple(its_message->get_service(), ANY_INSTANCE)))
-                            || (1
-                                == client_side_logging_filter_.count(
-                                        std::make_tuple(its_message->get_service(), its_message->get_instance()))))) {
-                        trace::header its_header;
-                        if (its_header.prepare(nullptr, false, its_send_command.get_instance(), trace::protocol_e::unknown)) {
-                            uint32_t its_message_size = its_send_command.get_size();
-                            if (its_message_size >= uint32_t{vsomeip_v3::protocol::SEND_COMMAND_HEADER_SIZE})
-                                its_message_size -= uint32_t{vsomeip_v3::protocol::SEND_COMMAND_HEADER_SIZE};
-                            else
-                                its_message_size = 0;
+                        auto const sec_client = get_sec_client();
+                        if (VSOMEIP_SEC_OK
+                            != configuration_->get_security()->is_client_allowed_to_access_member(
+                                    &sec_client, its_message->get_service(), its_message->get_instance(), its_message->get_method())) {
+                            VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
+                                            << " : routing_manager_client::on_message: "
+                                            << " isn't allowed to receive a notification from service/instance/event "
+                                            << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                            << hex4(its_message->get_method()) << " ~> Skip message!";
+                            return;
+                        }
+                        cache_event_payload(its_message);
+                    }
+                }
 
-                            tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, &_data[vsomeip_v3::protocol::SEND_COMMAND_HEADER_SIZE],
-                                       its_message_size);
+                if (client_side_logging_
+                    && (client_side_logging_filter_.empty()
+                        || (1 == client_side_logging_filter_.count(std::make_tuple(its_message->get_service(), ANY_INSTANCE)))
+                        || (1
+                            == client_side_logging_filter_.count(
+                                    std::make_tuple(its_message->get_service(), its_message->get_instance()))))) {
+                    trace::header its_header;
+                    if (its_header.prepare(nullptr, false, its_message->get_instance(), trace::protocol_e::unknown)) {
+                        uint32_t offset = parsed_hdr_bytes + protocol::ipc_message_header::wire_size_;
+                        if (offset < _size) {
+                            tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data + offset, _size - offset);
                         }
                     }
+                }
 
-                    host_->on_message(std::move(its_message));
+                host_->on_message(std::move(its_message));
 
-                } else
-                    VSOMEIP_ERROR_P << "Routing proxy: SomeIP-Header deserialization failed!";
-            } else
-                VSOMEIP_ERROR_P << "Send command deserialization failed (" << static_cast<int>(its_error) << ")";
+            } else {
+                VSOMEIP_ERROR_P << "Send command deserialization failed: " << utility::dump(_data, _size);
+            }
             break;
         }
 
@@ -1006,6 +865,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::SUBSCRIBE_ID: {
             protocol::subscribe_command its_subscribe_command;
+            std::vector<byte_t> its_buffer(_data, _data + _size);
             its_subscribe_command.deserialize(its_buffer, its_error);
             if (its_error == protocol::error_e::ERROR_OK) {
 
@@ -1147,6 +1007,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::UNSUBSCRIBE_ID: {
             protocol::unsubscribe_command its_unsubscribe;
+            std::vector<byte_t> its_buffer(_data, _data + _size);
             its_unsubscribe.deserialize(its_buffer, its_error);
             if (its_error == protocol::error_e::ERROR_OK) {
 
@@ -1208,6 +1069,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::EXPIRE_ID: {
             protocol::expire_command its_expire;
+            std::vector<byte_t> its_buffer(_data, _data + _size);
             its_expire.deserialize(its_buffer, its_error);
             if (its_error == protocol::error_e::ERROR_OK) {
 
@@ -1259,6 +1121,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::SUBSCRIBE_NACK_ID: {
             protocol::subscribe_nack_command its_subscribe_nack;
+            std::vector<byte_t> its_buffer(_data, _data + _size);
             its_subscribe_nack.deserialize(its_buffer, its_error);
             if (its_error == protocol::error_e::ERROR_OK) {
 
@@ -1278,6 +1141,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::SUBSCRIBE_ACK_ID: {
             protocol::subscribe_ack_command its_subscribe_ack;
+            std::vector<byte_t> its_buffer(_data, _data + _size);
             its_subscribe_ack.deserialize(its_buffer, its_error);
             if (its_error == protocol::error_e::ERROR_OK) {
 
@@ -1337,6 +1201,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         case protocol::id_e::UPDATE_SECURITY_POLICY_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
                 protocol::update_security_policy_command its_command(is_internal_policy_update);
+                std::vector<byte_t> its_buffer(_data, _data + _size);
                 its_command.deserialize(its_buffer, its_error);
                 if (its_error == protocol::error_e::ERROR_OK) {
                     auto its_policy = its_command.get_policy();
@@ -1397,6 +1262,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         case protocol::id_e::DISTRIBUTE_SECURITY_POLICIES_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
                 protocol::distribute_security_policies_command its_command;
+                std::vector<byte_t> its_buffer(_data, _data + _size);
                 its_command.deserialize(its_buffer, its_error);
                 if (its_error == protocol::error_e::ERROR_OK) {
                     for (auto p : its_command.get_policies()) {
@@ -1419,6 +1285,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         case protocol::id_e::UPDATE_SECURITY_CREDENTIALS_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
                 protocol::update_security_credentials_command its_command;
+                std::vector<byte_t> its_buffer(_data, _data + _size);
                 its_command.deserialize(its_buffer, its_error);
                 if (its_error == protocol::error_e::ERROR_OK) {
                     on_update_security_credentials(its_command);
@@ -1435,6 +1302,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         case protocol::id_e::CONFIG_ID: {
             protocol::config_command its_command;
             protocol::error_e its_command_error;
+            std::vector<byte_t> its_buffer(_data, _data + _size);
             its_command.deserialize(its_buffer, its_command_error);
             if (its_command_error != protocol::error_e::ERROR_OK) {
                 VSOMEIP_ERROR_P << "Config command deserialization failed (" << static_cast<int>(its_command_error) << ")";
@@ -1862,21 +1730,12 @@ void routing_manager_client::notify_remote_initially(service_t _service, instanc
                     its_notification->set_interface_version(service_info->get_major());
                 }
 
-                std::shared_ptr<serializer> its_serializer(get_serializer());
-                if (its_serializer->serialize(its_notification.get())) {
-                    {
-                        std::scoped_lock its_sender_lock{sender_mutex_};
-                        if (sender_) {
-                            send_local(sender_, VSOMEIP_ROUTING_CLIENT, its_serializer->get_data(), its_serializer->get_size(), _instance,
-                                       false, protocol::id_e::NOTIFY_ID, 0, get_client());
-                        } else {
-                            VSOMEIP_ERROR_P << "Failed due to a missing sender";
-                        }
-                    }
-                    its_serializer->reset();
-                    put_serializer(its_serializer);
+                std::scoped_lock its_sender_lock{sender_mutex_};
+                if (sender_) {
+                    sender_->send(
+                            protocol::create_send_cmd(protocol::id_e::NOTIFY_ID, get_client(), its_notification, VSOMEIP_ROUTING_CLIENT));
                 } else {
-                    VSOMEIP_ERROR_P << "Failed to serialize message. Check message size!";
+                    VSOMEIP_ERROR_P << "Failed due to a missing sender";
                 }
             }
         }
@@ -2369,29 +2228,101 @@ bool routing_manager_client::send_event(client_t _client, std::shared_ptr<messag
 
 bool routing_manager_client::send(client_t _client, std::shared_ptr<message> _message, bool _force) {
     bool is_sent(false);
+
+    instance_t its_instance = _message->get_instance();
+    service_t its_service = _message->get_service();
+    method_t its_method = _message->get_method();
+    session_t its_session = _message->get_session();
+    client_t its_client = _message->get_client();
+    message_type_e its_message_type = _message->get_message_type();
+    major_version_t its_major = _message->get_interface_version();
     if (utility::is_request(_message->get_message_type())) {
         _message->set_client(_client);
-        if (!host_->is_routing() && !is_available(_message->get_service(), _message->get_instance(), _message->get_interface_version())) {
-            VSOMEIP_WARNING_P << "this=" << this << "}::send{_client=" << _client << " _message=" << hex4(_message->get_service()) << "."
-                              << hex4(_message->get_method()) << "." << static_cast<int>(_message->get_message_type()) << "."
+        if (!host_->is_routing() && !is_available(its_service, its_instance, its_major)) {
+            VSOMEIP_WARNING_P << "this=" << this << "}::send{_client=" << _client << " _message=" << hex4(its_service) << "."
+                              << hex4(its_method) << "." << static_cast<int>(its_message_type) << "."
                               << static_cast<int>(_message->get_return_code()) << " _force=" << _force
-                              << "}: Service not available. instance=" << hex4(_message->get_instance())
-                              << " version=" << hex4(_message->get_interface_version());
+                              << "}: Service not available. instance=" << hex4(its_instance) << " version=" << hex4(its_major);
             if (!_force) {
                 return is_sent;
             }
         }
     }
 
-    std::shared_ptr<serializer> its_serializer(get_serializer());
-    if (its_serializer->serialize(_message.get())) {
-        auto const sec_client = get_sec_client();
-        is_sent = send(_client, its_serializer->get_data(), its_serializer->get_size(), _message->get_instance(), _message->is_reliable(),
-                       get_client(), &sec_client, 0, false, _force);
-        its_serializer->reset();
-        put_serializer(its_serializer);
+    bool has_remote_subscribers{false};
+    if (auto const state = state_machine_->state(); state != routing_client_state_e::ST_REGISTERED) {
+        VSOMEIP_WARNING_P << "(" << hex4(get_client()) << "): Dropping message for client: " << hex4(_client)
+                          << ", due to unexpected state: " << state;
+        return false;
+    }
+    if (client_side_logging_) {
+        if (client_side_logging_filter_.empty() || (1 == client_side_logging_filter_.count(std::make_tuple(its_service, ANY_INSTANCE)))
+            || (1 == client_side_logging_filter_.count(std::make_tuple(its_service, its_instance)))) {
+            VSOMEIP_INFO_P << "(" << hex4(get_client()) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                           << hex4(its_method) << ":" << hex4(its_session) << ":" << hex4(its_client) << "] "
+                           << "type=" << std::hex << static_cast<std::uint32_t>(its_message_type) << " thread=" << std::hex
+                           << std::this_thread::get_id();
+        }
+    }
+    std::shared_ptr<local_endpoint> its_target;
+    if (utility::is_request(its_message_type)) {
+        // Request
+        client_t its_offerer = find_local_client(its_service, its_instance);
+        if (its_offerer != VSOMEIP_ROUTING_CLIENT) {
+            its_target = ep_mgr_->find_or_create_local_client(its_offerer);
+            if (!its_target) {
+                VSOMEIP_WARNING_P << "No endpoint to service to client: " << hex4(its_offerer) << " found or created";
+            }
+        }
+    } else if (!utility::is_notification(its_message_type)) {
+        // Response — target is the original requester (from SOME/IP header)
+        if (its_client != VSOMEIP_ROUTING_CLIENT) {
+            its_target = ep_mgr_->find_local_server_endpoint(its_client);
+        }
+    } else if (_client == VSOMEIP_ROUTING_CLIENT) {
+        // router (remote) will be notified below
+        has_remote_subscribers = true;
     } else {
-        VSOMEIP_ERROR_P << "Failed to serialize message. Check message size!";
+        // notify_one
+        its_target = ep_mgr_->find_local_server_endpoint(_client);
+        if (its_target) {
+            return its_target->send(protocol::create_send_cmd(protocol::id_e::SEND_ID, get_client(), _message, its_client), tc_);
+        }
+    }
+    // If no direct endpoint could be found
+    // or for notifications ~> route to routing_manager_stub
+    bool message_to_stub(false);
+    if (!its_target) {
+        std::scoped_lock its_sender_lock{sender_mutex_};
+        if (sender_) {
+            its_target = sender_;
+            message_to_stub = true;
+        } else {
+            VSOMEIP_WARNING_P << "No connection to router. Message will be dropped";
+            return false;
+        }
+    }
+
+    bool send_to_target(true);
+    protocol::id_e its_command(protocol::id_e::SEND_ID);
+
+    if (utility::is_notification(its_message_type)) {
+        if (_client != VSOMEIP_ROUTING_CLIENT) {
+            its_command = protocol::id_e::NOTIFY_ONE_ID;
+        } else {
+            its_command = protocol::id_e::NOTIFY_ID;
+            // Do we need to deliver a notification to the routing manager?
+            // Only for services which already have remote clients subscribed to
+            send_to_target = has_remote_subscribers;
+        }
+    }
+    if (send_to_target) {
+        // Only trace requests/responses to local endpoints, not notifications or messages routed via stub.
+        // For NOTIFY_ONE the addressee is the specific subscriber (_client), which is not encoded in the
+        // shared notification message; for everything else it is the message's own client.
+        client_t const its_ipc_target = (its_command == protocol::id_e::NOTIFY_ONE_ID) ? _client : get_client();
+        is_sent = its_target->send(protocol::create_send_cmd(its_command, get_client(), _message, its_ipc_target),
+                                   (!utility::is_notification(its_message_type) && !message_to_stub) ? tc_ : nullptr);
     }
     return is_sent;
 }
@@ -3077,63 +3008,6 @@ vsomeip_sec_client_t routing_manager_client::get_sec_client() const {
 
 void routing_manager_client::set_sec_client_port(port_t _port) {
     host_->set_sec_client_port(_port);
-}
-
-bool routing_manager_client::send_local(std::shared_ptr<local_endpoint>& _target, client_t _client, const byte_t* _data, uint32_t _size,
-                                        instance_t _instance, bool _reliable, protocol::id_e _command, uint8_t _status_check,
-                                        client_t _sender) const {
-    protocol::send_command its_command(_command);
-    its_command.set_client(_sender);
-    its_command.set_instance(_instance);
-    its_command.set_reliable(_reliable);
-    its_command.set_status(_status_check);
-    its_command.set_target(_client);
-    its_command.set_message(std::vector<byte_t>(_data, _data + _size));
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
-    return _target->send(&its_buffer[0], uint32_t(its_buffer.size()));
-}
-
-std::shared_ptr<serializer> routing_manager_client::get_serializer() {
-    std::unique_lock its_lock(serializer_mutex_);
-    while (serializers_.empty()) {
-        VSOMEIP_INFO_P << "Client 0x" << hex4(get_client()) << " has no available serializer. Waiting...";
-        serializer_condition_.wait(its_lock, [this] { return !serializers_.empty(); });
-        VSOMEIP_INFO_P << ": Client 0x" << hex4(get_client()) << " now checking for available serializer.";
-    }
-
-    auto its_serializer = serializers_.front();
-    serializers_.pop();
-
-    return its_serializer;
-}
-
-void routing_manager_client::put_serializer(const std::shared_ptr<serializer>& _serializer) {
-    std::scoped_lock its_lock(serializer_mutex_);
-    serializers_.push(_serializer);
-    serializer_condition_.notify_one();
-}
-
-std::shared_ptr<deserializer> routing_manager_client::get_deserializer() {
-    std::unique_lock its_lock(deserializer_mutex_);
-    while (deserializers_.empty()) {
-        VSOMEIP_INFO_P << ": Client 0x" << hex4(get_client()) << "~> all in use!";
-        deserializer_condition_.wait(its_lock, [this] { return !deserializers_.empty(); });
-        VSOMEIP_INFO_P << "Client 0x" << hex4(get_client()) << "~> wait finished!";
-    }
-
-    auto its_deserializer = deserializers_.front();
-    deserializers_.pop();
-
-    return its_deserializer;
-}
-
-void routing_manager_client::put_deserializer(const std::shared_ptr<deserializer>& _deserializer) {
-    std::scoped_lock its_lock(deserializer_mutex_);
-    deserializers_.push(_deserializer);
-    deserializer_condition_.notify_one();
 }
 
 } // namespace vsomeip_v3

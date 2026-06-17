@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class send_command : public command {
+class [[deprecated("send_command is deprecated")]] send_command : public command {
 public:
     send_command(id_e _id);
 

@@ -18,6 +18,8 @@
 #include "../include/connector_impl.hpp"
 #include "../include/defines.hpp"
 #include "../../configuration/include/trace.hpp"
+#include "../../protocol/include/command_types.hpp"
+#include "../../protocol/include/serialize.hpp"
 #include "../../utility/include/bithelper.hpp"
 #include "../../utility/include/utility.hpp"
 
