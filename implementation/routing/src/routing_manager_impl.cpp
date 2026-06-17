@@ -38,11 +38,11 @@
 #include "../../endpoints/include/udp_server_endpoint_impl.hpp"
 #include "../../endpoints/include/abstract_socket_factory.hpp"
 #include "../../endpoints/include/virtual_server_endpoint_impl.hpp"
-#include "../../message/include/deserializer.hpp"
 #include "../../message/include/message_impl.hpp"
 #include "../../message/include/serializer.hpp"
 #include "../../plugin/include/plugin_manager_impl.hpp"
 #include "../../protocol/include/protocol.hpp"
+#include "../../protocol/include/command_types.hpp"
 #include "../../security/include/security.hpp"
 #include "../../service_discovery/include/constants.hpp"
 #include "../../service_discovery/include/defines.hpp"
@@ -86,7 +86,6 @@ routing_manager_impl::routing_manager_impl(routing_manager_host* _host) :
 
     for (std::size_t i = 0; i < its_max; ++i) {
         serializers_.push(std::make_shared<serializer>(its_buffer_shrink_threshold));
-        deserializers_.push(std::make_shared<deserializer>(its_buffer_shrink_threshold));
     }
 }
 
@@ -859,18 +858,9 @@ bool routing_manager_impl::send_local(std::shared_ptr<local_endpoint>& _target, 
                                       instance_t _instance, bool _reliable, protocol::id_e _command, uint8_t _status_check,
                                       client_t _sender) const {
 
-    protocol::send_command its_command(_command);
-    its_command.set_client(_sender);
-    its_command.set_instance(_instance);
-    its_command.set_reliable(_reliable);
-    its_command.set_status(_status_check);
-    its_command.set_target(_client);
-    its_command.set_message(std::vector<byte_t>(_data, _data + _size));
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
-    return _target->send(&its_buffer[0], uint32_t(its_buffer.size()));
+    return _target->send(protocol::create_send_cmd_raw(
+            _command, _sender, _data, _size,
+            protocol::ipc_message_header{.instance_ = _instance, .reliable_ = _reliable, .status_ = _status_check, .target_ = _client}));
 }
 
 void routing_manager_impl::register_shadow_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,

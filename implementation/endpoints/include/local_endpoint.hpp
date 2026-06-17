@@ -33,6 +33,10 @@ class configuration;
 class routing_host;
 class local_socket;
 
+namespace trace {
+class connector_impl;
+} // namespace trace
+
 /**
  * @struct local_endpoint_context
  * @brief Shared context/dependencies for local endpoint operations.
@@ -190,7 +194,7 @@ public:
      * Note that the messages are only send out after start() has been called.
      */
     template<typename T>
-    bool send(T const& _in);
+    bool send(T const& _in, std::shared_ptr<trace::connector_impl> const& _tc = nullptr);
 
     /**
      * @brief Retrieves the client ID of the connected peer.
