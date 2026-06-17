@@ -1,4 +1,4 @@
-version: '3.7'
+version: "3.7"
 
 networks:
   ci-network-tests:
@@ -12,15 +12,15 @@ networks:
           aux_addresses:
             slave_2nd: &slave-2nd 169.254.87.42
 
-x-common:
-  &common
+x-common: &common
+  image: noble:latest
   build:
     args:
       - http_proxy
       - https_proxy
       - no_proxy
-    context: ../../..
-    dockerfile: vsomeip/zuul/network-tests/Dockerfile
+    context: ../..
+    dockerfile: zuul/network-tests/Dockerfile
   cap_add:
     - "NET_ADMIN"
     - "PERFMON"
@@ -52,11 +52,11 @@ services:
       - slave
     entrypoint: setarch -R /home/source/zuul/network-tests/entrypoint-master
     sysctls:
-      net.ipv4.tcp_tw_reuse: 2                  # Enable TIME_WAIT socket reuse for loopback only
+      net.ipv4.tcp_tw_reuse: 2 # Enable TIME_WAIT socket reuse for loopback only
       net.ipv4.ip_local_port_range: 34600 60999 # Set local port range to exclude SOME/IP server port range
   slave:
     <<: *common
     entrypoint: setarch -R /home/source/zuul/network-tests/entrypoint-slave
     sysctls:
-      net.ipv4.tcp_tw_reuse: 2                  # Enable TIME_WAIT socket reuse for loopback only
+      net.ipv4.tcp_tw_reuse: 2 # Enable TIME_WAIT socket reuse for loopback only
       net.ipv4.ip_local_port_range: 34600 60999 # Set local port range to exclude SOME/IP server port range
