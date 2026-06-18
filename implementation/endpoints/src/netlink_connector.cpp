@@ -39,13 +39,10 @@ void netlink_connector::start() {
     std::unique_lock its_lock(socket_mutex_);
     boost::system::error_code ec;
     if (socket_.is_open()) {
-        // It is inherently unsafe to receive multiple starts
-        // due to internal data not being protected by mutexes.
-
-        socket_.close(ec);
-        if (ec) {
-            VSOMEIP_WARNING << "Error closing NETLINK socket: " << ec.message();
-        }
+        // There is no safe way to restart the connector while a receive is already in flight,
+        // so just ignore the request and log a warning.
+        VSOMEIP_WARNING << "NETLINK connector already started, ignoring start request.";
+        return;
     }
     socket_.open(nl_protocol(NETLINK_ROUTE), ec);
     if (ec) {
