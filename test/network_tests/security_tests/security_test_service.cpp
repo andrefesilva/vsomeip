@@ -67,6 +67,7 @@ void security_test_service::start() {
 
 void security_test_service::stop() {
     VSOMEIP_INFO << "Stopping...";
+    app_->stop_offer_service(vsomeip_test::TEST_SERVICE_SERVICE_ID, vsomeip_test::TEST_SERVICE_INSTANCE_ID);
     app_->clear_all_handler();
     app_->stop();
 }

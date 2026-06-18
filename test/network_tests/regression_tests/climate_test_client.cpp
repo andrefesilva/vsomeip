@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -72,6 +73,12 @@ public:
                      << (_is_available ? "available." : "NOT available.") << std::endl;
         std::scoped_lock lock{mutex_};
         availability_handler_calls++;
+        if (_is_available && !is_available_) {
+            is_available_ = true;
+        } else if (!_is_available && is_available_) {
+            is_available_ = false;
+            condition_.notify_one();
+        }
     }
 
     void on_message(const std::shared_ptr<vsomeip::message>& _response) {
@@ -127,9 +134,14 @@ public:
                 its_set->set_method(service_info_.shutdown_method_id);
                 app_->send(its_set);
 
-                // magic sleep to give time for the last message to be sent
-                // TODO: FIXME! REMOVE THIS!
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                // Wait for the service to become unavailable, confirming the
+                // shutdown message was received before we tear down.
+                {
+                    std::unique_lock its_lock{mutex_};
+                    if (!condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return !is_available_; })) {
+                        GTEST_NONFATAL_FAILURE_("Service didn't become unavailable within time");
+                    }
+                }
 
                 stop();
             }
@@ -152,6 +164,8 @@ private:
     std::shared_ptr<vsomeip::application> app_;
     struct climate_test::service_info service_info_;
     std::mutex mutex_;
+    std::condition_variable condition_;
+    bool is_available_ = false;
     uint8_t availability_handler_calls = 0;
     uint8_t notifications_received = 0;
 };

@@ -82,10 +82,12 @@ void payload_test_client::on_availability(vsomeip::service_t _service, vsomeip::
 
     if (vsomeip_test::TEST_SERVICE_SERVICE_ID == _service && vsomeip_test::TEST_SERVICE_INSTANCE_ID == _instance) {
         if (is_available_ && !_is_available) {
-            is_available_ = false;
-        } else if (_is_available && !is_available_) {
-            is_available_ = true;
             std::scoped_lock its_lock(mutex_);
+            is_available_ = false;
+            condition_.notify_one();
+        } else if (_is_available && !is_available_) {
+            std::scoped_lock its_lock(mutex_);
+            is_available_ = true;
             blocked_ = true;
             condition_.notify_one();
         }
@@ -164,11 +166,18 @@ void payload_test_client::run() {
         }
     }
     blocked_ = false;
+    lk.unlock();
 
-    stop();
-    // magic sleep to give time for the shutdown message to be sent
-    // TODO: FIXME! REMOVE THIS!
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    if (shutdown_service_at_end) {
+        shutdown_service();
+        // Wait for the service to become unavailable. The wait must be done
+        // before clear_all_handler() removes the availability handler.
+        if (!condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return !is_available_; })) {
+            GTEST_NONFATAL_FAILURE_("Service didn't become unavailable within time");
+        }
+    }
+
+    app_->clear_all_handler();
     app_->stop();
 }
 
