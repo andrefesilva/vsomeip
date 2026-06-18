@@ -167,10 +167,7 @@ TEST_F(ipv4_netlink_fixture, start_stop) {
         }
     });
 
-    // TODO: NetLink incorrectly handles double start, it
-    // doesn't wait until the previous operations have been
-    // finished before to reuse the same buffers, resulting
-    // in a buffer overwrite.
+    // NetLink connector should ignore the second start()
     EXPECT_NO_THROW(connector_->start());
     EXPECT_NO_THROW(connector_->start());
     while (!localhost_available) {
