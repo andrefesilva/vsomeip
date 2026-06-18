@@ -23,16 +23,13 @@ public:
     void init();
     void offer();
     void stop_offer();
-    void on_state(vsomeip::state_type_e _state);
     void on_message(const std::shared_ptr<vsomeip::message>& _request);
-    void run();
     bool wait_for_messages();
 
 private:
     std::shared_ptr<vsomeip::application> app_;
     std::mutex mutex_;
     std::condition_variable condition_;
-    vsomeip::state_type_e registration_status_{vsomeip::state_type_e::ST_DEREGISTERED};
     bool all_received_{false};
     std::map<std::uint16_t, std::uint32_t> received_counter_;
     std::uint32_t number_of_received_messages_{0};
