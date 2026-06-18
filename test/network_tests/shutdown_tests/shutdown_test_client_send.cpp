@@ -44,10 +44,11 @@ public:
             app_->send(request_);
         }
 
-        // magic sleep to give time for the last message to be read
-        // in the router, before the clean-up starts the forceful stop
-        // of the "server" connection within the router.
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        // Wait for the service to become unavailable, which confirms all sent
+        // messages were processed and the service has shut down cleanly.
+        if (!condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return !is_available_; })) {
+            GTEST_NONFATAL_FAILURE_("Service didn't become unavailable within time");
+        }
 
         stop();
     }
@@ -85,6 +86,7 @@ public:
         std::scoped_lock its_lock(mutex_);
         if (is_available_ && !_is_available) {
             is_available_ = false;
+            condition_.notify_one();
         } else if (_is_available && !is_available_) {
             is_available_ = true;
             condition_.notify_one();
