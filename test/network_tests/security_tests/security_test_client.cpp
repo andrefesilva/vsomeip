@@ -52,11 +52,14 @@ void security_test_client::stop() {
 
     if (is_remote_client_allowed_) {
         shutdown_service();
-    }
 
-    // magic sleep to give time for the last message to be sent
-    // TODO: FIXME! REMOVE THIS!
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        // Wait for the service to become unavailable, confirming the shutdown
+        // message was received and processed before we tear down.
+        std::unique_lock its_lock(mutex_);
+        if (!condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return !is_available_; })) {
+            GTEST_NONFATAL_FAILURE_("Service didn't become unavailable within time");
+        }
+    }
 
     app_->clear_all_handler();
     app_->stop();
@@ -105,6 +108,7 @@ void security_test_client::on_availability(vsomeip::service_t _service, vsomeip:
         std::unique_lock its_lock(mutex_);
         if (is_available_ && !_is_available) {
             is_available_ = false;
+            condition_.notify_one();
         } else if (_is_available && !is_available_) {
             is_available_ = true;
             condition_.notify_one();

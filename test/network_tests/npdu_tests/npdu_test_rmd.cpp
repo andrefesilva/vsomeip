@@ -59,8 +59,13 @@ void npdu_test_rmd::on_state(vsomeip::state_type_e _state) {
 void npdu_test_rmd::on_availability(vsomeip::service_t _service, vsomeip::instance_t _instance, bool _is_available) {
     (void)_service;
     (void)_instance;
-    if (_is_available) {
+    std::scoped_lock its_lock(mutex_);
+    if (_is_available && !is_available_) {
+        is_available_ = true;
         app_->offer_service(npdu_test::RMD_SERVICE_ID_CLIENT_SIDE, npdu_test::RMD_INSTANCE_ID);
+    } else if (!_is_available && is_available_) {
+        is_available_ = false;
+        condition_.notify_one();
     }
 }
 
@@ -81,9 +86,14 @@ void npdu_test_rmd::on_message_shutdown(const std::shared_ptr<vsomeip::message>&
         request->set_message_type(vsomeip::message_type_e::MT_REQUEST_NO_RETURN);
         app_->send(request);
 
-        // magic sleep to give time for the last message to be sent
-        // TODO: FIXME! REMOVE THIS!
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        // Wait for the service to become unavailable, confirming the shutdown
+        // message was received and processed before we tear down.
+        {
+            std::unique_lock its_lock(mutex_);
+            if (!condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return !is_available_; })) {
+                GTEST_NONFATAL_FAILURE_("RMD service didn't become unavailable within time");
+            }
+        }
 
         stop();
     }

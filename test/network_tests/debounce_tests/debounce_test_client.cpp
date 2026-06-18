@@ -72,9 +72,13 @@ void debounce_test_client::run() {
     VSOMEIP_INFO << "Stopping the service.";
     stop_service();
 
-    // magic sleep to give time for the last message to be sent
-    // TODO: FIXME! REMOVE THIS!
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    // Wait for the service to become unavailable, confirming stop was received.
+    {
+        std::unique_lock its_lock(run_mutex_);
+        if (!run_condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return !is_available_; })) {
+            GTEST_NONFATAL_FAILURE_("Debounce service didn't become unavailable within time");
+        }
+    }
 
     stop();
 }
@@ -101,6 +105,7 @@ void debounce_test_client::on_availability(vsomeip::service_t _service, vsomeip:
 
             std::scoped_lock its_lock(run_mutex_);
             is_available_ = false;
+            run_condition_.notify_one();
         }
     }
 }
