@@ -133,6 +133,17 @@ TEST(ut_commands_roundtrip, remove_security_policy_response_roundtrip) {
     auto cmd = create_remove_security_policy_response_cmd(0x1234, 0x0000BEEF);
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
+TEST(ut_commands_roundtrip, subscribe_ack_command) {
+    auto cmd = create_subscribe_ack_cmd(
+            0x1234, {.service_ = 0x98, .instance_ = 0x97, .eventgroup_ = 0x96, .subscriber_ = 0x95, .event_ = 0x94, .pending_id_ = 0x93});
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+TEST(ut_commands_roundtrip, subscribe_nack_command) {
+    auto cmd = create_subscribe_nack_cmd(
+            0x1234,
+            {.service_ = 0x121, .instance_ = 0x122, .eventgroup_ = 0x123, .subscriber_ = 0x124, .event_ = 0x125, .pending_id_ = 0x126});
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
 
 // --- Non-owning commands
 TEST(ut_commands_roundtrip, request_service_command) {

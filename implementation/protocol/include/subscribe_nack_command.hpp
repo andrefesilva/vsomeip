@@ -10,7 +10,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class subscribe_nack_command : public subscribe_ack_command_base {
+class [[deprecated("Use create_subscribe_nack_cmd() from command_types.hpp")]] subscribe_nack_command : public subscribe_ack_command_base {
 
 public:
     subscribe_nack_command();

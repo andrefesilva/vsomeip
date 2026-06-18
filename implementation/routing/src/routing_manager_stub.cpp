@@ -34,9 +34,7 @@
 #include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
-#include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
-#include "../../protocol/include/subscribe_nack_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
 #include "../../protocol/include/update_security_credentials_command.hpp"
 #include "../../protocol/include/update_security_policy_command.hpp"
@@ -141,7 +139,6 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     minor_version_t its_minor;
     std::shared_ptr<payload> its_payload;
     bool is_reliable(false);
-    client_t its_subscriber;
     uint8_t its_check_status(0);
     std::uint16_t its_subscription_id(PENDING_SUBSCRIPTION_ID);
 
@@ -265,47 +262,29 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::SUBSCRIBE_ACK_ID: {
-        protocol::subscribe_ack_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        if (protocol::subscribe_answer_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            its_client = its_command.get_client();
-            its_service = its_command.get_service();
-            its_instance = its_command.get_instance();
-            its_eventgroup = its_command.get_eventgroup();
-            its_subscriber = its_command.get_subscriber();
-            its_notifier = its_command.get_event();
-            its_subscription_id = its_command.get_pending_id();
+            host_->on_subscribe_ack(its_data.subscriber_, its_data.service_, its_data.instance_, its_data.eventgroup_, its_data.event_,
+                                    its_data.pending_id_);
 
-            host_->on_subscribe_ack(its_subscriber, its_service, its_instance, its_eventgroup, its_notifier, its_subscription_id);
-
-            VSOMEIP_INFO << "SUBSCRIBE ACK(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                         << hex4(its_eventgroup) << "." << hex4(its_notifier) << "] id=" << hex4(its_subscription_id);
+            VSOMEIP_INFO << "SUBSCRIBE ACK(" << hex4(its_client) << "): [" << hex4(its_data.service_) << "." << hex4(its_data.instance_)
+                         << "." << hex4(its_data.eventgroup_) << "." << hex4(its_data.event_) << "] id=" << hex4(its_data.pending_id_);
         } else
-            VSOMEIP_ERROR_P << "Deserializing subscribe ack failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Deserializing subscribe ack failed: " << utility::dump(_data, _size);
 
         break;
     }
 
     case protocol::id_e::SUBSCRIBE_NACK_ID: {
-        protocol::subscribe_nack_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        if (protocol::subscribe_answer_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            its_client = its_command.get_client();
-            its_service = its_command.get_service();
-            its_instance = its_command.get_instance();
-            its_eventgroup = its_command.get_eventgroup();
-            its_subscriber = its_command.get_subscriber();
-            its_notifier = its_command.get_event();
-            its_subscription_id = its_command.get_pending_id();
+            host_->on_subscribe_nack(its_data.subscriber_, its_data.service_, its_data.instance_, its_data.eventgroup_, false,
+                                     its_data.pending_id_);
 
-            host_->on_subscribe_nack(its_subscriber, its_service, its_instance, its_eventgroup, false, its_subscription_id);
-
-            VSOMEIP_INFO << "SUBSCRIBE NACK(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                         << hex4(its_eventgroup) << "." << hex4(its_notifier) << "] id=" << hex4(its_subscription_id);
+            VSOMEIP_INFO << "SUBSCRIBE NACK(" << hex4(its_client) << "): [" << hex4(its_data.service_) << "." << hex4(its_data.instance_)
+                         << "." << hex4(its_data.eventgroup_) << "." << hex4(its_data.event_) << "] id=" << hex4(its_data.pending_id_);
         } else
-            VSOMEIP_ERROR_P << "Deserializing subscribe nack failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Deserializing subscribe nack failed :" << utility::dump(_data, _size);
 
         break;
     }
@@ -896,39 +875,13 @@ void routing_manager_stub::send_subscribe_ack(client_t _client, service_t _servi
                                               event_t _event) {
 
     if (auto its_target = find_local_routing_endpoint(_client); its_target) {
-
-        protocol::subscribe_ack_command its_command;
-        its_command.set_client(VSOMEIP_ROUTING_CLIENT);
-        its_command.set_service(_service);
-        its_command.set_instance(_instance);
-        its_command.set_eventgroup(_eventgroup);
-        its_command.set_subscriber(_client);
-        its_command.set_event(_event);
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
-
-        send_local(its_target, its_buffer);
-    }
-}
-
-void routing_manager_stub::send_subscribe_nack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup,
-                                               event_t _event) {
-
-    if (auto its_target = find_local_routing_endpoint(_client); its_target) {
-
-        protocol::subscribe_nack_command its_command;
-        its_command.set_client(VSOMEIP_ROUTING_CLIENT);
-        its_command.set_service(_service);
-        its_command.set_instance(_instance);
-        its_command.set_eventgroup(_eventgroup);
-        its_command.set_subscriber(_client);
-        its_command.set_event(_event);
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
-
-        send_local(its_target, its_buffer);
+        its_target->send(protocol::create_subscribe_ack_cmd(VSOMEIP_ROUTING_CLIENT,
+                                                            protocol::subscribe_answer_data{.service_ = _service,
+                                                                                            .instance_ = _instance,
+                                                                                            .eventgroup_ = _eventgroup,
+                                                                                            .subscriber_ = _client,
+                                                                                            .event_ = _event,
+                                                                                            .pending_id_ = 0x0}));
     }
 }
 
