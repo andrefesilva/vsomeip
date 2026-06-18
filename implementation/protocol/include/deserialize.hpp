@@ -88,6 +88,9 @@ inline uint32_t deserialize(unsubscribe_ack_data& _out, unsigned char const* _me
 inline uint32_t deserialize(remove_security_policy_data& _out, unsigned char const* _mem, uint32_t _size) {
     return parse(_mem, _size, _out.update_id_, _out.uid_, _out.gid_);
 }
+inline uint32_t deserialize(subscribe_answer_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.service_, _out.instance_, _out.eventgroup_, _out.subscriber_, _out.event_, _out.pending_id_);
+}
 
 inline uint32_t deserialize(std::vector<service_data>& _out, unsigned char const* _mem, uint32_t _size) {
     uint32_t acc = 0;

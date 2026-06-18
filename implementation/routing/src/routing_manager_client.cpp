@@ -44,9 +44,7 @@
 #include "../../protocol/include/request_service_command.hpp"
 #include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
-#include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
-#include "../../protocol/include/subscribe_nack_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
 #include "../../protocol/include/update_security_credentials_command.hpp"
 #include "../../protocol/include/update_security_policy_command.hpp"
@@ -550,21 +548,17 @@ void routing_manager_client::send_subscribe(client_t _client, service_t _service
 void routing_manager_client::send_subscribe_nack(client_t _subscriber, service_t _service, instance_t _instance, eventgroup_t _eventgroup,
                                                  event_t _event, remote_subscription_id_t _id) {
 
-    protocol::subscribe_nack_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_service(_service);
-    its_command.set_instance(_instance);
-    its_command.set_eventgroup(_eventgroup);
-    its_command.set_subscriber(_subscriber);
-    its_command.set_event(_event);
-    its_command.set_pending_id(_id);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
+    auto cmd = protocol::create_subscribe_nack_cmd(get_client(),
+                                                   protocol::subscribe_answer_data{.service_ = _service,
+                                                                                   .instance_ = _instance,
+                                                                                   .eventgroup_ = _eventgroup,
+                                                                                   .subscriber_ = _subscriber,
+                                                                                   .event_ = _event,
+                                                                                   .pending_id_ = _id});
     if (_subscriber != VSOMEIP_ROUTING_CLIENT && _id == PENDING_SUBSCRIPTION_ID) {
         auto its_target = ep_mgr_->find_local_server_endpoint(_subscriber);
         if (its_target) {
-            its_target->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            its_target->send(cmd);
             return;
         } else {
             VSOMEIP_WARNING_P << "No target available to send subscription nack. Client=0x" << hex4(_subscriber)
@@ -574,7 +568,7 @@ void routing_manager_client::send_subscribe_nack(client_t _subscriber, service_t
     {
         std::scoped_lock its_sender_lock{sender_mutex_};
         if (sender_) {
-            sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            sender_->send(cmd);
         } else {
             VSOMEIP_ERROR_P << "Failed due to a missing sender";
         }
@@ -584,21 +578,17 @@ void routing_manager_client::send_subscribe_nack(client_t _subscriber, service_t
 void routing_manager_client::send_subscribe_ack(client_t _subscriber, service_t _service, instance_t _instance, eventgroup_t _eventgroup,
                                                 event_t _event, remote_subscription_id_t _id) {
 
-    protocol::subscribe_ack_command its_command;
-    its_command.set_client(get_client());
-    its_command.set_service(_service);
-    its_command.set_instance(_instance);
-    its_command.set_eventgroup(_eventgroup);
-    its_command.set_subscriber(_subscriber);
-    its_command.set_event(_event);
-    its_command.set_pending_id(_id);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
+    auto cmd = protocol::create_subscribe_ack_cmd(get_client(),
+                                                  protocol::subscribe_answer_data{.service_ = _service,
+                                                                                  .instance_ = _instance,
+                                                                                  .eventgroup_ = _eventgroup,
+                                                                                  .subscriber_ = _subscriber,
+                                                                                  .event_ = _event,
+                                                                                  .pending_id_ = _id});
     if (_subscriber != VSOMEIP_ROUTING_CLIENT && _id == PENDING_SUBSCRIPTION_ID) {
         auto its_target = ep_mgr_->find_local_server_endpoint(_subscriber);
         if (its_target) {
-            its_target->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            its_target->send(cmd);
             return;
         } else {
             VSOMEIP_WARNING_P << "No target available to send subscription ack. Client=0x" << hex4(_subscriber)
@@ -608,7 +598,7 @@ void routing_manager_client::send_subscribe_ack(client_t _subscriber, service_t 
     {
         std::scoped_lock its_sender_lock{sender_mutex_};
         if (sender_) {
-            sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            sender_->send(cmd);
         } else {
             VSOMEIP_ERROR_P << "Failed due to a missing sender";
         }
@@ -666,7 +656,6 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     eventgroup_t its_eventgroup;
     event_t its_event;
     major_version_t its_major;
-    client_t its_subscriber;
     remote_subscription_id_t its_pending_id(PENDING_SUBSCRIPTION_ID);
 #ifndef VSOMEIP_DISABLE_SECURITY
     bool is_internal_policy_update(false);
@@ -1120,42 +1109,26 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         }
 
         case protocol::id_e::SUBSCRIBE_NACK_ID: {
-            protocol::subscribe_nack_command its_subscribe_nack;
-            std::vector<byte_t> its_buffer(_data, _data + _size);
-            its_subscribe_nack.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
+            if (protocol::subscribe_answer_data its_data;
+                protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-                its_service = its_subscribe_nack.get_service();
-                its_instance = its_subscribe_nack.get_instance();
-                its_eventgroup = its_subscribe_nack.get_eventgroup();
-                its_subscriber = its_subscribe_nack.get_subscriber();
-                its_event = its_subscribe_nack.get_event();
-
-                on_subscribe_nack(its_subscriber, its_service, its_instance, its_eventgroup, its_event);
-                VSOMEIP_INFO << "SUBSCRIBE NACK(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                             << hex4(its_eventgroup) << "." << hex4(its_event) << "]";
+                on_subscribe_nack(its_data.subscriber_, its_data.service_, its_data.instance_, its_data.eventgroup_, its_data.event_);
+                VSOMEIP_INFO << "SUBSCRIBE NACK(" << hex4(its_client) << "): [" << hex4(its_data.service_) << "."
+                             << hex4(its_data.instance_) << "." << hex4(its_data.eventgroup_) << "." << hex4(its_data.event_) << "]";
             } else
-                VSOMEIP_ERROR_P << "Subscribe nack command deserialization failed (" << static_cast<int>(its_error) << ")";
+                VSOMEIP_ERROR_P << "Subscribe nack command deserialization failed: " << utility::dump(_data, _size);
             break;
         }
 
         case protocol::id_e::SUBSCRIBE_ACK_ID: {
-            protocol::subscribe_ack_command its_subscribe_ack;
-            std::vector<byte_t> its_buffer(_data, _data + _size);
-            its_subscribe_ack.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
+            if (protocol::subscribe_answer_data its_data;
+                protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-                its_service = its_subscribe_ack.get_service();
-                its_instance = its_subscribe_ack.get_instance();
-                its_eventgroup = its_subscribe_ack.get_eventgroup();
-                its_subscriber = its_subscribe_ack.get_subscriber();
-                its_event = its_subscribe_ack.get_event();
-
-                on_subscribe_ack(its_subscriber, its_service, its_instance, its_eventgroup, its_event);
-                VSOMEIP_INFO << "SUBSCRIBE ACK(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                             << hex4(its_eventgroup) << "." << hex4(its_event) << "]";
+                on_subscribe_ack(its_data.subscriber_, its_data.service_, its_data.instance_, its_data.eventgroup_, its_data.event_);
+                VSOMEIP_INFO << "SUBSCRIBE ACK(" << hex4(its_client) << "): [" << hex4(its_data.service_) << "." << hex4(its_data.instance_)
+                             << "." << hex4(its_data.eventgroup_) << "." << hex4(its_data.event_) << "]";
             } else
-                VSOMEIP_ERROR_P << "Subscribe ack command deserialization failed (" << static_cast<int>(its_error) << ")";
+                VSOMEIP_ERROR_P << "Subscribe ack command deserialization failed: " << utility::dump(_data, _size);
             break;
         }
 

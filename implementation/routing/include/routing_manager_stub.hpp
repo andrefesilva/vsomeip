@@ -72,8 +72,6 @@ public:
     bool send_expired_subscription(const std::shared_ptr<local_endpoint>& _target, client_t _client, service_t _service,
                                    instance_t _instance, eventgroup_t _eventgroup, event_t _event, remote_subscription_id_t _id);
 
-    void send_subscribe_nack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event);
-
     void send_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event);
 
     bool contained_in_routing_info(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
