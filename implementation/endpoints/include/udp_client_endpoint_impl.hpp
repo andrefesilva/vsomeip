@@ -33,7 +33,7 @@ public:
     void start();
     void restart(bool _force);
 
-    void receive_cbk(boost::system::error_code const& _error, std::size_t _bytes, const message_buffer_ptr_t& _recv_buffer);
+    void receive_cbk(boost::system::error_code const& _error, std::size_t _bytes, std::shared_ptr<message_buffer_t> _recv_buffer);
 
     std::uint16_t get_local_port() const;
 
@@ -51,7 +51,8 @@ private:
     void get_configured_times_from_endpoint(service_t _service, method_t _method, std::chrono::nanoseconds* _debouncing,
                                             std::chrono::nanoseconds* _maximum_retention) const;
     void connect();
-    void receive();
+    void receive() override;
+    void receive(std::shared_ptr<message_buffer_t> _recv_buffer);
     std::string get_address_port_remote() const;
     std::string get_address_port_local() const;
     std::string get_remote_information() const;
