@@ -11,6 +11,14 @@
     {
         "enable" : "true"
     },
+    "applications":
+    [
+        {
+            "name":"big_payload_test_client",
+            "max_dispatchers":"1",
+            "max_dispatch_time":"5000"
+        }
+    ],
     "endpoint-queue-limits" :
     [
         {
