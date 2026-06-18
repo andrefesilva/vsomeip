@@ -1076,28 +1076,22 @@ TEST_F(malicious_data, send_wrong_message_type) {
 
             std::thread tcp_service_receive_thread([&]() {
                 std::atomic<bool> keep_receiving(true);
-                std::function<void()> receive;
                 std::vector<std::uint8_t> receive_buffer(4096);
 
-                auto receive_cbk = [&](const boost::system::error_code& _error, std::size_t bytes_transferred) {
-                    (void)bytes_transferred;
-                    if (!_error) {
-                        ADD_FAILURE() << __func__ << ":" << __LINE__ << " received a non-error:" << _error.message();
-                    } else {
-                        EXPECT_EQ(boost::asio::error::connection_reset, _error);
+                while (keep_receiving) {
+                    boost::system::error_code error;
+                    tcp_socket2.receive(boost::asio::buffer(receive_buffer, receive_buffer.capacity()), 0, error);
+                    if (!error) {
+                        ADD_FAILURE() << __func__ << ":" << __LINE__ << " received a non-error:" << error.message();
+                    } else if (error == boost::asio::error::connection_reset) {
+                        EXPECT_EQ(boost::asio::error::connection_reset, error);
                         fin_as_client_received = true;
                         keep_receiving = false;
+                    } else {
+                        keep_receiving = false;
+                        ADD_FAILURE() << __func__ << ":" << __LINE__ << " error: " << error.message();
+                        return;
                     }
-                };
-
-                receive = [&]() { tcp_socket2.async_receive(boost::asio::buffer(receive_buffer, receive_buffer.capacity()), receive_cbk); };
-
-                while (keep_receiving) {
-                    {
-                        std::scoped_lock its_lock(socket_mutex);
-                        receive();
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
             });
 
@@ -1359,28 +1353,22 @@ TEST_F(malicious_data, send_wrong_return_code) {
 
             std::thread tcp_service_receive_thread([&]() {
                 std::atomic<bool> keep_receiving(true);
-                std::function<void()> receive;
                 std::vector<std::uint8_t> receive_buffer(4096);
 
-                auto receive_cbk = [&](const boost::system::error_code& _error, std::size_t bytes_transferred) {
-                    (void)bytes_transferred;
-                    if (!_error) {
-                        ADD_FAILURE() << __func__ << ":" << __LINE__ << " received a non-error:" << _error.message();
-                    } else {
-                        EXPECT_EQ(boost::asio::error::connection_reset, _error);
+                while (keep_receiving) {
+                    boost::system::error_code error;
+                    tcp_socket2.receive(boost::asio::buffer(receive_buffer, receive_buffer.capacity()), 0, error);
+                    if (!error) {
+                        ADD_FAILURE() << __func__ << ":" << __LINE__ << " received a non-error:" << error.message();
+                    } else if (error == boost::asio::error::connection_reset) {
+                        EXPECT_EQ(boost::asio::error::connection_reset, error);
                         fin_as_client_received = true;
                         keep_receiving = false;
+                    } else {
+                        keep_receiving = false;
+                        ADD_FAILURE() << __func__ << ":" << __LINE__ << " error: " << error.message();
+                        return;
                     }
-                };
-
-                receive = [&]() { tcp_socket2.async_receive(boost::asio::buffer(receive_buffer, receive_buffer.capacity()), receive_cbk); };
-
-                while (keep_receiving) {
-                    {
-                        std::scoped_lock its_lock(socket_mutex);
-                        receive();
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
             });
 
