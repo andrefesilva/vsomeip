@@ -218,17 +218,26 @@ void udp_client_endpoint_impl::get_configured_times_from_endpoint(service_t _ser
 }
 
 void udp_client_endpoint_impl::receive() {
+    receive(nullptr);
+}
+
+void udp_client_endpoint_impl::receive(std::shared_ptr<message_buffer_t> _recv_buffer) {
     std::scoped_lock its_lock(socket_mutex_);
     if (!socket_->is_open()) {
         return;
     }
-    auto its_buffer = std::make_shared<message_buffer_t>(VSOMEIP_UDP_BUFFER_SIZE, 0);
+
+    if (!_recv_buffer) {
+        _recv_buffer = std::make_shared<message_buffer_t>(VSOMEIP_UDP_BUFFER_SIZE, 0);
+    }
+
     auto its_sender_endpoint = std::make_shared<endpoint_type>();
     auto self = std::dynamic_pointer_cast<udp_client_endpoint_impl>(shared_from_this());
+    auto buffer = boost::asio::buffer(*_recv_buffer);
     socket_->async_receive_from(
-            boost::asio::buffer(*its_buffer), *its_sender_endpoint,
-            boost::asio::bind_executor(strand_, [self, its_buffer, its_sender_endpoint](const auto& _error, auto _bytes) {
-                self->receive_cbk(_error, _bytes, its_buffer);
+            buffer, *its_sender_endpoint,
+            boost::asio::bind_executor(strand_, [self, b = std::move(_recv_buffer), its_sender_endpoint](const auto& _error, auto _bytes) {
+                self->receive_cbk(_error, _bytes, std::move(b));
             }));
 }
 
@@ -251,7 +260,7 @@ std::uint16_t udp_client_endpoint_impl::get_remote_port() const {
 }
 
 void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _error, std::size_t _bytes,
-                                           const message_buffer_ptr_t& _recv_buffer) {
+                                           std::shared_ptr<message_buffer_t> _recv_buffer) {
     if (_error == boost::asio::error::operation_aborted) {
         // endpoint was stopped
         return;
@@ -267,13 +276,13 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             VSOMEIP_ERROR_P << "Received a packet that is bigger than VSOMEIP_MAX_UDP_MESSAGE_SIZE (" << VSOMEIP_MAX_UDP_MESSAGE_SIZE
                             << ") bytes with " << _bytes << " bytes in " << local_ << ", " << socket_.get() << " from " << remote_
                             << ". Message will be dropped";
-            receive();
+            receive(std::move(_recv_buffer));
             return;
         } else if (_bytes < VSOMEIP_FULL_HEADER_SIZE) {
             VSOMEIP_ERROR_P << "ucei::" << __func__
                             << ": Dropping packet that is smaller than VSOMEIP_FULL_HEADER_SIZE (16). size=" << _bytes
                             << " remote=" << remote_;
-            receive();
+            receive(std::move(_recv_buffer));
             return;
         } else {
             // Size is within boundaries.
@@ -286,7 +295,7 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             if (read_message_size > max_message_size_) {
                 VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << read_message_size << " local: " << get_address_port_local()
                                 << " remote: " << get_address_port_remote();
-                receive();
+                receive(std::move(_recv_buffer));
                 return;
             }
 
@@ -294,7 +303,7 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             if (current_message_size > VSOMEIP_SOMEIP_HEADER_SIZE && current_message_size <= remaining_bytes) {
                 if (remaining_bytes - current_message_size > remaining_bytes) {
                     VSOMEIP_ERROR_P << "Buffer underflow in udp client endpoint ~> abort!";
-                    receive();
+                    receive(std::move(_recv_buffer));
                     return;
                 } else if (current_message_size > VSOMEIP_RETURN_CODE_POS
                            && ((*_recv_buffer)[i + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION
@@ -315,7 +324,7 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
                                         << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
                     }
 
-                    receive();
+                    receive(std::move(_recv_buffer));
                     return;
                 } else if (tp::tp::tp_flag_is_set((*_recv_buffer)[i + VSOMEIP_MESSAGE_TYPE_POS])) {
                     const auto res =
@@ -338,7 +347,7 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
     }
 
     if (!_error) {
-        receive();
+        receive(std::move(_recv_buffer));
     } else {
         if (_error == boost::asio::error::connection_refused) {
             VSOMEIP_WARNING_P << "local: " << get_address_port_local() << " remote: " << get_address_port_remote()
@@ -347,7 +356,7 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             std::shared_ptr<boardnet_endpoint_host> its_ep_host = endpoint_host_.lock();
             its_ep_host->on_disconnect(shared_from_this());
         } else {
-            receive();
+            receive(std::move(_recv_buffer));
         }
     }
 }
