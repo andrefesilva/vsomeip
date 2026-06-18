@@ -9,6 +9,8 @@
 
 #include <vsomeip/vsomeip.hpp>
 
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 class npdu_test_rmd {
@@ -24,4 +26,7 @@ public:
 
 private:
     std::shared_ptr<vsomeip::application> app_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    bool is_available_{false};
 };

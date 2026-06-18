@@ -115,10 +115,14 @@ void npdu_test_client::stop() {
     request_->set_message_type(vsomeip::message_type_e::MT_REQUEST_NO_RETURN);
     app_->send(request_);
 
-    // magic sleep to give time for the last message to be read
-    // in the router, before the clean-up starts the forceful stop
-    // of the "server" connection within the router.
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    // Wait for the shutdown service to become unavailable, confirming the
+    // shutdown message was received and processed before we tear down.
+    {
+        std::unique_lock lock(shutdown_service_available_mtx_);
+        if (!shutdown_service_available_cv_.wait_for(lock, std::chrono::seconds(5), [this] { return !shutdown_service_available_; })) {
+            GTEST_NONFATAL_FAILURE_("Shutdown service didn't become unavailable within time");
+        }
+    }
 
     app_->stop();
 }
@@ -154,9 +158,12 @@ void npdu_test_client::on_availability(vsomeip::service_t _service, vsomeip::ins
 void npdu_test_client::on_shutdown_service_available(vsomeip::service_t _service, vsomeip::instance_t _instance, bool _is_available) {
     (void)_service;
     (void)_instance;
-    if (_is_available) {
-        std::unique_lock lock(shutdown_service_available_mtx_);
+    std::unique_lock lock(shutdown_service_available_mtx_);
+    if (_is_available && !shutdown_service_available_) {
         shutdown_service_available_ = true;
+        shutdown_service_available_cv_.notify_all();
+    } else if (!_is_available && shutdown_service_available_) {
+        shutdown_service_available_ = false;
         shutdown_service_available_cv_.notify_all();
     }
 }
