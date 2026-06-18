@@ -101,6 +101,11 @@ public:
     }
 
     void on_availability(vsomeip::service_t _service, vsomeip::instance_t _instance, bool _is_available) {
+        // Ignore [0xffff.-0xffff] availability notifications, which are not related to the offered services
+        if (_service == vsomeip::ANY_SERVICE && _instance == vsomeip::ANY_INSTANCE) {
+            return;
+        }
+
         VSOMEIP_INFO << "Service [" << std::hex << std::setfill('0') << std::setw(4) << _service << "." << _instance << "] is "
                      << (_is_available ? "available" : "not available") << ".";
         std::scoped_lock its_lock(mutex_);
