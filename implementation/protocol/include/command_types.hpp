@@ -162,6 +162,27 @@ struct unregister_event_command_data {
     unregister_event_data payload_;
 };
 
+struct subscribe_answer_data {
+    auto operator<=>(subscribe_answer_data const&) const = default;
+
+    static constexpr uint32_t wire_size_{sizeof(service_t) + sizeof(instance_t) + sizeof(eventgroup_t) + sizeof(client_t) + sizeof(event_t)
+                                         + sizeof(pending_id_t)};
+
+    service_t service_;
+    instance_t instance_;
+    eventgroup_t eventgroup_;
+    client_t subscriber_;
+    event_t event_;
+    pending_id_t pending_id_;
+};
+
+struct subscribe_answer_command_data {
+    auto operator<=>(subscribe_answer_command_data const&) const = default;
+
+    command_header header_;
+    subscribe_answer_data payload_;
+};
+
 struct unsubscribe_ack_data {
     auto operator<=>(unsubscribe_ack_data const&) const = default;
 
@@ -334,6 +355,15 @@ inline auto create_unsubscribe_ack_cmd(client_t _client, service_t _service, ins
 
 inline auto create_remove_security_policy_cmd(client_t _client, uint32_t _update_id, uid_t _uid, gid_t _gid) {
     return remove_security_policy_command_data::create(_client, _update_id, _uid, _gid);
+}
+
+inline auto create_subscribe_ack_cmd(client_t _client, subscribe_answer_data _data) {
+    return subscribe_answer_command_data{
+            .header_ = command_header::create(id_e::SUBSCRIBE_ACK_ID, subscribe_answer_data::wire_size_, _client), .payload_ = _data};
+}
+inline auto create_subscribe_nack_cmd(client_t _client, subscribe_answer_data _data) {
+    return subscribe_answer_command_data{
+            .header_ = command_header::create(id_e::SUBSCRIBE_NACK_ID, subscribe_answer_data::wire_size_, _client), .payload_ = _data};
 }
 
 } // namespace vsomeip_v3::protocol

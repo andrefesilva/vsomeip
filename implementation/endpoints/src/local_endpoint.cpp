@@ -667,6 +667,8 @@ template bool local_endpoint::send<protocol::simple_command_data>(protocol::simp
                                                                   std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::release_service_command_data>(protocol::release_service_command_data const&,
                                                                            std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::subscribe_answer_command_data>(protocol::subscribe_answer_command_data const&,
+                                                                            std::shared_ptr<trace::connector_impl> const&);
 template bool
 local_endpoint::send<protocol::single_field_command_data<offer_type_e>>(protocol::single_field_command_data<offer_type_e> const&,
                                                                         std::shared_ptr<trace::connector_impl> const&);
