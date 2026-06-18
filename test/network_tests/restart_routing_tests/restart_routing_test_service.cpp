@@ -32,17 +32,6 @@ void restart_routing_test_service::stop_offer() {
     app_->stop_offer_service(vsomeip_test::TEST_SERVICE_SERVICE_ID, vsomeip_test::TEST_SERVICE_INSTANCE_ID);
 }
 
-void restart_routing_test_service::on_state(vsomeip::state_type_e _state) {
-    VSOMEIP_INFO << "Application " << app_->get_name() << " is "
-                 << (_state == vsomeip::state_type_e::ST_REGISTERED ? "registered." : "deregistered.");
-
-    {
-        std::scoped_lock its_lock(mutex_);
-        registration_status_ = _state;
-    }
-    condition_.notify_all();
-}
-
 void restart_routing_test_service::on_message(const std::shared_ptr<vsomeip::message>& _request) {
     std::scoped_lock its_guard(mutex_);
     ASSERT_EQ(vsomeip_test::TEST_SERVICE_SERVICE_ID, _request->get_service());
@@ -72,17 +61,7 @@ void restart_routing_test_service::init() {
                                    vsomeip_test::TEST_SERVICE_METHOD_ID,
                                    std::bind(&restart_routing_test_service::on_message, this, std::placeholders::_1));
 
-    app_->register_state_handler(std::bind(&restart_routing_test_service::on_state, this, std::placeholders::_1));
-
     starter_ = std::thread([&]() { app_->start(); });
-    runner_ = std::thread([&]() { run(); });
-}
-
-void restart_routing_test_service::run() {
-    {
-        std::unique_lock its_lock(mutex_);
-        condition_.wait(its_lock, [this] { return registration_status_ == vsomeip::state_type_e::ST_REGISTERED; });
-    }
     offer();
 }
 
