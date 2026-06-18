@@ -245,7 +245,6 @@ private:
     void cleanup_subscriber(std::scoped_lock<std::mutex> const& _provider_lock);
 
     client_t find_local_client(service_t _service, instance_t _instance) const;
-    bool is_response_allowed(client_t _sender, service_t _service, instance_t _instance, method_t _method);
     bool send_event(client_t _client, std::shared_ptr<message> _message, bool _force) override;
     void remove_eventgroup_info(service_t _service, instance_t _instance, eventgroup_t _eventgroup, bool _is_provided);
     /**
@@ -381,7 +380,6 @@ private:
     local_service_table requests_to_debounce_;
     std::map<client_t, std::pair<boost::asio::ip::address, port_t>> address_table_;
     local_offering_table available_services_;
-    service_instance_map<std::set<client_t>> available_services_history_;
     service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> consumed_events_;
     eventgroups_t consumed_eventgroups_;
 
