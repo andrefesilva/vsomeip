@@ -371,7 +371,6 @@ void routing_manager_client::release_service(client_t _client, service_t _servic
     bool already_requested(false);
     {
         std::scoped_lock its_service_guard(consumer_mutex_);
-        available_services_history_.erase({_service, _instance});
         remove_pending_subscription(_service, _instance, 0xFFFF, ANY_EVENT, its_service_guard);
         protocol::service_data request{
                 .service_ = _service, .instance_ = _instance, .major_version_ = ANY_MAJOR, .minor_version_ = ANY_MINOR};
@@ -685,8 +684,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
                 if (!is_from_routing) {
                     if (utility::is_request(its_message->get_message_type())) {
-                        if (configuration_->is_security_enabled() && routing_mode_ == routing_mode_e::UDS_ONLY
-                            && its_message->get_client() != _peer_data.id_) {
+                        // NOTE: its_header.client_ and message::get_client are different fields, the extra check is needed
+                        if (its_message->get_client() != _peer_data.id_) {
                             VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " received a request from client 0x"
                                             << hex4(its_message->get_client()) << " to service/instance/method "
                                             << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
@@ -694,6 +693,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                             << hex4(_peer_data.id_) << " ~> skip message!";
                             return;
                         }
+
                         if (VSOMEIP_SEC_OK
                             != configuration_->get_security()->is_client_allowed_to_access_member(
                                     &_peer_data.sec_client_, its_message->get_service(), its_message->get_instance(),
@@ -721,12 +721,12 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
                         // Verifies security offer rule for messages (notifications and
                         // responses)
-                        bool is_offer_access_ok = (configuration_->is_security_external()
-                                                   && VSOMEIP_SEC_OK
+                        bool is_offer_access_ok = (!configuration_->is_security_external()
+                                                   || VSOMEIP_SEC_OK
                                                            == configuration_->get_security()->is_client_allowed_to_offer(
                                                                    &sec_client, its_message->get_service(), its_message->get_instance()));
 
-                        if (!is_offer_access_ok && configuration_->is_security_external()) {
+                        if (!is_offer_access_ok) {
                             VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
                                             << " : routing_manager_client::on_message: received a "
                                             << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
@@ -736,39 +736,25 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                             return;
                         }
 
-                        bool is_intern_resp_allowed = (!configuration_->is_security_external()
-                                                       && is_response_allowed(_peer_data.id_, its_message->get_service(),
-                                                                              its_message->get_instance(), its_message->get_method()));
+                        const bool is_notification = utility::is_notification(its_message->get_message_type());
 
-                        if (is_intern_resp_allowed || is_offer_access_ok) {
-                            const bool is_notification = utility::is_notification(its_message->get_message_type());
+                        if (is_notification) {
+                            auto const my_sec_client = get_sec_client();
+                            const bool is_access_member_ok = (VSOMEIP_SEC_OK
+                                                              == configuration_->get_security()->is_client_allowed_to_access_member(
+                                                                      &my_sec_client, its_message->get_service(),
+                                                                      its_message->get_instance(), its_message->get_method()));
 
-                            if (is_notification) {
-                                auto const sec_client = get_sec_client();
-                                const bool is_access_member_ok = (VSOMEIP_SEC_OK
-                                                                  == configuration_->get_security()->is_client_allowed_to_access_member(
-                                                                          &sec_client, its_message->get_service(),
-                                                                          its_message->get_instance(), its_message->get_method()));
-
-                                if (!is_access_member_ok) {
-                                    VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
-                                                    << " : routing_manager_client::on_message: " << hex4(get_client())
-                                                    << " : routing_manager_client::on_message: isn't allowed to receive a "
-                                                    << " notification from service/instance/method " << hex4(its_message->get_service())
-                                                    << "/" << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
-                                                    << " respectively from client 0x" << hex4(_peer_data.id_) << " ~> Skip message!";
-                                    return;
-                                }
-                                cache_event_payload(its_message);
+                            if (!is_access_member_ok) {
+                                VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
+                                                << " : routing_manager_client::on_message: " << hex4(get_client())
+                                                << " : routing_manager_client::on_message: isn't allowed to receive a "
+                                                << " notification from service/instance/method " << hex4(its_message->get_service()) << "/"
+                                                << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
+                                                << " respectively from client 0x" << hex4(_peer_data.id_) << " ~> Skip message!";
+                                return;
                             }
-                        } else {
-                            VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                            << " : routing_manager_client::on_message: received a "
-                                            << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
-                                            << " from client 0x" << hex4(_peer_data.id_) << " which does not offer service/instance/method "
-                                            << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                            << hex4(its_message->get_method()) << " ~> Skip message!";
-                            return;
+                            cache_event_payload(its_message);
                         }
                     }
                 } else {
@@ -789,10 +775,10 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                         // local policy only allows specific events in the eventgroup to be
                         // received.
 
-                        auto const sec_client = get_sec_client();
+                        auto const my_sec_client = get_sec_client();
                         if (VSOMEIP_SEC_OK
                             != configuration_->get_security()->is_client_allowed_to_access_member(
-                                    &sec_client, its_message->get_service(), its_message->get_instance(), its_message->get_method())) {
+                                    &my_sec_client, its_message->get_service(), its_message->get_instance(), its_message->get_method())) {
                             VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client())
                                             << " : routing_manager_client::on_message: "
                                             << " isn't allowed to receive a notification from service/instance/event "
@@ -1351,18 +1337,9 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
 
         case protocol::routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE: {
             for (const auto& s : e.get_services()) {
-                const auto its_service(s.service_);
-                const auto its_instance(s.instance_);
-                const auto its_major(s.major_);
-                const auto its_minor(s.minor_);
-
-                {
-                    std::scoped_lock its_lock(consumer_mutex_);
-                    if (available_services_.remove(its_service, its_instance)) {
-                        available_services_history_[{its_service, its_instance}].insert(its_client);
-                    }
-                    on_stop_offer_service(its_service, its_instance, its_major, its_minor, its_lock);
-                }
+                std::scoped_lock its_lock(consumer_mutex_);
+                available_services_.remove(s.service_, s.instance_);
+                on_stop_offer_service(s.service_, s.instance_, s.major_, s.minor_, its_lock);
             }
             break;
         }
@@ -2072,24 +2049,6 @@ void routing_manager_client::remove_local(bool _due_to_error, client_t _client, 
                     .service_ = its_service, .instance_ = its_instance, .major_version_ = its_major, .minor_version_ = its_minor});
             on_stop_offer_service(its_service, its_instance, its_major, its_minor, its_lock);
         }
-
-        // remove disconnected client from offer service history
-        std::set<std::tuple<service_t, instance_t, client_t>> its_clients;
-        for (const auto& [si, clients] : available_services_history_) {
-            for (const auto& c : clients) {
-                if (c == _client) {
-                    its_clients.insert(std::make_tuple(si.service, si.instance, c));
-                }
-            }
-        }
-
-        for (auto& sic : its_clients) {
-            const service_instance_t si{std::get<0>(sic), std::get<1>(sic)};
-            available_services_history_[si].erase(std::get<2>(sic));
-            if (available_services_history_[si].empty()) {
-                available_services_history_.erase(si);
-            }
-        }
     }
 }
 
@@ -2100,7 +2059,6 @@ void routing_manager_client::cleanup_routing_data() {
         for (auto const& [service, instance, major, minor, client] : removed) {
             on_stop_offer_service(service, instance, major, minor, lock);
         }
-        available_services_history_.clear();
         address_table_.clear();
     }
 }
@@ -2158,41 +2116,6 @@ client_t routing_manager_client::get_client_by_address(const boost::asio::ip::ad
 client_t routing_manager_client::find_local_client(service_t _service, instance_t _instance) const {
     std::scoped_lock its_lock(consumer_mutex_);
     return available_services_.find_client(_service, _instance);
-}
-
-bool routing_manager_client::is_response_allowed(client_t _sender, service_t _service, instance_t _instance, method_t _method) {
-
-    if (!configuration_->is_security_enabled() || !configuration_->is_local_routing()) {
-        return true;
-    }
-
-    {
-        std::scoped_lock its_lock(consumer_mutex_);
-        if (_sender == available_services_.find_client(_service, _instance)) {
-            // sender is still offering the service
-            return true;
-        }
-
-        if (auto found_si = available_services_history_.find({_service, _instance}); found_si != available_services_history_.end()) {
-            if (found_si->second.count(_sender) > 0) {
-                // sender was offering the service and is still connected
-                return true;
-            }
-        }
-    }
-
-    // service is now offered by another client
-    // or service is not offered at all
-    std::string security_mode_text = "!";
-    if (!configuration_->is_security_audit()) {
-        security_mode_text = ", but will be allowed due to audit mode is active!";
-    }
-
-    VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " : routing_manager_client::is_response_allowed: "
-                    << "received a response from client 0x" << hex4(_sender) << " which does not offer service/instance/method "
-                    << hex4(_service) << "/" << hex4(_instance) << "/" << hex4(_method) << security_mode_text;
-
-    return !configuration_->is_security_audit();
 }
 
 bool routing_manager_client::send_event(client_t _client, std::shared_ptr<message> _message, bool _force) {
