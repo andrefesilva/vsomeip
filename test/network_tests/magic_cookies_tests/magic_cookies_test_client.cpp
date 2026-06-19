@@ -16,6 +16,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #define private public
 #define protected public
@@ -104,7 +105,7 @@ public:
 
     void run() {
         std::unique_lock its_lock(mutex_);
-        if (!condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return is_blocked_; })) {
+        if (!condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(5)), [this] { return is_blocked_; })) {
             GTEST_FATAL_FAILURE_("Service didn't become available within 5s.");
         }
 

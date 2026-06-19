@@ -26,6 +26,7 @@
 #include <vsomeip/vsomeip.hpp>
 
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #include "../../implementation/utility/include/bithelper.hpp"
 #include "../../implementation/message/include/deserializer.hpp"
@@ -474,7 +475,7 @@ TEST_P(someip_tp, send_in_mode) {
         try {
 
             // wait until a offer was received
-            if (std::future_status::timeout == offer_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == offer_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive offer within time";
                 return;
             }
@@ -738,7 +739,8 @@ TEST_P(someip_tp, send_in_mode) {
                 }
                 {
                     while (wait_for_all_response_fragments_received_) {
-                        if (std::cv_status::timeout == all_fragments_received_cond_.wait_for(its_lock, std::chrono::seconds(5))) {
+                        if (std::cv_status::timeout
+                            == all_fragments_received_cond_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(5)))) {
                             ADD_FAILURE() << "Didn't receive response to"
                                              " fragmented message within time: "
                                           << std::uint32_t(mode);
@@ -817,9 +819,9 @@ TEST_P(someip_tp, send_in_mode) {
                 fragments_request_to_master_.clear();
             }
 
-            if (!all_fragments_received_cond_.wait_for(its_lock, std::chrono::seconds(5), [&wait_for_all_event_fragments_received_] {
-                    return !wait_for_all_event_fragments_received_;
-                })) {
+            if (!all_fragments_received_cond_.wait_for(
+                        its_lock, common::scaled_timeout(std::chrono::seconds(5)),
+                        [&wait_for_all_event_fragments_received_] { return !wait_for_all_event_fragments_received_; })) {
                 ADD_FAILURE() << "Didn't receive fragmented event from master within time";
             }
 
@@ -857,7 +859,8 @@ TEST_P(someip_tp, send_in_mode) {
     std::thread udp_server_send_thread([&]() {
         std::unique_lock all_fragments_received_as_server_lock(all_fragments_received_as_server_mutex_);
         // wait until client subscribed
-        if (std::future_status::timeout == remote_client_subscribed.get_future().wait_for(std::chrono::seconds(10))) {
+        if (std::future_status::timeout
+            == remote_client_subscribed.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
             ADD_FAILURE() << "Client didn't subscribe within time";
             return;
         }
@@ -1045,7 +1048,8 @@ TEST_P(someip_tp, send_in_mode) {
         for (const order_e mode : {order_e::ASCENDING, order_e::DESCENDING}) {
             while (wait_for_all_fragments_received_as_server_) {
                 if (std::cv_status::timeout
-                    == all_fragments_received_as_server_cond_.wait_for(all_fragments_received_as_server_lock, std::chrono::seconds(5))) {
+                    == all_fragments_received_as_server_cond_.wait_for(all_fragments_received_as_server_lock,
+                                                                       common::scaled_timeout(std::chrono::seconds(5)))) {
                     ADD_FAILURE() << "Didn't receive request from client within time: " << std::uint32_t(mode);
                     return;
                 } else {

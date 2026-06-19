@@ -1200,7 +1200,8 @@ TEST_F(test_connection_restoration, offer_and_stop_service_concurrency) {
     // Note, the availabilities are not going to receive all at once, means, availabilities will be processed depending on
     // order of the offer commands
     for (auto checker : availability_checkers_) {
-        ASSERT_TRUE(client_->availability_record_.wait_for(checker, std::chrono::seconds(6))) << client_->availability_record_;
+        ASSERT_TRUE(client_->availability_record_.wait_for(checker, common::scaled_timeout(std::chrono::seconds(6))))
+                << client_->availability_record_;
     }
 
     for (const auto& checker : un_availability_checkers_) {

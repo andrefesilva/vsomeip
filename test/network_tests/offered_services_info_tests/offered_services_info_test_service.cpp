@@ -25,6 +25,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 static std::string service_number;
 std::map<vsomeip::service_t, std::set<vsomeip::instance_t>> all_offered_services;
@@ -144,7 +145,8 @@ public:
         app_->get_offered_services_async(vsomeip::offer_type_e::OT_LOCAL,
                                          std::bind(&offer_test_service::on_offered_services_local, this, std::placeholders::_1));
 
-        if (std::future_status::timeout == all_callbacks_received_.get_future().wait_for(std::chrono::seconds(15))) {
+        if (std::future_status::timeout
+            == all_callbacks_received_.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(15)))) {
             ADD_FAILURE() << "Didn't receive all callbacks within time";
         }
     }

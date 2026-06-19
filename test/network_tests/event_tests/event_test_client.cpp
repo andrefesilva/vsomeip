@@ -22,6 +22,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class event_test_client {
 public:
@@ -142,7 +143,8 @@ public:
             condition_.wait(its_lock, [this] { return !wait_until_registered_; });
             condition_.wait(its_lock, [this] { return !wait_until_service_available_; });
 
-            if (!condition_.wait_for(its_lock, std::chrono::seconds(30), [this] { return !wait_until_subscription_accepted_; })) {
+            if (!condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30)),
+                                     [this] { return !wait_until_subscription_accepted_; })) {
                 VSOMEIP_ERROR << "Subscription wasn't accepted in time!";
             }
 
@@ -158,7 +160,8 @@ public:
             its_message->set_payload(its_payload);
             app_->send(its_message);
 
-            if (!condition_.wait_for(its_lock, std::chrono::seconds(30), [this] { return !wait_until_events_received_; })) {
+            if (!condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30)),
+                                     [this] { return !wait_until_events_received_; })) {
                 VSOMEIP_ERROR << "Didn't receive events in time!";
             }
 
@@ -167,7 +170,8 @@ public:
             its_message->set_message_type(vsomeip::message_type_e::MT_REQUEST);
             app_->send(its_message);
 
-            if (!condition_.wait_for(its_lock, std::chrono::seconds(30), [this] { return !wait_until_shutdown_reply_received_; })) {
+            if (!condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30)),
+                                     [this] { return !wait_until_shutdown_reply_received_; })) {
                 VSOMEIP_ERROR << "Shutdown request wasn't answered in time!";
             }
         }

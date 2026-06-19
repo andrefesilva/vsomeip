@@ -15,6 +15,7 @@
 
 #include "someip_test_globals.hpp"
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 using namespace vsomeip;
 
@@ -256,14 +257,14 @@ protected:
     void send_shutdown_message() {
         {
             std::unique_lock its_lock(mutex_);
-            if (!cv_.wait_for(its_lock, std::chrono::seconds(10), [this] { return is_registered_; })) {
+            if (!cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)), [this] { return is_registered_; })) {
                 ADD_FAILURE() << "Application wasn't registered in time!";
                 is_registered_ = true;
             }
 
             app_->request_service(vsomeip_test::TEST_SERVICE_SERVICE_ID, vsomeip_test::TEST_SERVICE_INSTANCE_ID);
             app_->offer_service(vsomeip_test::TEST_SERVICE_SERVICE_ID, vsomeip_test::TEST_SERVICE_INSTANCE_ID);
-            if (!cv_.wait_for(its_lock, std::chrono::seconds(10), [this] { return is_available_; })) {
+            if (!cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)), [this] { return is_available_; })) {
                 ADD_FAILURE() << "Service didn't become available in time!";
                 is_available_ = true;
             }

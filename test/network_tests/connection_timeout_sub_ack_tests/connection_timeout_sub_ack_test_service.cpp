@@ -4,6 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "connection_timeout_sub_ack_test_globals.hpp"
+#include "common/timeout_scale.hpp"
 
 using namespace connection_timeout_sub_ack_test;
 
@@ -42,7 +43,7 @@ TEST(ConnectionTimeoutSubAckTest, ServerOffersService) {
     // Only begin notifying after application is registered
     {
         std::unique_lock its_lock(service_register_mutex);
-        service_register_cv.wait_for(its_lock, std::chrono::seconds(30),
+        service_register_cv.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30)),
                                      [&service_register_state] { return service_register_state == true; });
     }
 

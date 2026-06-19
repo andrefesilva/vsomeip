@@ -17,6 +17,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 using namespace vsomeip;
 
@@ -125,7 +126,7 @@ public:
     };
 
     client_t get_client() {
-        if (std::future_status::timeout == registered_.get_future().wait_for(std::chrono::seconds(11))) {
+        if (std::future_status::timeout == registered_.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(11)))) {
             ADD_FAILURE() << __LINE__ << " application wasn't registered within time";
         }
         return client_;

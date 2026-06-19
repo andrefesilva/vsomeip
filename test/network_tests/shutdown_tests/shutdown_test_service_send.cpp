@@ -17,6 +17,7 @@
 #include "shutdown_test_globals.hpp"
 #include <vsomeip/internal/logger.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class shutdown_test_service {
 public:
@@ -24,12 +25,12 @@ public:
 
     void run_test() {
         std::unique_lock its_lock(mutex_);
-        ASSERT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(10), [&] { return is_registered_; }))
+        ASSERT_TRUE(condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)), [&] { return is_registered_; }))
                 << "Service not registered in time";
 
         app_->offer_service(shutdown_test::TEST_SERVICE_SERVICE_ID, shutdown_test::TEST_SERVICE_INSTANCE_ID);
 
-        ASSERT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(10), [&] { return to_stop; }))
+        ASSERT_TRUE(condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)), [&] { return to_stop; }))
                 << "Did not received the Shutdown message in time";
 
         for (std::uint32_t i = 0; i < shutdown_test::SHUTDOWN_NUMBER_MESSAGES; ++i) {

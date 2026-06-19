@@ -139,8 +139,7 @@ int main(int argc, char** argv) {
         if (help == argv[i]) {
             VSOMEIP_INFO << "Parameters:\n"
                          << "--help: print this help\n"
-                         << "--do-not-check-payload: Don't verify payload data "
-                         << "-> Use this flag for performance measurements!";
+                         << "--do-not-check-payload: Don't verify payload data " << "-> Use this flag for performance measurements!";
         } else if (check == argv[i]) {
             check_payload = false;
         }
