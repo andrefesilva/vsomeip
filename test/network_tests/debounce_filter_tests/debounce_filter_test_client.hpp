@@ -51,7 +51,8 @@ private:
     vsomeip::debounce_filter_t dBFilter;
 
     std::atomic<int64_t> nb_msgs_rcvd{0};
+    std::atomic<int64_t> nb_measured{0};
     std::chrono::milliseconds sum_time;
-    std::chrono::time_point<std::chrono::steady_clock> time_start;
+    std::chrono::time_point<std::chrono::steady_clock> warmup_end;
     std::chrono::time_point<std::chrono::steady_clock> time_last;
 };

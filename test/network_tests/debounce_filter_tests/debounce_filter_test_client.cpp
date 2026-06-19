@@ -14,6 +14,17 @@
 
 static std::vector<std::vector<std::shared_ptr<vsomeip::payload>>> payloads__;
 
+namespace {
+// Number of debounce intervals to discard at the start of a measurement.
+// Right after subscription the client application's dispatch thread may be
+// cold and deliver an initial backlog of debounced events as a burst, which
+// would skew the average we actually wantto measure. Ignore the first few intervals
+// until the stream has settled into steady state.
+constexpr int64_t WARMUP_INTERVALS = 3;
+// Number of steady-state intervals to average over.
+constexpr int64_t MEASURE_INTERVALS = 5;
+} // namespace
+
 debounce_test_client::debounce_test_client(int64_t _interval) :
     interval(_interval), is_available_(false), runner_(std::bind(&debounce_test_client::run, this)),
     app_(vsomeip::runtime::get()->create_application("debounce_test_client")), sum_time(0) { }
@@ -102,32 +113,38 @@ void debounce_test_client::on_availability(vsomeip::service_t _service, vsomeip:
 }
 
 void debounce_test_client::on_message(const std::shared_ptr<vsomeip::message>& _message) {
-    if (!nb_msgs_rcvd) {
-        time_start = std::chrono::steady_clock::now();
-        time_last = time_start;
-    } else {
-        time_last = std::chrono::steady_clock::now();
+    if (DEBOUNCE_SERVICE != _message->get_service() || DEBOUNCE_EVENT != _message->get_method()) {
+        return;
     }
+
+    const auto now = std::chrono::steady_clock::now();
+    const int64_t count = ++nb_msgs_rcvd;
 
     std::stringstream s;
     s << "RECV: ";
     for (uint32_t i = 0; i < _message->get_payload()->get_length(); i++) {
         s << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(_message->get_payload()->get_data()[i]) << " ";
     }
+    s << "\t- Message: " << std::dec << std::setw(2) << count;
 
-    if (DEBOUNCE_SERVICE == _message->get_service() && DEBOUNCE_EVENT == _message->get_method()) {
-        nb_msgs_rcvd++;
-        s << "\t- Message: " << std::dec << std::setw(2) << nb_msgs_rcvd;
-
-        if (nb_msgs_rcvd >= 2) {
-            std::chrono::duration elapsed_time_ms = (time_last - time_start);
-            sum_time += std::chrono::duration_cast<std::chrono::milliseconds>(elapsed_time_ms);
-            s << " Average interval is " << get_avgtime().count() << " ms";
-        }
-        VSOMEIP_DEBUG << s.str();
-        s.clear();
+    if (count == 1) {
+        // Start the warm-up window on the first received event.
+        warmup_end = now + std::chrono::milliseconds(WARMUP_INTERVALS * interval);
+        time_last = now;
+    } else if (now < warmup_end) {
+        // Still warming up: advance the baseline but don't measure, so an
+        // initial burst of backlogged events doesn't corrupt the average.
+        time_last = now;
+    } else {
+        // Steady state: measure the interval between consecutive events.
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - time_last);
+        sum_time += elapsed;
+        time_last = now;
+        ++nb_measured;
+        s << " - interval " << elapsed.count() << " ms, average is " << get_avgtime().count() << " ms";
     }
-    time_start = time_last;
+
+    VSOMEIP_DEBUG << s.str();
 }
 
 void debounce_test_client::run_test() {
@@ -144,8 +161,9 @@ void debounce_test_client::run_test() {
     app_->send(its_message);
 
     if (interval > 0) {
-        // wait until we receive enough messages
-        while (nb_msgs_rcvd.load() < 5) {
+        // wait until we have collected enough steady-state samples
+        const auto deadline = std::chrono::steady_clock::now() + common::scaled_timeout(std::chrono::seconds(15));
+        while (nb_measured.load() < MEASURE_INTERVALS && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     } else {
@@ -176,7 +194,11 @@ int64_t debounce_test_client::getNbMsgsRcvd() {
 }
 
 std::chrono::milliseconds debounce_test_client::get_avgtime() {
-    return (sum_time / (getNbMsgsRcvd() - 1));
+    const int64_t measured = nb_measured.load();
+    if (measured <= 0) {
+        return std::chrono::milliseconds(0);
+    }
+    return (sum_time / measured);
 }
 
 TEST(debounce_test, normal_interval) {
