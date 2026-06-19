@@ -17,6 +17,7 @@
 #include <vsomeip/vsomeip.hpp>
 
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #include "../../implementation/utility/include/bithelper.hpp"
 #include "../../implementation/message/include/deserializer.hpp"
@@ -167,7 +168,7 @@ TEST_F(malicious_data, send_malicious_events) {
             });
 
             // wait until client established TCP connection
-            if (std::future_status::timeout == client_connected.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == client_connected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't connect within time";
             }
 
@@ -176,7 +177,7 @@ TEST_F(malicious_data, send_malicious_events) {
             send_offers_thread.join();
 
             // wait until client subscribed
-            if (std::future_status::timeout == client_subscribed.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == client_subscribed.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't subscribe within time";
             }
 
@@ -640,7 +641,7 @@ TEST_F(malicious_data, send_wrong_protocol_version) {
             });
 
             // wait until client established TCP connection
-            if (std::future_status::timeout == client_connected.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == client_connected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't connect within time";
             }
 
@@ -649,12 +650,13 @@ TEST_F(malicious_data, send_wrong_protocol_version) {
             send_offers_thread.join();
 
             // wait until client subscribed
-            if (std::future_status::timeout == remote_client_subscribed.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == remote_client_subscribed.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't subscribe within time";
             }
 
             // wait until a offer was received
-            if (std::future_status::timeout == offer_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == offer_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive offer within time";
             }
 
@@ -698,7 +700,8 @@ TEST_F(malicious_data, send_wrong_protocol_version) {
             tcp_socket.send(boost::asio::buffer(its_malicious_data));
 
             // wait until client reestablished TCP connection
-            if (std::future_status::timeout == client_reconnected1.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == client_reconnected1.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 tcp_socket3.shutdown(boost::asio::socket_base::shutdown_both, ec);
                 tcp_socket3.close(ec);
                 ADD_FAILURE() << "Client didn't reconnect within time 1";
@@ -993,7 +996,7 @@ TEST_F(malicious_data, send_wrong_message_type) {
             });
 
             // wait until client established TCP connection
-            if (std::future_status::timeout == client_connected.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == client_connected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't connect within time";
             }
 
@@ -1002,12 +1005,13 @@ TEST_F(malicious_data, send_wrong_message_type) {
             send_offers_thread.join();
 
             // wait until client subscribed
-            if (std::future_status::timeout == remote_client_subscribed.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == remote_client_subscribed.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't subscribe within time";
             }
 
             // wait until a offer was received
-            if (std::future_status::timeout == offer_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == offer_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive offer within time";
             }
 
@@ -1053,7 +1057,7 @@ TEST_F(malicious_data, send_wrong_message_type) {
             tcp_socket.send(boost::asio::buffer(its_malicious_data));
 
             // wait until client reestablished TCP connection
-            if (std::future_status::timeout == client_reconnected.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == client_reconnected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 tcp_socket3.shutdown(boost::asio::socket_base::shutdown_both, ec);
                 tcp_socket3.close(ec);
                 ADD_FAILURE() << "Client didn't reconnect within time";
@@ -1270,7 +1274,7 @@ TEST_F(malicious_data, send_wrong_return_code) {
             });
 
             // wait until client established TCP connection
-            if (std::future_status::timeout == client_connected.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == client_connected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't connect within time";
             }
 
@@ -1279,12 +1283,13 @@ TEST_F(malicious_data, send_wrong_return_code) {
             send_offers_thread.join();
 
             // wait until client subscribed
-            if (std::future_status::timeout == remote_client_subscribed.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == remote_client_subscribed.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't subscribe within time";
             }
 
             // wait until a offer was received
-            if (std::future_status::timeout == offer_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == offer_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive offer within time";
             }
 
@@ -1330,7 +1335,7 @@ TEST_F(malicious_data, send_wrong_return_code) {
             tcp_socket.send(boost::asio::buffer(its_malicious_data));
 
             // wait until client reestablished TCP connection
-            if (std::future_status::timeout == client_reconnected.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == client_reconnected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 tcp_socket3.shutdown(boost::asio::socket_base::shutdown_both, ec);
                 tcp_socket3.close(ec);
                 ADD_FAILURE() << "Client didn't reconnect within time";
@@ -1557,7 +1562,8 @@ TEST_F(malicious_data, wrong_header_fields_udp) {
             });
 
             // wait until client subscribed
-            if (std::future_status::timeout == remote_client_subscribed.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == remote_client_subscribed.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Client didn't subscribe within time";
             }
 
@@ -1566,7 +1572,7 @@ TEST_F(malicious_data, wrong_header_fields_udp) {
             send_offers_thread.join();
 
             // wait until a offer was received
-            if (std::future_status::timeout == offer_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout == offer_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive offer within time";
             }
 

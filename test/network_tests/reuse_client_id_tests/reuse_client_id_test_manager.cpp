@@ -16,6 +16,7 @@
 
 #include <common/process_manager.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 #include "reuse_client_id_test_globals.hpp"
 
 // 20 is intentionally generous, execution times (especially with valgrind) can be quite long
@@ -66,7 +67,8 @@ protected:
         {
             bpi::scoped_lock<bpi::interprocess_mutex> its_lock(_shm_data.sync_ptr->client_mutex_);
             result = vt::interprocess_utils::wait_and_check_unlocked(
-                    _shm_data.sync_ptr->client_cv_, its_lock, _timeout, _shm_data.sync_ptr->client_status_[_app_id],
+                    _shm_data.sync_ptr->client_cv_, its_lock, _timeout * common::get_timeout_scale(),
+                    _shm_data.sync_ptr->client_status_[_app_id],
                     reuse_client_id::reuse_client_id_test_interprocess_sync::registration_status::STATE_REGISTERED);
         }
         return result;

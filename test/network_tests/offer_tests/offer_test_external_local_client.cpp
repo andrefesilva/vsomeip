@@ -10,6 +10,7 @@
 
 #include "../someip_test_globals.hpp"
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #include <condition_variable>
 #include <fstream>
@@ -76,7 +77,8 @@ TEST(OfferTestExternal, OfferTestExternalLocalClient) {
         // After the client subscribes to the service, wait until service provider
         // stops which will lead to the service becoming unavailable
         std::unique_lock its_lock(service_available_mutex);
-        ASSERT_TRUE(service_available_cv.wait_for(its_lock, std::chrono::seconds(15), [&service_available] { return !service_available; }));
+        ASSERT_TRUE(service_available_cv.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(15)),
+                                                  [&service_available] { return !service_available; }));
     }
 
     // Stop the application after the test is done

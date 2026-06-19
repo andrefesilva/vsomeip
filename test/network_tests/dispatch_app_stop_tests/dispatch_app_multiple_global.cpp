@@ -14,6 +14,7 @@
 #include "vsomeip/runtime.hpp"
 #include "common/timeout_detector.hpp"
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 #include "tools/tools.h"
 
 // Global application instances. Lifetime extends until process teardown.
@@ -141,7 +142,7 @@ TEST(dispatch_app_stop, multiple_global) {
 
     // Wait until all dispatcher callbacks completed stop + join.
     std::unique_lock lock{*mt};
-    EXPECT_TRUE(cv->wait_for(lock, std::chrono::seconds(5), [registered] {
+    EXPECT_TRUE(cv->wait_for(lock, common::scaled_timeout(std::chrono::seconds(5)), [registered] {
         std::cout << "[TEST] " << *registered << " applications finished" << std::endl;
         return (*registered > 2);
     })) << "Application did not reach ST_REGISTERED";

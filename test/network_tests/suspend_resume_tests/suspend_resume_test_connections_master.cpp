@@ -23,6 +23,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 // 169.254.87.2 → little-endian hex on x86: 0x0257FEA9
 constexpr auto BOARDNET_IP_HEX = "0257FEA9";
@@ -131,7 +132,7 @@ public:
             VSOMEIP_DEBUG << "[TEST] Process: waiting test end";
 
             std::unique_lock its_lock(mutex_);
-            EXPECT_EQ(cv_.wait_for(its_lock, std::chrono::seconds(30)), std::cv_status::no_timeout);
+            EXPECT_EQ(cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30))), std::cv_status::no_timeout);
         }
 
         VSOMEIP_DEBUG << "[TEST] Process: Done";
@@ -184,7 +185,9 @@ private:
         {
             std::unique_lock its_lock(availability_mutex_);
             VSOMEIP_DEBUG << "[TEST] Process: waiting service available";
-            ASSERT_EQ(availability_cv_.wait_for(its_lock, std::chrono::seconds(10), [this]() { return is_available_.load(); }), true);
+            ASSERT_EQ(availability_cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)),
+                                                [this]() { return is_available_.load(); }),
+                      true);
             VSOMEIP_INFO << "[TEST] Process: service available";
         }
 

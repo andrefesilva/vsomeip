@@ -4,6 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "connection_timeout_sub_ack_test_globals.hpp"
+#include "common/timeout_scale.hpp"
 
 using namespace connection_timeout_sub_ack_test;
 
@@ -65,7 +66,8 @@ TEST(ConnectionTimeoutSubAckTest, ClientSubscribesToService) {
     // Wait until the client resubscribes to the service
     {
         std::unique_lock its_lock(client_resubscribed_mutex);
-        client_resubscribed_cv.wait_for(its_lock, std::chrono::seconds(30), [&client_resubscribed] { return client_resubscribed == true; });
+        client_resubscribed_cv.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30)),
+                                        [&client_resubscribed] { return client_resubscribed == true; });
     }
 
     // Stop the application after the test is done

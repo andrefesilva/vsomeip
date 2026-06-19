@@ -133,20 +133,30 @@ function(add_custom_test)
         COMMAND ${custom_test_entrypoint} ${MY_TEST_COMMAND}
     )
 
-    # Set a timeout for the test.
-    if(MY_TEST_TIMEOUT)
-        set_tests_properties(${MY_TEST_NAME}
-            PROPERTIES TIMEOUT ${MY_TEST_TIMEOUT}
-        )
-    else()
-        set_tests_properties(${MY_TEST_NAME}
-            PROPERTIES TIMEOUT 210
-        )
-    endif()
-
     if (MY_TEST_SEQUENTIAL)
         set_tests_properties(${MY_TEST_NAME} PROPERTIES LABELS SEQUENTIAL)
     endif()
+
+    # Set a timeout for the test.
+    # Under valgrind/sanitizers, processes run significantly slower; TEST_TIMEOUT_SCALE allows to scale the CTest timeout accordingly.
+    if($ENV{TEST_TIMEOUT_SCALE})
+        set(TIMEOUT_MULTIPLIER $ENV{TEST_TIMEOUT_SCALE})
+    else()
+        set(TIMEOUT_MULTIPLIER 1)
+    endif()
+    if(MY_TEST_TIMEOUT)
+        math(EXPR SCALED_TIMEOUT "${MY_TEST_TIMEOUT} * ${TIMEOUT_MULTIPLIER}")
+    else()
+        math(EXPR SCALED_TIMEOUT "210 * ${TIMEOUT_MULTIPLIER}")
+    endif()
+    set_tests_properties(${MY_TEST_NAME}
+        PROPERTIES TIMEOUT ${SCALED_TIMEOUT}
+    )
+
+    # Always set some environment variables
+    set_property(TEST ${MY_TEST_NAME} APPEND PROPERTY ENVIRONMENT
+        "TEST_TIMEOUT_SCALE=${TIMEOUT_MULTIPLIER}"
+    )
 
     if(MY_TEST_ENVIRONMENT)
         # Set environment variables for the test.

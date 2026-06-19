@@ -244,7 +244,7 @@ TEST_F(test_event_subscription_callback_local, subscriptions_callbacks_do_no_lea
     // handler
     auto final_checker = request_checker;
     final_checker.payload_ = final_payload;
-    EXPECT_TRUE(server_->message_record_.wait_for(final_checker, std::chrono::seconds(10)));
+    EXPECT_TRUE(server_->message_record_.wait_for(final_checker, common::scaled_timeout(std::chrono::seconds(10))));
     EXPECT_TRUE(client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_three_)));
     auto const invocation_count = subscription_count.load();
     EXPECT_EQ(2, invocation_count);
@@ -421,7 +421,8 @@ TEST_F(test_event_subscription_callback_local, a_broken_c2s_connection_does_not_
     server_->send_event(field_two_, field_two_payload_);
 
     // Which will be awaited here...but adjust the waiting time as multiple things are awaited on the dispatcher thread
-    EXPECT_TRUE(client_->message_record_.wait_for(field_two_checker_, std::chrono::seconds(10))) << client_->message_record_;
+    EXPECT_TRUE(client_->message_record_.wait_for(field_two_checker_, common::scaled_timeout(std::chrono::seconds(10))))
+            << client_->message_record_;
     // if received, it should have been received before the one checked above
     EXPECT_FALSE(client_->message_record_.wait_for(field_one_checker_, std::chrono::milliseconds(100)));
 }

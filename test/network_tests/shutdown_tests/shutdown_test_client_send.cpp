@@ -19,6 +19,7 @@
 #include <common/vsomeip_app_utilities.hpp>
 
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class shutdown_test_client {
 public:
@@ -26,7 +27,7 @@ public:
 
     void run_test() {
         std::unique_lock its_lock(mutex_);
-        ASSERT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(10), [this] { return is_available_; }))
+        ASSERT_TRUE(condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)), [this] { return is_available_; }))
                 << "Service not available in time";
 
         std::shared_ptr<vsomeip::payload> its_payload = vsomeip::runtime::get()->create_payload();

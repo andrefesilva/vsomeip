@@ -25,6 +25,7 @@
 #include "someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 enum operation_mode_e { SUBSCRIBE, METHODCALL };
 
@@ -144,7 +145,8 @@ public:
                 std::bind(&offered_services_info_test_client::on_offered_services_local, this, std::placeholders::_1));
 
         // send shutdown command to service
-        if (std::future_status::timeout == all_callbacks_received_.get_future().wait_for(std::chrono::seconds(15))) {
+        if (std::future_status::timeout
+            == all_callbacks_received_.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(15)))) {
             ADD_FAILURE() << "Didn't receive all callbacks within time";
         } else {
             std::shared_ptr<vsomeip::message> its_req = vsomeip::runtime::get()->create_request();
