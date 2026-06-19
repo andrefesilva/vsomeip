@@ -891,7 +891,7 @@ TEST_F(test_restart_clients, block_registration_process) {
     ASSERT_FALSE(one->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED, std::chrono::seconds(1)));
 
     // sanity check that the right message was dropped
-    ASSERT_TRUE(fut.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    ASSERT_TRUE(fut.wait_for(common::scaled_timeout(std::chrono::seconds(5))) == std::future_status::ready);
     ASSERT_EQ(fut.get(), protocol::id_e::ASSIGN_CLIENT_ID);
 
     // and that application eventually registers

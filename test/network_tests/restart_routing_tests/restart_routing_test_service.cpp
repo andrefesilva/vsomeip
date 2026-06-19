@@ -5,6 +5,7 @@
 
 #include <iomanip>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #include "restart_routing_test_service.hpp"
 #include "restart_routing_test_globals.hpp"
@@ -67,5 +68,5 @@ void restart_routing_test_service::init() {
 
 bool restart_routing_test_service::wait_for_messages() {
     std::unique_lock its_lock(mutex_);
-    return condition_.wait_for(its_lock, std::chrono::milliseconds(5000), [this] { return all_received_; });
+    return condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::milliseconds(5000)), [this] { return all_received_; });
 }

@@ -5,6 +5,7 @@
 
 #include <iomanip>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #include "restart_routing_test_client.hpp"
 #include <boost/interprocess/managed_shared_memory.hpp>
@@ -96,7 +97,7 @@ void restart_routing_test_client::init() {
 void restart_routing_test_client::run() {
     {
         std::unique_lock its_lock(mutex_);
-        ASSERT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(10),
+        ASSERT_TRUE(condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)),
                                         [this] { return sending_status_ == sending_status::SEND_MESSAGES; }));
     }
 
@@ -106,7 +107,8 @@ void restart_routing_test_client::run() {
         {
             std::unique_lock its_lock(mutex_);
             while (!is_available_) {
-                if (!condition_.wait_for(its_lock, std::chrono::milliseconds(10000), [this] { return is_available_; })) {
+                if (!condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::milliseconds(10000)),
+                                         [this] { return is_available_; })) {
                     VSOMEIP_WARNING << "Service not available for 10s. Quit waiting";
                     its_availability_timeout = true;
                     break;
@@ -136,7 +138,7 @@ void restart_routing_test_client::run() {
 
 bool restart_routing_test_client::wait_for_registration() {
     std::unique_lock lock{mutex_};
-    return condition_.wait_for(lock, std::chrono::seconds(2),
+    return condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(2)),
                                [this]() { return registration_status_ == vsomeip::state_type_e::ST_REGISTERED; });
 }
 
@@ -150,5 +152,5 @@ void restart_routing_test_client::send_messages() {
 
 bool restart_routing_test_client::wait_for_responses() {
     std::unique_lock lock{mutex_};
-    return condition_.wait_for(lock, std::chrono::seconds(5), [this]() { return all_responses_received_; });
+    return condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(5)), [this]() { return all_responses_received_; });
 }

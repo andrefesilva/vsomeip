@@ -5,6 +5,7 @@
 
 #include <vsomeip/internal/logger.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #include "debounce_test_service.hpp"
 
@@ -47,7 +48,7 @@ void debounce_test_service::run() {
 
     {
         std::unique_lock its_lock(run_mutex_);
-        auto its_result = run_condition_.wait_for(its_lock, std::chrono::milliseconds(5000));
+        auto its_result = run_condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::milliseconds(5000)));
         if (its_result == std::cv_status::timeout)
             return;
     }

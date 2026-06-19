@@ -11,6 +11,7 @@
 
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 namespace bpi = boost::interprocess;
 namespace vt = vsomeip_test;
@@ -58,7 +59,7 @@ void reuse_client_id_test_client::run() {
     auto restart = std::thread([&] {
         {
             bpi::scoped_lock<bpi::interprocess_mutex> its_lock(ip_sync->client_mutex_);
-            ASSERT_TRUE(vt::interprocess_utils::wait_and_check_unlocked(ip_sync->client_cv_, its_lock, 20,
+            ASSERT_TRUE(vt::interprocess_utils::wait_and_check_unlocked(ip_sync->client_cv_, its_lock, 20 * common::get_timeout_scale(),
                                                                         ip_sync->restart_clients_[app_id_], true));
         }
 
@@ -78,7 +79,7 @@ void reuse_client_id_test_client::run() {
             // wait for other client to register
             {
                 bpi::scoped_lock<bpi::interprocess_mutex> its_lock(ip_sync->client_mutex_);
-                ASSERT_TRUE(vt::interprocess_utils::wait_and_check_unlocked(ip_sync->client_cv_, its_lock, 10,
+                ASSERT_TRUE(vt::interprocess_utils::wait_and_check_unlocked(ip_sync->client_cv_, its_lock, 10 * common::get_timeout_scale(),
                                                                             ip_sync->restart_clients_[app_id_], false));
             }
             restarted = true;
@@ -89,8 +90,8 @@ void reuse_client_id_test_client::run() {
     // wait for notify from test manager
     {
         bpi::scoped_lock<bpi::interprocess_mutex> its_lock(ip_sync->client_mutex_);
-        ASSERT_TRUE(
-                vt::interprocess_utils::wait_and_check_unlocked(ip_sync->client_cv_, its_lock, 40, ip_sync->stop_clients_[app_id_], true));
+        ASSERT_TRUE(vt::interprocess_utils::wait_and_check_unlocked(ip_sync->client_cv_, its_lock, 40 * common::get_timeout_scale(),
+                                                                    ip_sync->stop_clients_[app_id_], true));
     }
 
     // prevent restart

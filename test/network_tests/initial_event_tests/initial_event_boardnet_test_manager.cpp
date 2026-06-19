@@ -18,6 +18,7 @@
 #include <common/vsomeip_app_utilities.hpp>
 #include <common/process_manager.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class boardnet_service_provider {
 public:
@@ -100,18 +101,18 @@ public:
 
     void wait_for_registration() {
         std::unique_lock lock{mutex_};
-        condition_.wait_for(lock, std::chrono::seconds(2),
+        condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(2)),
                             [this]() { return registration_status_ == vsomeip::state_type_e::ST_REGISTERED; });
     }
 
     void wait_for_subscription() {
         std::unique_lock lock{mutex_};
-        condition_.wait_for(lock, std::chrono::seconds(2), [this]() { return client_subscribed_; });
+        condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(2)), [this]() { return client_subscribed_; });
     }
 
     bool wait_for_message() {
         std::unique_lock lock{mutex_};
-        return condition_.wait_for(lock, std::chrono::seconds(10), [this]() { return message_received_; });
+        return condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(10)), [this]() { return message_received_; });
     }
 
     void reset() {

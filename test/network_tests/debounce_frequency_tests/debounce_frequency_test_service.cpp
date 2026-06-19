@@ -6,6 +6,7 @@
 #include <vsomeip/internal/logger.hpp>
 #include "debounce_frequency_test_service.hpp"
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 uint64_t elapsedMilliseconds(const std::chrono::time_point<std::chrono::system_clock>& _start_time) {
     auto const elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - _start_time).count();
@@ -37,7 +38,7 @@ test_service::test_service(const char* app_name_) : vsomeip_utilities::base_vsip
 // Send the debounce events with different frequencies, but configured with the same debounce time
 void test_service::send_messages() {
     std::unique_lock lk(mutex);
-    if (condition_wait_start.wait_for(lk, std::chrono::seconds(10), [this] { return received_message; })) {
+    if (condition_wait_start.wait_for(lk, common::scaled_timeout(std::chrono::seconds(10)), [this] { return received_message; })) {
 
         VSOMEIP_INFO << "service: Starting test ";
         start_time = std::chrono::system_clock::now();
