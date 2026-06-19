@@ -472,10 +472,6 @@ private:
 
     // Serializes routing readiness transitions with local offer processing.
     std::mutex mutex_;
-    std::map<std::pair<service_t, instance_t>, std::deque<std::tuple<uint8_t, client_t, major_version_t, minor_version_t>>> offer_commands_;
-
-    std::mutex callback_counts_mutex_;
-    std::map<uint32_t, uint16_t> callback_counts_;
 
     boost::asio::steady_timer statistics_log_timer_;
 
