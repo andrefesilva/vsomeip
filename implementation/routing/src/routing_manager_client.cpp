@@ -74,9 +74,8 @@ routing_manager_client::routing_manager_client(routing_manager_host* _host, bool
         char h[1024];
         return gethostname(h, sizeof(h)) == 0 ? std::string(h) : std::string{};
     }()),
-    tc_(trace::connector_impl::get()), status_log_timer_(io_), version_log_timer_(_host->get_io()), sender_(nullptr),
-    tcp_receiver_(nullptr), uds_receiver_(nullptr), client_side_logging_(_client_side_logging),
-    client_side_logging_filter_(_client_side_logging_filter),
+    tc_(trace::connector_impl::get()), sender_(nullptr), tcp_receiver_(nullptr), uds_receiver_(nullptr),
+    client_side_logging_(_client_side_logging), client_side_logging_filter_(_client_side_logging_filter),
     routing_mode_(configuration_->is_local_routing()           ? routing_mode_e::UDS_ONLY
                           : configuration_->is_uds_preferred() ? routing_mode_e::UDS_AND_TCP
                                                                : routing_mode_e::TCP_ONLY),
@@ -103,6 +102,25 @@ void routing_manager_client::init() {
             }
         });
     }
+
+    if (uint32_t const its_interval = configuration_->get_version_log_interval(host_->get_name(), false); its_interval > 0) {
+        version_logger_ = timer::create(io_, std::chrono::milliseconds(its_interval), [weak_self = weak_from_this()] {
+            if (auto self = weak_self.lock(); self) {
+                self->log_version();
+                return true; // repeat
+            }
+            return false;
+        });
+    }
+    if (uint32_t const its_interval = configuration_->get_status_log_interval(host_->get_name(), false); its_interval > 0) {
+        status_logger_ = timer::create(io_, std::chrono::milliseconds(its_interval), [weak_self = weak_from_this()] {
+            if (auto self = weak_self.lock(); self) {
+                self->log_status();
+                return true;
+            }
+            return false;
+        });
+    }
 }
 
 void routing_manager_client::start() {
@@ -121,47 +139,24 @@ void routing_manager_client::start() {
     assert(!on_sender_stopped_);
     on_sender_stopped_ = {};
     restart_sender(lock);
-    {
-        std::scoped_lock its_lock{log_timer_mutex_};
-        if (configuration_->get_version_log_interval(host_->get_name(), false) > 0) {
-            version_log_timer_.expires_after(std::chrono::seconds(0));
-            version_log_timer_.async_wait([this](boost::system::error_code const& ec) { this->version_log_timer_cbk(ec); });
-        }
-        if (configuration_->get_status_log_interval(host_->get_name(), false) > 0) {
-            status_log_timer_.expires_after(std::chrono::seconds(0));
-            status_log_timer_.async_wait([this](boost::system::error_code const& ec) { this->status_log_timer_cbk(ec); });
-        }
+    if (status_logger_) {
+        status_logger_->start();
+        log_status();
+    }
+    if (version_logger_) {
+        version_logger_->start();
+        log_version();
     }
 }
 
-void routing_manager_client::status_log_timer_cbk(boost::system::error_code const& _error) {
-    if (!_error) {
-        const uint32_t its_interval = configuration_->get_status_log_interval(host_->get_name(), false);
-        VSOMEIP_INFO_P << " ";
-        ep_mgr_->print_status();
-
-        {
-            std::scoped_lock its_lock(log_timer_mutex_);
-            status_log_timer_.expires_after(std::chrono::milliseconds(its_interval));
-            status_log_timer_.async_wait([this](boost::system::error_code const& ec) { this->status_log_timer_cbk(ec); });
-        }
-    }
+void routing_manager_client::log_status() {
+    VSOMEIP_INFO_P << " ";
+    ep_mgr_->print_status();
 }
 
-void routing_manager_client::version_log_timer_cbk(boost::system::error_code const& _error) {
-    if (!_error) {
-        const uint32_t its_interval = configuration_->get_version_log_interval(host_->get_name(), false);
-
-        VSOMEIP_INFO << "vSomeIP " << VSOMEIP_VERSION << " (" << VSOMEIP_GIT_COMMIT << ") | ";
-
-        utility::log_network_state(configuration_, true, false);
-
-        {
-            std::scoped_lock its_lock(log_timer_mutex_);
-            version_log_timer_.expires_after(std::chrono::milliseconds(its_interval));
-            version_log_timer_.async_wait([this](boost::system::error_code const& ec) { this->version_log_timer_cbk(ec); });
-        }
-    }
+void routing_manager_client::log_version() {
+    VSOMEIP_INFO << "vSomeIP " << VSOMEIP_VERSION << " (" << VSOMEIP_GIT_COMMIT << ") | ";
+    utility::log_network_state(configuration_, true, false);
 }
 
 async::hook routing_manager_client::stop() {
@@ -204,10 +199,8 @@ async::hook routing_manager_client::stop() {
         stop_and_clear(uds_receiver_);
     }
 
-    {
-        std::scoped_lock its_lock{log_timer_mutex_};
-        version_log_timer_.cancel();
-        status_log_timer_.cancel();
+    if (version_logger_) {
+        version_logger_->stop();
     }
     auto when_no_eps = when_endpoints_flushed.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
         VSOMEIP_WARNING << "rmc::stop: endpoints where not flushed within time. Enforcing stop";
@@ -2886,6 +2879,9 @@ void routing_manager_client::finish_shutdown() {
         // any in-flight continuation is now either "stale" or "done" as it had acquired the provider lock.
         clear_remote_subscriptions(its_lock);
         cleanup_subscriber(its_lock);
+    }
+    if (status_logger_) {
+        status_logger_->stop();
     }
     cleanup_routing_data();
     host_->on_state(state_type_e::ST_DEREGISTERED);

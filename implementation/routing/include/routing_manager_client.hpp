@@ -207,8 +207,8 @@ private:
     bool send_request_services(std::span<protocol::service_data const> _requests);
 
     void resend_provided_event_registrations();
-    void status_log_timer_cbk(boost::system::error_code const& _error);
-    void version_log_timer_cbk(boost::system::error_code const& _error);
+    void log_status();
+    void log_version();
 #ifndef VSOMEIP_DISABLE_SECURITY
     void on_update_security_credentials(const protocol::update_security_credentials_command& _command);
 #endif
@@ -308,9 +308,8 @@ private:
 
     std::shared_ptr<trace::connector_impl> tc_;
 
-    std::mutex log_timer_mutex_;
-    boost::asio::steady_timer status_log_timer_;
-    boost::asio::steady_timer version_log_timer_;
+    std::shared_ptr<timer> status_logger_;
+    std::shared_ptr<timer> version_logger_;
 
     mutable std::mutex sender_mutex_;
     bool sender_debounce_active_{false};
