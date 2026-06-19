@@ -1485,35 +1485,49 @@ bool routing_manager_client::send_pending_event_registrations(client_t _client) 
 
     protocol::register_events_command its_command;
     its_command.set_client(_client);
-    bool sent{true};
 
     std::scoped_lock its_lock(pending_event_registrations_mutex_);
-    auto it = pending_event_registrations_.begin();
-    while (it != pending_event_registrations_.end()) {
-        for (; it != pending_event_registrations_.end(); it++) {
-            const auto& [its_service, its_instance] = it->service_instance_;
-            protocol::register_event reg(its_service, its_instance, it->notifier_, it->type_, it->is_provided_, it->reliability_,
-                                         it->is_cyclic_, static_cast<uint16_t>(it->eventgroups_.size()), it->eventgroups_);
-            if (!its_command.add_registration(reg)) {
-                break;
+
+    for (auto it = pending_event_registrations_.begin(); it != pending_event_registrations_.end(); it++) {
+        const auto& [its_service, its_instance] = it->service_instance_;
+        protocol::register_event reg(its_service, its_instance, it->notifier_, it->type_, it->is_provided_, it->reliability_,
+                                     it->is_cyclic_, static_cast<uint16_t>(it->eventgroups_.size()), it->eventgroups_);
+        if (!its_command.add_registration(reg)) {
+            // Send the current command and start a new one for the remaining registrations,
+            // including the current one which failed to be added to the previous command
+            VSOMEIP_WARNING_P
+                    << "Register pending event registration command is too long, sending pending registrations in multiple commands.";
+            {
+                std::vector<byte_t> its_buffer;
+                its_command.serialize(its_buffer);
+
+                std::scoped_lock its_sender_lock{sender_mutex_};
+                if (!(sender_ && sender_->send(&its_buffer[0], uint32_t(its_buffer.size())))) {
+                    VSOMEIP_ERROR_P << "Failed to send pending registration to host";
+                    return false;
+                }
             }
-        }
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
-
-        std::scoped_lock its_sender_lock{sender_mutex_};
-        if (!(sender_ && sender_->send(&its_buffer[0], uint32_t(its_buffer.size())))) {
-            VSOMEIP_ERROR_P << "Failed to send pending registration to host";
-            sent = false;
-        }
-
-        if (!sent) {
-            break;
+            its_command = protocol::register_events_command(); // Reset the command
+            its_command.set_client(_client);
+            its_command.add_registration(reg);
         }
     }
 
-    return sent;
+    // If there are no events registered, dont send
+    if (its_command.get_num_registrations() == 0) {
+        return true;
+    }
+
+    std::vector<byte_t> its_buffer;
+    its_command.serialize(its_buffer);
+
+    std::scoped_lock its_sender_lock{sender_mutex_};
+    if (!(sender_ && sender_->send(&its_buffer[0], uint32_t(its_buffer.size())))) {
+        VSOMEIP_ERROR_P << "Failed to send pending registration to host";
+        return false;
+    }
+
+    return true;
 }
 
 void routing_manager_client::send_register_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
