@@ -9,6 +9,7 @@
 
 #include "big_payload_test_globals.hpp"
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 // Test steps:
 //      waits for registration
@@ -219,7 +220,7 @@ void big_payload_test_service::run() {
     }
 
     std::unique_lock its_lock(mutex_);
-    EXPECT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(10), [&] { return to_stop; }));
+    EXPECT_TRUE(condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)), [&] { return to_stop; }));
 
     stop();
 }

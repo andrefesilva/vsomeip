@@ -26,6 +26,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class subscribe_notify_test_one_event_two_eventgroups_client {
 public:
@@ -184,7 +185,7 @@ public:
         // For the initial events, we expected to received 1 notification from events
         // 0x8111 and 0x8112 and 2 notifications from 0x8113, which sums up to 4 total notifications
         constexpr int _expected_number_received_initial_events = 4;
-        if (!_condition.wait_for(_lock, std::chrono::seconds(5),
+        if (!_condition.wait_for(_lock, common::scaled_timeout(std::chrono::seconds(5)),
                                  [this] { return received_events_.size() >= _expected_number_received_initial_events; })) {
             ADD_FAILURE() << "Didn't receive at least the expected number of initial events: " << _expected_number_received_initial_events
                           << "  within time. Instead received: " << received_events_.size();
@@ -198,7 +199,7 @@ public:
     void wait_for_events(std::unique_lock<std::mutex>& _lock, std::condition_variable& _condition) {
         // For the "normal" events, we expected to receive at least one 1 notification from each event, so >= 3 notifications
         constexpr int _expected_number_received_events = 3;
-        if (!_condition.wait_for(_lock, std::chrono::seconds(5),
+        if (!_condition.wait_for(_lock, common::scaled_timeout(std::chrono::seconds(5)),
                                  [this] { return received_events_.size() >= _expected_number_received_events; })) {
             ADD_FAILURE() << "Didn't receive expected number of events: " << _expected_number_received_events
                           << " within time. Instead received: " << received_events_.size();

@@ -18,6 +18,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class suspend_resume_test_slave {
 public:
@@ -40,7 +41,9 @@ public:
         {
             std::unique_lock its_lock(availability_mutex_);
             VSOMEIP_DEBUG << "[TEST] Process: waiting service available";
-            ASSERT_EQ(availability_cv_.wait_for(its_lock, std::chrono::seconds(10), [this]() { return is_available_.load(); }), true);
+            ASSERT_EQ(availability_cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(10)),
+                                                [this]() { return is_available_.load(); }),
+                      true);
             VSOMEIP_INFO << "[TEST] Process: service available";
         }
 
@@ -56,7 +59,8 @@ public:
         {
             std::unique_lock its_lock(availability_mutex_);
             VSOMEIP_DEBUG << "[TEST] Process: waiting availability=false event, is_available=" << std::boolalpha << is_available_.load();
-            ASSERT_TRUE(availability_cv_.wait_for(its_lock, std::chrono::seconds(20), [this]() { return !is_available_.load(); }));
+            ASSERT_TRUE(availability_cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(20)),
+                                                  [this]() { return !is_available_.load(); }));
             unavailable_time = std::chrono::steady_clock::now();
             VSOMEIP_INFO << "[TEST] Process: received availability=false";
         }
@@ -66,7 +70,8 @@ public:
         {
             std::unique_lock its_lock(availability_mutex_);
             VSOMEIP_DEBUG << "[TEST] Process: waiting availability=true event, is_available=" << std::boolalpha << is_available_.load();
-            ASSERT_TRUE(availability_cv_.wait_for(its_lock, std::chrono::seconds(30), [this]() { return is_available_.load(); }));
+            ASSERT_TRUE(availability_cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30)),
+                                                  [this]() { return is_available_.load(); }));
             available_time = std::chrono::steady_clock::now();
             VSOMEIP_INFO << "[TEST] Process: received availability=true";
         }

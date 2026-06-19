@@ -16,6 +16,7 @@
 #include "initial_event_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class boardnet_client {
 public:
@@ -105,17 +106,17 @@ public:
 
     bool wait_for_initial_event() {
         std::unique_lock lock{mutex_};
-        return condition_.wait_for(lock, std::chrono::seconds(10), [&]() { return initial_event_counter >= 1; });
+        return condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(10)), [&]() { return initial_event_counter >= 1; });
     }
 
     bool wait_for_unavailability() {
         std::unique_lock lock{mutex_};
-        return condition_.wait_for(lock, std::chrono::seconds(10), [this]() { return unavailability_detected_; });
+        return condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(10)), [this]() { return unavailability_detected_; });
     }
 
     bool wait_for_availability() {
         std::unique_lock lock{mutex_};
-        return condition_.wait_for(lock, std::chrono::seconds(10), [this]() { return service_available_; });
+        return condition_.wait_for(lock, common::scaled_timeout(std::chrono::seconds(10)), [this]() { return service_available_; });
     }
 
     void reset_initial_event_counter() {

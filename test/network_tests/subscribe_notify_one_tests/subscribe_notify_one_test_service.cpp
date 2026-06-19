@@ -23,6 +23,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class subscribe_notify_one_test_service {
 public:
@@ -256,13 +257,15 @@ public:
 
     void run() {
         std::unique_lock its_lock(mutex_);
-        EXPECT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(5), [this] { return !wait_until_registered_; }))
+        EXPECT_TRUE(
+                condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(5)), [this] { return !wait_until_registered_; }))
                 << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id << "] Service registration timeout";
 
         VSOMEIP_DEBUG << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id << "] Offering";
         app_->offer_service(service_info_.service_id, service_info_.instance_id);
 
-        EXPECT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(15), [this] { return !wait_until_other_services_available_; }))
+        EXPECT_TRUE(condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(15)),
+                                        [this] { return !wait_until_other_services_available_; }))
                 << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id
                 << "] Other services availability timeout";
 
@@ -283,7 +286,8 @@ public:
                           << std::setw(4) << i.eventgroup_id << "]";
         }
 
-        EXPECT_TRUE(condition_.wait_for(its_lock, std::chrono::seconds(15), [this] { return !wait_until_notified_from_other_services_; }))
+        EXPECT_TRUE(condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(15)),
+                                        [this] { return !wait_until_notified_from_other_services_; }))
                 << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id << "] Notification timeout";
 
         // It is possible that we run in the case a subscription is NACKED
@@ -308,8 +312,8 @@ public:
         // Wait for shutdown acknowledgments from all other services
         {
             std::unique_lock<std::mutex> its_shutdown_lock(shutdown_mutex_);
-            EXPECT_TRUE(
-                    shutdown_condition_.wait_for(its_shutdown_lock, std::chrono::seconds(15), [this] { return !wait_for_shutdown_acks_; }))
+            EXPECT_TRUE(shutdown_condition_.wait_for(its_shutdown_lock, common::scaled_timeout(std::chrono::seconds(15)),
+                                                     [this] { return !wait_for_shutdown_acks_; }))
                     << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id
                     << "] Shutdown coordination timeout";
         }
@@ -317,7 +321,8 @@ public:
 
     void notify_one() {
         std::unique_lock its_lock(notify_mutex_);
-        EXPECT_TRUE(notify_condition_.wait_for(its_lock, std::chrono::seconds(15), [this] { return !wait_for_notify_; }))
+        EXPECT_TRUE(notify_condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(15)),
+                                               [this] { return !wait_for_notify_; }))
                 << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id << "] Notify one timeout";
 
         // sleep a while before starting to notify this is necessary as it's not
@@ -346,7 +351,8 @@ public:
 
     void wait_for_stop() {
         std::unique_lock its_lock(stop_mutex_);
-        EXPECT_TRUE(stop_condition_.wait_for(its_lock, std::chrono::seconds(15), [this] { return !wait_for_stop_; }))
+        EXPECT_TRUE(
+                stop_condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(15)), [this] { return !wait_for_stop_; }))
                 << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id << "] Stop timeout";
         VSOMEIP_DEBUG << "[" << std::hex << std::setfill('0') << std::setw(4) << service_info_.service_id
                       << "] Received notifications from all other services, sending shutdown coordination messages";

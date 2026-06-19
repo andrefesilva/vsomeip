@@ -22,6 +22,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 class second_address_test_client {
 public:
@@ -248,7 +249,8 @@ public:
         its_message->set_message_type(vsomeip::message_type_e::MT_REQUEST);
         app_->send(its_message);
 
-        if (condition_.wait_for(its_lock, std::chrono::seconds(30), [this] { return !wait_until_shutdown_reply_received_; })) {
+        if (condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(30)),
+                                [this] { return !wait_until_shutdown_reply_received_; })) {
             VSOMEIP_ERROR << "Shutdown request wasn't answered in time!";
         }
 

@@ -33,6 +33,7 @@ x-common: &common
     GLOBAL_TIMEOUT: 240 minutes
     IP_SLAVE_2ND: *slave-2nd
     STRESS_LABELS: ${STRESS_LABELS-[]}
+    TEST_TIMEOUT_SCALE: ${TEST_TIMEOUT_SCALE-1}
     VALGRIND_TYPE: ${VALGRIND_TYPE-}
   networks:
     - ci-network-tests

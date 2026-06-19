@@ -13,6 +13,7 @@
 #include "vsomeip/runtime.hpp"
 #include "common/timeout_detector.hpp"
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 #include "tools/tools.h"
 
 /**
@@ -97,7 +98,7 @@ TEST(dispatch_app_stop, outlives_struct) {
     // Wait until the application reaches ST_REGISTERED.
     // The timeout prevents indefinite blocking in case of failure.
     std::unique_lock lock{*mt};
-    EXPECT_TRUE(cv->wait_for(lock, std::chrono::seconds(5), [registered] { return *registered; }))
+    EXPECT_TRUE(cv->wait_for(lock, common::scaled_timeout(std::chrono::seconds(5)), [registered] { return *registered; }))
             << "Application did not reach ST_REGISTERED";
 
     // Test body exits without stopping the application.

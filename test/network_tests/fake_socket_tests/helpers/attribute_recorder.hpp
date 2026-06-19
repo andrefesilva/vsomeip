@@ -14,6 +14,8 @@
 #include <vector>
 #include <sstream>
 
+#include "common/timeout_scale.hpp"
+
 namespace vsomeip_v3::testing {
 
 /**
@@ -36,7 +38,7 @@ public:
     }
 
     template<typename Predicate>
-    [[nodiscard]] bool wait_for(Predicate p, std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+    [[nodiscard]] bool wait_for(Predicate p, std::chrono::milliseconds timeout = common::scaled_timeout(std::chrono::seconds(3))) {
         auto lock = std::unique_lock(mtx_);
         if (p(record_)) {
             return true;
@@ -48,7 +50,7 @@ public:
      * @brief Wait for *any* record to equal `p`
      */
     template<typename Predicate>
-    [[nodiscard]] bool wait_for_any(Predicate p, std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+    [[nodiscard]] bool wait_for_any(Predicate p, std::chrono::milliseconds timeout = common::scaled_timeout(std::chrono::seconds(3))) {
         return wait_for(p, timeout);
     }
 
@@ -56,7 +58,7 @@ public:
      * @brief Wait for last record to equal `p`
      */
     template<typename Predicate>
-    [[nodiscard]] bool wait_for_last(Predicate p, std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+    [[nodiscard]] bool wait_for_last(Predicate p, std::chrono::milliseconds timeout = common::scaled_timeout(std::chrono::seconds(3))) {
         // auto lock = std::unique_lock(mtx_);
         return wait_for([&](auto const& record) { return !record.empty() && p == record.back(); }, timeout);
     }
@@ -64,7 +66,8 @@ public:
     /**
      * @brief Wait for *any* record to equal `_value`
      */
-    [[nodiscard]] bool wait_for_any(Value const& _value, std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+    [[nodiscard]] bool wait_for_any(Value const& _value,
+                                    std::chrono::milliseconds timeout = common::scaled_timeout(std::chrono::seconds(3))) {
         return wait_for(
                 [&_value](auto const& record) {
                     return std::any_of(record.begin(), record.end(), [&](auto const& rec) { return rec == _value; });
@@ -75,7 +78,8 @@ public:
     /**
      * @brief Wait for last record to equal `_value`
      */
-    [[nodiscard]] bool wait_for_last(Value const& _value, std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+    [[nodiscard]] bool wait_for_last(Value const& _value,
+                                     std::chrono::milliseconds timeout = common::scaled_timeout(std::chrono::seconds(3))) {
         return wait_for([&_value](auto const& record) { return !record.empty() && record.back() == _value; }, timeout);
     }
 
@@ -94,7 +98,8 @@ public:
      * The elements do not need to be contiguous — other entries may appear in between.
      * Returns true if the ordered subsequence was found within the timeout.
      */
-    [[nodiscard]] bool wait_for_sequence(std::vector<Value> const& _expected, std::chrono::milliseconds timeout = std::chrono::seconds(3)) {
+    [[nodiscard]] bool wait_for_sequence(std::vector<Value> const& _expected,
+                                         std::chrono::milliseconds timeout = common::scaled_timeout(std::chrono::seconds(3))) {
         return wait_for(
                 [&_expected](auto const& record) {
                     auto it = record.begin();

@@ -17,6 +17,7 @@
 #include <vsomeip/vsomeip.hpp>
 
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 #include "../../implementation/utility/include/bithelper.hpp"
 #include "../../implementation/message/include/deserializer.hpp"
@@ -233,7 +234,8 @@ TEST_F(pending_subscription, send_multiple_subscriptions) {
                 // std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            if (std::future_status::timeout == trigger_notifications.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == trigger_notifications.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAcks within time";
             } else {
                 std::cout << "============ NOTIFICATION PHASE ============" << std::endl;
@@ -421,7 +423,8 @@ TEST_F(pending_subscription, send_alternating_subscribe_unsubscribe) {
                 // std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            if (std::future_status::timeout == trigger_notifications.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == trigger_notifications.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAcks within time";
             } else {
                 std::cout << "============ NOTIFICATION PHASE ============" << std::endl;
@@ -609,7 +612,8 @@ TEST_F(pending_subscription, send_multiple_unsubscriptions) {
                 // std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            if (std::future_status::timeout == trigger_notifications.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == trigger_notifications.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAcks within time";
             } else {
                 std::cout << "============ NOTIFICATION PHASE ============" << std::endl;
@@ -806,7 +810,8 @@ TEST_F(pending_subscription, send_alternating_subscribe_nack_unsubscribe) {
                 // std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            if (std::future_status::timeout == trigger_notifications.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == trigger_notifications.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAcks within time";
             } else {
                 std::cout << "============ NOTIFICATION PHASE ============" << std::endl;
@@ -975,7 +980,7 @@ TEST_F(pending_subscription, send_alternating_subscribe_unsubscribe_same_port) {
     });
 
     std::thread send_thread([&]() {
-        if (std::future_status::timeout == tcp_connected.get_future().wait_for(std::chrono::seconds(10))) {
+        if (std::future_status::timeout == tcp_connected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
             ADD_FAILURE() << "Didn't establish tcp connection within time";
         }
 
@@ -1021,7 +1026,8 @@ TEST_F(pending_subscription, send_alternating_subscribe_unsubscribe_same_port) {
                 // std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            if (std::future_status::timeout == trigger_notifications.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == trigger_notifications.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAcks within time";
             } else {
                 std::cout << "============ NOTIFICATION PHASE ============" << std::endl;
@@ -1216,7 +1222,8 @@ TEST_F(pending_subscription, subscribe_resubscribe_mixed) {
             // DEBUG: allow you to receive the response before sending the next message
             // std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-            if (std::future_status::timeout == first_initial_event_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == first_initial_event_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAck of first subscription within time";
             }
 
@@ -1239,7 +1246,8 @@ TEST_F(pending_subscription, subscribe_resubscribe_mixed) {
             // DEBUG: allow you to receive the response before sending the next message
             // std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-            if (std::future_status::timeout == second_initial_event_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == second_initial_event_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAck of second subscription within time";
             }
 
@@ -1386,7 +1394,7 @@ TEST_F(pending_subscription, send_subscribe_stop_subscribe_subscribe) {
     });
 
     std::thread send_thread([&]() {
-        if (std::future_status::timeout == tcp_connected.get_future().wait_for(std::chrono::seconds(10))) {
+        if (std::future_status::timeout == tcp_connected.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
             ADD_FAILURE() << "Didn't establish tcp connection within time";
         }
 
@@ -1435,7 +1443,8 @@ TEST_F(pending_subscription, send_subscribe_stop_subscribe_subscribe) {
             // DEBUG: allow you to receive the response before sending the next message
             // std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-            if (std::future_status::timeout == trigger_notifications.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == trigger_notifications.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all SubscribeAcks within time";
             } else {
                 // call notify method
@@ -1575,7 +1584,8 @@ TEST_F(pending_subscription, send_request_to_sd_port) {
                 ++its_subscribe_message[11];
             }
 
-            if (std::future_status::timeout == all_offers_received.get_future().wait_for(std::chrono::seconds(10))) {
+            if (std::future_status::timeout
+                == all_offers_received.get_future().wait_for(common::scaled_timeout(std::chrono::seconds(10)))) {
                 ADD_FAILURE() << "Didn't receive all Offers within time";
             }
 

@@ -88,9 +88,8 @@ void someip_gate::block_at(trigger _trigger, uint32_t _count) {
     std::shared_ptr<data_pipe> pipe;
     {
         std::scoped_lock lock{mtx_};
-        TEST_LOG << "[someip_gate] Setup gate to block when seeing "
-                 << "service=0x" << std::hex << _trigger.service_ << " method=0x" << _trigger.method_ << " for the " << std::dec << _count
-                 << " time, on gate mem: " << pipe_.get();
+        TEST_LOG << "[someip_gate] Setup gate to block when seeing " << "service=0x" << std::hex << _trigger.service_ << " method=0x"
+                 << _trigger.method_ << " for the " << std::dec << _count << " time, on gate mem: " << pipe_.get();
         search_ = {std::move(_trigger), _count, 0};
         state_ = gate_state::UNBLOCKED;
         pipe = pipe_;

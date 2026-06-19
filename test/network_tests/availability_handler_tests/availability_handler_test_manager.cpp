@@ -28,6 +28,7 @@
 #include <common/process_manager.hpp>
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 
 namespace vt = vsomeip_test;
 
@@ -74,7 +75,7 @@ TEST_F(availability_handler_test_manager, availability_handler_double_registrati
                                                   boost::interprocess::read_write // read-write mode
     );
 
-    int seconds_to_timeout = 15;
+    int seconds_to_timeout = 15 * common::get_timeout_scale();
 
     ASSERT_NO_THROW(([&] {
         // Set size

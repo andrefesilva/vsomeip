@@ -23,6 +23,7 @@
 #include "../someip_test_globals.hpp"
 #include <common/vsomeip_app_utilities.hpp>
 #include "common/test_main.hpp"
+#include "common/timeout_scale.hpp"
 #include "../implementation/utility/include/utility.hpp"
 
 class pending_subscription_test_service {
@@ -144,7 +145,7 @@ public:
         }
 
         std::future<bool> itsFuture = notify_method_called_.get_future();
-        if (std::future_status::timeout == itsFuture.wait_for(std::chrono::seconds(30))) {
+        if (std::future_status::timeout == itsFuture.wait_for(common::scaled_timeout(std::chrono::seconds(30)))) {
             ADD_FAILURE() << "notify method wasn't called within time!";
         } else {
             EXPECT_TRUE(itsFuture.get());
