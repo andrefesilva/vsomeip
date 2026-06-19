@@ -453,7 +453,7 @@ private:
     std::map<std::string, std::set<std::pair<boost::asio::ip::udp::endpoint, fd_t>>> binded_multicast_endpoints_;
     // persisted delay state per sending endpoint; applied immediately if already bound, or on bind otherwise
     std::map<boost::asio::ip::udp::endpoint, bool> udp_sending_delay_;
-    std::map<std::string, std::map<boost::asio::ip::udp::endpoint, pending_someip_pipe>> pending_someip_pipe_;
+    std::map<std::string, std::map<boost::asio::ip::udp::endpoint, std::vector<pending_someip_pipe>>> pending_someip_pipes_;
     std::set<std::string> connections_to_ignore_;
     std::set<boost::asio::ip::address> ignored_networks_;
     std::set<std::string> fail_on_bind_;

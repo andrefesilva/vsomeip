@@ -269,8 +269,7 @@ void socket_manager::remove_acceptor(fd_t _fd, uds_endpoint _ep) {
 [[nodiscard]] bool socket_manager::bind_socket(std::shared_ptr<fake_udp_socket_handle> _handle, boost::asio::ip::udp::endpoint const& _ep,
                                                fd_t _fd) {
     bool pending_delay{false};
-    bool pending_pipe{false};
-    pending_someip_pipe pipe{};
+    std::vector<pending_someip_pipe> pending_pipes;
 
     {
         auto const lock = std::scoped_lock(mtx_);
@@ -293,14 +292,13 @@ void socket_manager::remove_acceptor(fd_t _fd, uds_endpoint _ep) {
             }
         }
 
-        if (auto app_it = pending_someip_pipe_.find(_handle->get_app_name()); app_it != pending_someip_pipe_.end()) {
+        if (auto app_it = pending_someip_pipes_.find(_handle->get_app_name()); app_it != pending_someip_pipes_.end()) {
             if (auto ep_it = app_it->second.find(_ep); ep_it != app_it->second.end()) {
-                pending_pipe = true;
-                pipe = ep_it->second;
+                pending_pipes = ep_it->second;
                 if (_ep.address() != boost::asio::ip::address_v4::any()) {
                     app_it->second.erase(ep_it);
-                    if (app_it->second.size() == 0) {
-                        pending_someip_pipe_.erase(app_it);
+                    if (app_it->second.empty()) {
+                        pending_someip_pipes_.erase(app_it);
                     }
                 }
             }
@@ -312,7 +310,7 @@ void socket_manager::remove_acceptor(fd_t _fd, uds_endpoint _ep) {
         _handle->delay_message_processing(pending_delay);
     }
 
-    if (pending_pipe) {
+    for (auto const& pipe : pending_pipes) {
         LOCAL_LOG << "Applying pending pipe to endpoint: " << _ep << " from application " << _handle->get_app_name();
         _handle->replace_pipe(pipe.pipe_, pipe.applied_on_);
     }
@@ -633,10 +631,19 @@ bool socket_manager::setup_data_pipe(boost::asio::ip::udp::endpoint const& _ep, 
         }
 
         if (fd == 0 || _ep.address() == boost::asio::ip::address_v4::any()) {
-            // endpoint not yet binded.
-            // Multicast endpoints will always remain in the pending pipe, as the endpoint can be restarted while processing multicast
+            // Endpoint not yet bound.
+            // Multicast endpoints will always remain in the pending pipes, as the endpoint can be restarted while processing multicast
             // options.
-            pending_someip_pipe_[_app_name][_ep] = {_pipe, _applied_on};
+            // Keep one pending pipe per role so that both a server and a client can coexist on the same endpoint;
+            // a repeated setup for the same role replaces the previous pipe.
+            auto& pipes = pending_someip_pipes_[_app_name][_ep];
+            auto const existing =
+                    std::find_if(pipes.begin(), pipes.end(), [_applied_on](auto const& _p) { return _p.applied_on_ == _applied_on; });
+            if (existing != pipes.end()) {
+                existing->pipe_ = _pipe;
+            } else {
+                pipes.push_back({_pipe, _applied_on});
+            }
         }
 
         if (fd == 0) {
