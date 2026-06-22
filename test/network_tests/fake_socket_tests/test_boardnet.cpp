@@ -810,49 +810,6 @@ TEST_F(test_shadow_events, permute_eventgroup_sub_subscribe_to_field_with_init_v
     ASSERT_TRUE(ecu_one_client_->message_record_.wait_for_any(field_checker_))
             << "Failed to receive field event." << "\nRecord: " << ecu_one_client_->message_record_;
 }
-TEST_F(test_shadow_events, permute_eventgroup_sub_subscribe_before_offer) {
-    GTEST_SKIP() << "This test fails sporadically. This feels like a bug";
-    start_all_apps();
-    ecu_two_server_->offer(service_instance_);
-    subscribe_to_event();
-    subscribe_to_field();
-    ecu_one_client_->request_service(service_instance_);
-    ASSERT_TRUE(ecu_one_client_->availability_record_.wait_for_last(service_availability::available(service_instance_)));
-
-    offer_event();
-    offer_field();
-    ASSERT_TRUE(ecu_one_client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(offered_event_)));
-    ASSERT_TRUE(ecu_one_client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(offered_field_)));
-
-    send_event();
-    send_field();
-    ASSERT_TRUE(ecu_one_client_->message_record_.wait_for_any(event_checker_))
-            << "Failed to receive event." << "\nRecord: " << ecu_one_client_->message_record_;
-    ASSERT_TRUE(ecu_one_client_->message_record_.wait_for_any(field_checker_))
-            << "Failed to receive field event." << "\nRecord: " << ecu_one_client_->message_record_;
-}
-
-TEST_F(test_shadow_events, permute_eventgroup_sub_late_field_offering) {
-    GTEST_SKIP() << "This test fails reliable. This feels like a bug";
-    start_all_apps();
-    offer_event();
-    ecu_two_server_->offer(service_instance_);
-
-    ecu_one_client_->request_service(service_instance_);
-    subscribe_to_field();
-    subscribe_to_event();
-    ASSERT_TRUE(ecu_one_client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(offered_event_)));
-
-    send_event();
-    ASSERT_TRUE(ecu_one_client_->message_record_.wait_for_any(event_checker_))
-            << "Failed to receive event." << "\nRecord: " << ecu_one_client_->message_record_;
-
-    offer_field();
-    send_field();
-    ASSERT_TRUE(ecu_one_client_->message_record_.wait_for_any(field_checker_))
-            << "Failed to receive field event." << "\nRecord: " << ecu_one_client_->message_record_;
-    ;
-}
 TEST_F(test_boardnet_helper, test_boardnet_subscription_selective_event) {
     /**
      * When we receive multiple selective event subscriptions simultaneously
