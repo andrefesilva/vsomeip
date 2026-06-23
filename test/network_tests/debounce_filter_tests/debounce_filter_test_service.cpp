@@ -28,23 +28,28 @@ bool debounce_test_service::init() {
 }
 
 void debounce_test_service::start() {
-    VSOMEIP_INFO << "Starting Service...";
+    VSOMEIP_INFO << "[TEST] Starting Service...";
     app_->start();
 }
 
 void debounce_test_service::stop() {
-    VSOMEIP_INFO << "Stopping Service...";
+    VSOMEIP_INFO << "[TEST] Stopping Service...";
     app_->stop();
 }
 
 void debounce_test_service::run() {
+    VSOMEIP_INFO << "[TEST] Waiting for START command...";
     {
         std::unique_lock its_lock(run_mutex_);
-        auto its_result = run_condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::milliseconds(5000)));
-        if (its_result == std::cv_status::timeout)
+        // Wait for the client's START request.
+        // Use a predicate to avoid any race condition between the wait and the notification.
+        if (!run_condition_.wait_for(its_lock, common::scaled_timeout(std::chrono::milliseconds(5000)), [this] { return started_; })) {
+            VSOMEIP_INFO << "[TEST] START command not received within timeout.";
             return;
+        }
     }
 
+    VSOMEIP_INFO << "[TEST] Starting test.";
     start_test();
 }
 
@@ -54,12 +59,16 @@ void debounce_test_service::wait() {
 }
 
 void debounce_test_service::on_start(const std::shared_ptr<vsomeip::message>&) {
-    VSOMEIP_INFO << "Starting test";
+    VSOMEIP_INFO << "[TEST] Sending START command";
+    {
+        std::scoped_lock its_lock(run_mutex_);
+        started_ = true;
+    }
     run_condition_.notify_one();
 }
 
 void debounce_test_service::on_stop(const std::shared_ptr<vsomeip::message>&) {
-    VSOMEIP_INFO << "Received a STOP command.";
+    VSOMEIP_INFO << "[TEST] Received a STOP command.";
     is_running_ = false;
     stop();
 }
