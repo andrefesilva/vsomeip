@@ -11,6 +11,7 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <climits>
 #include <forward_list>
 #include <future>
@@ -40,7 +41,6 @@
 #include "../../protocol/include/expire_command.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
-#include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/request_service_command.hpp"
 #include "../../protocol/include/send_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
@@ -386,46 +386,53 @@ void routing_manager_client::register_event(client_t _client, service_t _service
 
     bool is_cyclic(_cycle != std::chrono::milliseconds::zero());
 
-    const event_data_t registration = {
-            service_instance_t{_service, _instance}, _notifier, _type, _reliability, _is_provided, is_cyclic, _eventgroups};
-    bool is_first(false);
+    const protocol::register_event_data reg_event_data{.service_ = _service,
+                                                       .instance_ = _instance,
+                                                       .event_ = _notifier,
+                                                       .event_type_ = _type,
+                                                       .is_provided_ = _is_provided,
+                                                       .reliability_ = _reliability,
+                                                       .is_cyclic_ = is_cyclic,
+                                                       .eventgroups_ = {_eventgroups.begin(), _eventgroups.end()}};
+    bool new_registration(false);
     {
         std::scoped_lock its_lock(pending_event_registrations_mutex_);
-        is_first = pending_event_registrations_.count(registration) == 0;
-        if (is_first) {
-            pending_event_registrations_.insert(registration);
-        }
-        bool insert = true;
-        if (is_first) {
-            for (auto iter = pending_event_registrations_.begin(); iter != pending_event_registrations_.end();) {
-                if (iter->service_instance_ == service_instance_t{_service, _instance} && iter->notifier_ == _notifier
-                    && iter->is_provided_ == _is_provided && iter->type_ == event_type_e::ET_EVENT
-                    && _type == event_type_e::ET_SELECTIVE_EVENT) {
-                    iter = pending_event_registrations_.erase(iter);
-                    iter = pending_event_registrations_.insert(registration).first;
-                    is_first = true;
-                    insert = false;
-                    break;
-                } else {
-                    iter++;
+        new_registration = std::none_of(pending_event_registrations_.begin(), pending_event_registrations_.end(),
+                                        [&reg_event_data](protocol::register_event_data const& _reg) { return _reg == reg_event_data; });
+        if (new_registration) {
+            // Upgrading a plain event to a selective event: drop the superseded plain registration so it is
+            // neither re-sent on reconnect nor left dangling.
+            if (_type == event_type_e::ET_SELECTIVE_EVENT) {
+                auto its_plain = std::find_if(pending_event_registrations_.begin(), pending_event_registrations_.end(),
+                                              [&](protocol::register_event_data const& _reg) {
+                                                  return _reg.service_ == _service && _reg.instance_ == _instance
+                                                          && _reg.event_ == _notifier && _reg.is_provided_ == _is_provided
+                                                          && _reg.event_type_ == event_type_e::ET_EVENT;
+                                              });
+                if (its_plain != pending_event_registrations_.end()) {
+                    pending_event_registrations_.erase(its_plain);
                 }
             }
-            if (insert) {
-                pending_event_registrations_.insert(registration);
-            }
+            pending_event_registrations_.push_back(reg_event_data);
         }
     }
     if (_is_provided) {
         std::scoped_lock its_lock{provider_mutex_};
         register_provider_event(_client, _service, _instance, _notifier, _eventgroups, _type, _reliability, _cycle, _change_resets_cycle,
                                 _update_on_change, _epsilon_change_func, false, its_lock);
-    } else if (is_first) {
+    } else if (new_registration) {
         std::scoped_lock its_lock{consumer_mutex_};
         register_consumer_event(_client, _service, _instance, _notifier, _eventgroups, _type, _reliability, _cycle, _change_resets_cycle,
                                 _update_on_change, _epsilon_change_func, false, its_lock);
     }
-    if (state_machine_->state() == routing_client_state_e::ST_REGISTERED && is_first) {
-        send_register_event(get_client(), _service, _instance, _notifier, _eventgroups, _type, _reliability, _is_provided, is_cyclic);
+    if (state_machine_->state() == routing_client_state_e::ST_REGISTERED && new_registration) {
+        // The registration lives in a local, so a one-element subspan can be sent without holding the
+        // pending-registrations lock.
+        send_event_registrations(get_client(), std::span{&reg_event_data, 1});
+        if (_is_provided) {
+            VSOMEIP_INFO << "REGISTER EVENT(" << hex4(get_client()) << "): [" << hex4(_service) << "." << hex4(_instance) << "."
+                         << hex4(_notifier) << ":is_provider=" << std::boolalpha << _is_provided << "]";
+        }
     }
 }
 
@@ -440,14 +447,13 @@ void routing_manager_client::unregister_event(client_t _client, service_t _servi
     // Otherwise we might not send the command, but request it when entering REGISTERED
     {
         std::scoped_lock its_lock(pending_event_registrations_mutex_);
-        for (auto iter = pending_event_registrations_.begin(); iter != pending_event_registrations_.end();) {
-            if (iter->service_instance_ == service_instance_t{_service, _instance} && iter->notifier_ == _notifier
-                && iter->is_provided_ == _is_provided) {
-                pending_event_registrations_.erase(iter);
-                break;
-            } else {
-                iter++;
-            }
+        auto its_reg = std::find_if(pending_event_registrations_.begin(), pending_event_registrations_.end(),
+                                    [&](protocol::register_event_data const& _reg) {
+                                        return _reg.service_ == _service && _reg.instance_ == _instance && _reg.event_ == _notifier
+                                                && _reg.is_provided_ == _is_provided;
+                                    });
+        if (its_reg != pending_event_registrations_.end()) {
+            pending_event_registrations_.erase(its_reg);
         }
     }
     if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
@@ -1478,85 +1484,19 @@ bool routing_manager_client::send_request_services(std::span<protocol::service_d
     return false;
 }
 
-bool routing_manager_client::send_pending_event_registrations(client_t _client) {
-
-    protocol::register_events_command its_command;
-    its_command.set_client(_client);
-
-    std::scoped_lock its_lock(pending_event_registrations_mutex_);
-
-    for (auto it = pending_event_registrations_.begin(); it != pending_event_registrations_.end(); it++) {
-        const auto& [its_service, its_instance] = it->service_instance_;
-        protocol::register_event reg(its_service, its_instance, it->notifier_, it->type_, it->is_provided_, it->reliability_,
-                                     it->is_cyclic_, static_cast<uint16_t>(it->eventgroups_.size()), it->eventgroups_);
-        if (!its_command.add_registration(reg)) {
-            // Send the current command and start a new one for the remaining registrations,
-            // including the current one which failed to be added to the previous command
-            VSOMEIP_WARNING_P
-                    << "Register pending event registration command is too long, sending pending registrations in multiple commands.";
-            {
-                std::vector<byte_t> its_buffer;
-                its_command.serialize(its_buffer);
-
-                std::scoped_lock its_sender_lock{sender_mutex_};
-                if (!(sender_ && sender_->send(&its_buffer[0], uint32_t(its_buffer.size())))) {
-                    VSOMEIP_ERROR_P << "Failed to send pending registration to host";
-                    return false;
-                }
-            }
-            its_command = protocol::register_events_command(); // Reset the command
-            its_command.set_client(_client);
-            its_command.add_registration(reg);
-        }
-    }
-
-    // If there are no events registered, dont send
-    if (its_command.get_num_registrations() == 0) {
+bool routing_manager_client::send_event_registrations(client_t _client, std::span<protocol::register_event_data const> _registrations) {
+    // Nothing to register: avoid emitting an empty REGISTER_EVENT command
+    if (_registrations.empty()) {
         return true;
     }
 
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
     std::scoped_lock its_sender_lock{sender_mutex_};
-    if (!(sender_ && sender_->send(&its_buffer[0], uint32_t(its_buffer.size())))) {
-        VSOMEIP_ERROR_P << "Failed to send pending registration to host";
-        return false;
+    if (sender_ && sender_->send(protocol::create_register_events_cmd(_client, _registrations))) {
+        return true;
     }
 
-    return true;
-}
-
-void routing_manager_client::send_register_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
-                                                 const std::set<eventgroup_t>& _eventgroups, const event_type_e _type,
-                                                 reliability_type_e _reliability, bool _is_provided, bool _is_cyclic) {
-
-    (void)_client;
-
-    protocol::register_events_command its_command;
-    its_command.set_client(get_client());
-
-    protocol::register_event reg(_service, _instance, _notifier, _type, _is_provided, _reliability, _is_cyclic,
-                                 static_cast<uint16_t>(_eventgroups.size()), _eventgroups);
-
-    if (!its_command.add_registration(reg)) {
-        VSOMEIP_ERROR_P << "Register event command is too long.";
-    }
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
-    std::scoped_lock its_sender_lock{sender_mutex_};
-    if (sender_) {
-        sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
-    } else {
-        VSOMEIP_ERROR_P << "Failed due to a missing sender";
-    }
-
-    if (_is_provided) {
-        VSOMEIP_INFO << "REGISTER EVENT(" << hex4(get_client()) << "): [" << hex4(_service) << "." << hex4(_instance) << "."
-                     << hex4(_notifier) << ":is_provider=" << std::boolalpha << _is_provided << "]";
-    }
+    VSOMEIP_ERROR_P << "Failed to send event registrations to host";
+    return false;
 }
 
 void routing_manager_client::on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup,
@@ -1640,7 +1580,14 @@ bool routing_manager_client::send_pending_commands(
         }
     }
 
-    return send_pending_event_registrations(get_client()) && send_request_services(requests_.view());
+    bool events_sent;
+    {
+        // Hold the lock across the send so the command can reference the stored vector via a non-owning
+        // span without copying..
+        std::scoped_lock its_lock(pending_event_registrations_mutex_);
+        events_sent = send_event_registrations(get_client(), pending_event_registrations_);
+    }
+    return events_sent && send_request_services(requests_.view());
 }
 
 void routing_manager_client::init_receiver_side([[maybe_unused]] std::unique_lock<std::mutex> const& _receive_lock) {
@@ -1855,11 +1802,12 @@ void routing_manager_client::send_get_offered_services_info(client_t _client, of
 
 void routing_manager_client::resend_provided_event_registrations() {
     std::scoped_lock its_lock(pending_event_registrations_mutex_);
-    for (const event_data_t& ed : pending_event_registrations_) {
-        if (ed.is_provided_) {
-            const auto& [its_service, its_instance] = ed.service_instance_;
-            send_register_event(get_client(), its_service, its_instance, ed.notifier_, ed.eventgroups_, ed.type_, ed.reliability_,
-                                ed.is_provided_, ed.is_cyclic_);
+    for (protocol::register_event_data const& reg : pending_event_registrations_) {
+        if (reg.is_provided_) {
+            // The pending lock is held, so the stored entry can be sent directly via a one-element subspan.
+            send_event_registrations(get_client(), std::span{&reg, 1});
+            VSOMEIP_INFO << "REGISTER EVENT(" << hex4(get_client()) << "): [" << hex4(reg.service_) << "." << hex4(reg.instance_) << "."
+                         << hex4(reg.event_) << ":is_provider=" << std::boolalpha << reg.is_provided_ << "]";
         }
     }
 }

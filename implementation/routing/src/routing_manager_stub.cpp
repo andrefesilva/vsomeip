@@ -7,6 +7,7 @@
 #include <functional>
 #include <iomanip>
 #include <forward_list>
+#include <set>
 
 #include <boost/system/error_code.hpp>
 
@@ -31,7 +32,6 @@
 #include "../../protocol/include/logging.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
-#include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/resend_provided_events_command.hpp"
 #include "../../protocol/include/serialize.hpp"
 #include "../../protocol/include/subscribe_ack_command.hpp"
@@ -427,36 +427,28 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::REGISTER_EVENT_ID: {
-        protocol::register_events_command its_command;
-        its_command.deserialize(its_buffer, its_error);
-        if (its_error == protocol::error_e::ERROR_OK) {
+        if (std::vector<protocol::register_event_data> its_registrations;
+            protocol::deserialize(its_registrations, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            its_client = its_command.get_client();
-            for (std::size_t i = 0; i < its_command.get_num_registrations(); i++) {
-                protocol::register_event register_event;
-                if (!its_command.get_registration_at(i, register_event)) {
+            for (auto const& reg : its_registrations) {
+                its_service = reg.service_;
+                its_instance = reg.instance_;
+
+                if (reg.is_provided_ && !configuration_->is_offered_remote(its_service, its_instance)) {
                     continue;
                 }
 
-                its_service = register_event.get_service();
-                its_instance = register_event.get_instance();
-
-                if (register_event.is_provided() && !configuration_->is_offered_remote(its_service, its_instance)) {
-                    continue;
-                }
-
-                host_->register_shadow_event(its_client, its_service, its_instance, register_event.get_event(),
-                                             register_event.get_eventgroups(), register_event.get_event_type(),
-                                             register_event.get_reliability(), register_event.is_provided(), register_event.is_cyclic());
+                host_->register_shadow_event(its_client, its_service, its_instance, reg.event_,
+                                             std::set<eventgroup_t>{reg.eventgroups_.begin(), reg.eventgroups_.end()}, reg.event_type_,
+                                             reg.reliability_, reg.is_provided_, reg.is_cyclic_);
 
                 VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                             << hex4(register_event.get_event()) << ":eventtype=" << static_cast<int>(register_event.get_event_type())
-                             << ":is_provided=" << std::boolalpha << register_event.is_provided()
-                             << ":reliable=" << static_cast<int>(register_event.get_reliability()) << "]";
+                             << hex4(reg.event_) << ":eventtype=" << static_cast<int>(reg.event_type_) << ":is_provided=" << std::boolalpha
+                             << reg.is_provided_ << ":reliable=" << static_cast<int>(reg.reliability_) << "]";
             }
 
         } else
-            VSOMEIP_ERROR_P << "Register event deserialization failed (" << static_cast<int>(its_error) << ")";
+            VSOMEIP_ERROR_P << "Register event deserialization failed, memory: " << utility::dump(_data, _size);
         break;
     }
 

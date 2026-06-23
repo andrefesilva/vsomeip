@@ -54,6 +54,17 @@ auto roundtrip(Cmd const& _input) {
         }
         deserialize(out.second, buf.data() + hdr_size, size - hdr_size);
         return out;
+    } else if constexpr (std::is_same_v<register_events_command_data, Cmd>) {
+        // this command owns the data only on reception, not on sending
+        std::pair<command_header, std::vector<protocol::register_event_data>> out;
+        auto buf = send(_input);
+        auto const size = static_cast<uint32_t>(buf.size());
+        auto const hdr_size = deserialize(out.first, buf.data(), size);
+        if (hdr_size == 0) {
+            return out;
+        }
+        deserialize(out.second, buf.data() + hdr_size, size - hdr_size);
+        return out;
     } else {
         return receive<Cmd>(send(_input));
     }
@@ -176,6 +187,40 @@ TEST(ut_commands_roundtrip, offered_services_response_cmd) {
     }
 }
 
+TEST(ut_commands_roundtrip, register_events_command) {
+    std::vector<protocol::register_event_data> no{};
+    std::vector<protocol::register_event_data> one{{.service_ = 0x1234,
+                                                    .instance_ = 0x0001,
+                                                    .event_ = 0x8001,
+                                                    .event_type_ = event_type_e::ET_FIELD,
+                                                    .is_provided_ = true,
+                                                    .reliability_ = reliability_type_e::RT_RELIABLE,
+                                                    .is_cyclic_ = false,
+                                                    .eventgroups_ = {0x0010, 0x0020}}};
+    std::vector<protocol::register_event_data> many{{.service_ = 0xaaaa,
+                                                     .instance_ = 0x0002,
+                                                     .event_ = 0x8002,
+                                                     .event_type_ = event_type_e::ET_EVENT,
+                                                     .is_provided_ = false,
+                                                     .reliability_ = reliability_type_e::RT_UNRELIABLE,
+                                                     .is_cyclic_ = true,
+                                                     .eventgroups_ = {}},
+                                                    {.service_ = 0xbbbb,
+                                                     .instance_ = 0x0003,
+                                                     .event_ = 0x8003,
+                                                     .event_type_ = event_type_e::ET_SELECTIVE_EVENT,
+                                                     .is_provided_ = true,
+                                                     .reliability_ = reliability_type_e::RT_BOTH,
+                                                     .is_cyclic_ = false,
+                                                     .eventgroups_ = {0x0001, 0x0002, 0x0003}}};
+
+    for (auto const& payload : {no, one, many}) {
+        auto cmd = create_register_events_cmd(0x1, payload);
+        auto [header, out_payload] = roundtrip(cmd);
+        EXPECT_EQ(header, cmd.header_);
+        EXPECT_EQ(out_payload, payload);
+    }
+}
 // send command
 TEST(ut_commands_roundtrip, send_id_command) {
     auto input = std::make_shared<message_impl>();
