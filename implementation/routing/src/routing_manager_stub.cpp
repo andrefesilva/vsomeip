@@ -33,7 +33,8 @@
 #include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/resend_provided_events_command.hpp"
-#include "../../protocol/include/routing_info_command.hpp"
+#include "../../protocol/include/serialize.hpp"
+#include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
 #include "../../protocol/include/update_security_credentials_command.hpp"
@@ -694,25 +695,17 @@ void routing_manager_stub::send_client_credentials(const client_t _target, std::
         VSOMEIP_ERROR_P << "Sending credentials to client [" << hex4(_target) << "] failed";
 }
 
-void routing_manager_stub::send_client_routing_info(const client_t _target, protocol::routing_info_entry& _entry) {
+void routing_manager_stub::send_client_routing_info(const client_t _target, protocol::routing_info_entry_data _entry) {
 
-    std::vector<protocol::routing_info_entry> its_entries;
-    its_entries.emplace_back(_entry);
+    std::vector<protocol::routing_info_entry_data> its_entries;
+    its_entries.emplace_back(std::move(_entry));
     send_client_routing_info(_target, std::move(its_entries));
 }
 
-void routing_manager_stub::send_client_routing_info(const client_t _target, std::vector<protocol::routing_info_entry>&& _entries) {
+void routing_manager_stub::send_client_routing_info(const client_t _target, std::vector<protocol::routing_info_entry_data>&& _entries) {
 
     if (auto its_target_endpoint = find_local_routing_endpoint(_target); its_target_endpoint) {
-
-        protocol::routing_info_command its_command;
-        its_command.set_client(VSOMEIP_ROUTING_CLIENT);
-        its_command.set_entries(std::move(_entries));
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
-
-        send_local(its_target_endpoint, its_buffer);
+        its_target_endpoint->send(protocol::create_routing_info_cmd(VSOMEIP_ROUTING_CLIENT, std::move(_entries)));
     } else
         VSOMEIP_ERROR_P << "Sending routing info to client [" << hex4(_target) << "] failed";
 }
@@ -754,16 +747,16 @@ void routing_manager_stub::inform_requesters(client_t _hoster, service_t _servic
     for (auto its_client : service_requests_) {
         if (its_client.second.count({_service, _instance}) > 0 || its_client.second.count({_service, ANY_INSTANCE}) > 0) {
             if (its_client.first != VSOMEIP_ROUTING_CLIENT) {
-                protocol::routing_info_entry its_entry;
-                its_entry.set_type(_type);
-                its_entry.set_client(_hoster);
+                protocol::routing_info_entry_data its_entry;
+                its_entry.type_ = _type;
+                its_entry.client_ = _hoster;
                 if (_type == protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE
                     && host_->get_endpoint_manager()->get_guest(_hoster, its_address, its_port)) {
-                    its_entry.set_address(its_address);
-                    its_entry.set_port(its_port);
+                    its_entry.address_ = its_address.to_v4();
+                    its_entry.port_ = its_port;
                 }
-                its_entry.add_service({_service, _instance, _major, _minor});
-                send_client_routing_info(its_client.first, its_entry);
+                its_entry.services_.push_back({_service, _instance, _major, _minor});
+                send_client_routing_info(its_client.first, std::move(its_entry));
             }
         }
     }
@@ -1082,7 +1075,7 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
     boost::asio::ip::address its_address;
     port_t its_port;
 
-    std::vector<protocol::routing_info_entry> its_entries;
+    std::vector<protocol::routing_info_entry_data> its_entries;
     std::scoped_lock its_guard{routing_info_mutex_};
 
     for (auto const& request : _requests) {
@@ -1098,29 +1091,30 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
                 if (request.instance_ == ANY_INSTANCE) {
                     for (const auto& [si, version] : found_client->second) {
                         if (si.service == request.service_) {
-                            protocol::routing_info_entry its_entry;
-                            its_entry.set_type(protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE);
-                            its_entry.set_client(c);
+                            protocol::routing_info_entry_data its_entry;
+                            its_entry.type_ = protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
+                            its_entry.client_ = c;
                             if (host_->get_endpoint_manager()->get_guest(c, its_address, its_port)) {
-                                its_entry.set_address(its_address);
-                                its_entry.set_port(its_port);
+                                its_entry.address_ = its_address.to_v4();
+                                its_entry.port_ = its_port;
                             }
-                            its_entry.add_service({request.service_, si.instance, version.first, version.second});
-                            its_entries.emplace_back(its_entry);
+                            its_entry.services_.push_back({request.service_, si.instance, version.first, version.second});
+                            its_entries.emplace_back(std::move(its_entry));
                         }
                     }
                 } else {
                     if (auto found_si = found_client->second.find({request.service_, request.instance_});
                         found_si != found_client->second.end()) {
-                        protocol::routing_info_entry its_entry;
-                        its_entry.set_type(protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE);
-                        its_entry.set_client(c);
+                        protocol::routing_info_entry_data its_entry;
+                        its_entry.type_ = protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
+                        its_entry.client_ = c;
                         if (host_->get_endpoint_manager()->get_guest(c, its_address, its_port)) {
-                            its_entry.set_address(its_address);
-                            its_entry.set_port(its_port);
+                            its_entry.address_ = its_address.to_v4();
+                            its_entry.port_ = its_port;
                         }
-                        its_entry.add_service({request.service_, request.instance_, found_si->second.first, found_si->second.second});
-                        its_entries.emplace_back(its_entry);
+                        its_entry.services_.push_back(
+                                {request.service_, request.instance_, found_si->second.first, found_si->second.second});
+                        its_entries.emplace_back(std::move(its_entry));
                     }
                 }
             }

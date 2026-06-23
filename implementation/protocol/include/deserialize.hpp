@@ -69,6 +69,22 @@ inline uint32_t deserialize(service_data& _out, unsigned char const* _mem, uint3
     return parse(_mem, _size, _out.service_, _out.instance_, _out.major_version_, _out.minor_version_);
 }
 
+inline uint32_t deserialize(std::vector<service_data>& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t acc = 0;
+    auto elems = _size / service_data::wire_size_;
+    if (elems * service_data::wire_size_ != _size) {
+        // some remaining bytes?
+        return 0;
+    }
+    _out.resize(elems);
+    for (auto& out : _out) {
+        // there is no need to check for the amount of parsed bytes,
+        // as we only allocated enough space to also deserialize the payload
+        acc += deserialize(out, _mem + acc, _size - acc);
+    }
+    return acc;
+}
+
 inline uint32_t deserialize(ipc_message_header& _out, unsigned char const* _mem, uint32_t _size) {
     return parse(_mem, _size, _out.instance_, _out.reliable_, _out.status_, _out.target_);
 }
@@ -92,21 +108,81 @@ inline uint32_t deserialize(subscribe_answer_data& _out, unsigned char const* _m
     return parse(_mem, _size, _out.service_, _out.instance_, _out.eventgroup_, _out.subscriber_, _out.event_, _out.pending_id_);
 }
 
-inline uint32_t deserialize(std::vector<service_data>& _out, unsigned char const* _mem, uint32_t _size) {
-    uint32_t acc = 0;
-    auto elems = _size / service_data::wire_size_;
-    if (elems * service_data::wire_size_ != _size) {
-        // some remaining bytes?
+inline uint32_t deserialize(routing_info_entry_data& _out, unsigned char const* _mem, uint32_t _size) {
+    // Wire layout: type (1) | entry-size (4) | client-info-size (4) | client (2)
+    //              [ IPv4 address (4) | port (2) ] | services-size (4) | N * service (wire_size_)
+    byte_t its_type{0};
+    uint32_t its_entry_size{0};
+    uint32_t its_client_size{0};
+    uint32_t parsed = parse(_mem, _size, its_type, its_entry_size, its_client_size, _out.client_);
+    if (parsed == 0) {
         return 0;
     }
-    _out.resize(elems);
-    for (auto& out : _out) {
-        // there is no need to check for the amount of parsed bytes,
-        // as we only allocated enough space to also deserialize the payload
-        acc += deserialize(out, _mem + acc, _size - acc);
+
+    _out.type_ = static_cast<routing_info_entry_type_e>(its_type);
+    if (_out.type_ == routing_info_entry_type_e::RIE_UNKNOWN) {
+        return 0;
+    }
+
+    if (_out.type_ != routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE
+        && _out.type_ != routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE) {
+        return 0;
+    }
+
+    // The address and port are optional; they are present iff the client-info section is
+    // larger than the client id. Only IPv4 addresses are supported.
+    if (its_client_size > sizeof(client_t)) {
+        boost::asio::ip::address_v4::bytes_type its_address;
+        if (its_client_size != sizeof(client_t) + its_address.size() + sizeof(port_t) || _size - parsed < its_address.size()) {
+            return 0;
+        }
+        std::memcpy(its_address.data(), _mem + parsed, its_address.size());
+        _out.address_ = boost::asio::ip::address_v4(its_address);
+        parsed += static_cast<uint32_t>(its_address.size());
+
+        uint32_t const consumed = parse(_mem + parsed, _size - parsed, _out.port_);
+        if (consumed == 0) {
+            return 0;
+        }
+        parsed += consumed;
+    }
+
+    uint32_t its_services_size{0};
+    uint32_t consumed = parse(_mem + parsed, _size - parsed, its_services_size);
+    if (consumed == 0) {
+        return 0;
+    }
+    parsed += consumed;
+
+    if (_size - parsed < its_services_size) {
+        return 0;
+    }
+
+    // Reuse the std::vector<service_data> overload; it validates that the section is an
+    // exact multiple of service_data::wire_size_ and returns 0 otherwise.
+    consumed = deserialize(_out.services_, _mem + parsed, its_services_size);
+    if (consumed != its_services_size) {
+        return 0;
+    }
+    parsed += consumed;
+
+    return parsed;
+}
+
+inline uint32_t deserialize(std::vector<routing_info_entry_data>& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t acc = 0;
+    while (acc < _size) {
+        routing_info_entry_data its_entry;
+        uint32_t const consumed = deserialize(its_entry, _mem + acc, _size - acc);
+        if (consumed == 0) {
+            return 0;
+        }
+        _out.emplace_back(std::move(its_entry));
+        acc += consumed;
     }
     return acc;
 }
+
 inline uint32_t deserialize(std::shared_ptr<message_impl>& _out, unsigned char const* _mem, uint32_t _size) {
     if (_size < ipc_message_header::wire_size_ + VSOMEIP_FULL_HEADER_SIZE) {
         return 0;

@@ -42,7 +42,6 @@
 #include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/register_events_command.hpp"
 #include "../../protocol/include/request_service_command.hpp"
-#include "../../protocol/include/routing_info_command.hpp"
 #include "../../protocol/include/send_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
@@ -818,7 +817,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::ROUTING_INFO_ID:
             if (!configuration_->is_security_enabled() || is_from_routing) {
-                on_routing_info(_data, _size);
+                on_routing_info(_data + parsed_hdr_bytes, _size - parsed_hdr_bytes);
             } else {
                 VSOMEIP_WARNING_P << "Security: Client 0x" << hex4(get_client())
                                   << " received an routing info from a client which isn't the routing manager: Skip message!";
@@ -1273,22 +1272,18 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 }
 
 void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size) {
-    std::vector<byte_t> its_buffer(_data, _data + _size);
-    protocol::error_e its_error;
-
-    protocol::routing_info_command its_command;
-    its_command.deserialize(its_buffer, its_error);
-    if (its_error != protocol::error_e::ERROR_OK) {
-        VSOMEIP_ERROR_P << "Deserializing routing info command failed (" << static_cast<int>(its_error) << ")";
+    std::vector<protocol::routing_info_entry_data> its_entries;
+    if (protocol::deserialize(its_entries, _data, _size) == 0) {
+        VSOMEIP_ERROR_P << "Deserializing routing info command entries failed, memory: " << utility::dump(_data, _size);
         return;
     }
 
-    for (const auto& e : its_command.get_entries()) {
-        auto its_client = e.get_client();
-        switch (e.get_type()) {
+    for (const auto& e : its_entries) {
+        auto its_client = e.client_;
+        switch (e.type_) {
         case protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE: {
-            boost::asio::ip::address its_address = e.get_address();
-            port_t its_port = e.get_port();
+            boost::asio::ip::address its_address = e.address_;
+            port_t its_port = e.port_;
             if (!its_address.is_unspecified()) {
                 // remove client (and endpoints!) at same address/port
                 // as address/port are unique and that definitely means the client no longer exists
@@ -1306,11 +1301,11 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
             {
                 std::scoped_lock its_lock(consumer_mutex_);
                 address_table_[its_client] = std::make_pair(its_address, its_port);
-                for (const auto& s : e.get_services()) {
+                for (const auto& s : e.services_) {
                     const auto its_service(s.service_);
                     const auto its_instance(s.instance_);
-                    const auto its_major(s.major_);
-                    const auto its_minor(s.minor_);
+                    const auto its_major(s.major_version_);
+                    const auto its_minor(s.minor_version_);
                     available_services_.add(its_service, its_instance, its_major, its_minor, its_client);
                     // call on_availability only under the same lock as the available_services_ to ensure
                     // that the client handlers are executed in the same order as our table (assuming the client doesn't block the
@@ -1329,16 +1324,18 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
         }
 
         case protocol::routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE: {
-            for (const auto& s : e.get_services()) {
-                std::scoped_lock its_lock(consumer_mutex_);
-                available_services_.remove(s.service_, s.instance_);
-                on_stop_offer_service(s.service_, s.instance_, s.major_, s.minor_, its_lock);
+            std::scoped_lock its_lock(consumer_mutex_);
+            for (const auto& s : e.services_) {
+                {
+                    available_services_.remove(s.service_, s.instance_);
+                    on_stop_offer_service(s.service_, s.instance_, s.major_version_, s.minor_version_, its_lock);
+                }
             }
             break;
         }
 
         default:
-            VSOMEIP_ERROR_P << "Unknown routing info entry type (" << static_cast<int>(e.get_type()) << ")";
+            VSOMEIP_ERROR_P << "Unknown routing info entry type (" << static_cast<int>(e.type_) << ")";
             break;
         }
     }
