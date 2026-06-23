@@ -11,7 +11,9 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class routing_info_command : public command {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+class [[deprecated("routing_info_command is deprecated")]] routing_info_command : public command {
 public:
     routing_info_command();
 
@@ -27,6 +29,7 @@ public:
 private:
     std::vector<routing_info_entry> entries_;
 };
+#pragma GCC diagnostic pop
 
 } // namespace protocol
 } // namespace vsomeip_v3

@@ -264,6 +264,45 @@ TEST_F(test_protocol_messages, ensure_sequence_of_request_reply) {
     bool const is_any = expected_sequence1 == *record_ || expected_sequence2 == *record_;
     EXPECT_TRUE(is_any) << *record_;
 }
+
+// Regression coverage: on RIE_DELETE_SERVICE_INSTANCE the routing_manager_client must
+// remove the service from available_services_. on_stop_offer_service() only fires AS_UNAVAILABLE, it
+// does not purge the table; a stale entry keeps is_available() true and find_local_client() pointing at
+// the gone provider, so a post-stop_offer request is mis-routed to it. The service is not re-offered.
+TEST_F(test_protocol_messages, request_after_stop_offer_is_not_routed_to_defunct_provider) {
+
+    message_checker const request_checker{std::nullopt, service_instance_, method_, vsomeip::message_type_e::MT_REQUEST, std::nullopt};
+    message_checker const reply_checker{std::nullopt, service_instance_, method_, vsomeip::message_type_e::MT_RESPONSE, std::nullopt};
+
+    start_apps();
+    client_->request_service(service_instance_);
+    answer_requests_with({0x2, 0x3});
+    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::available(service_instance_)));
+
+    // Baseline: the request reaches the provider and is answered, proving the consumer routing table
+    // points at the server.
+    client_->send_request(request_);
+    ASSERT_TRUE(server_->message_record_.wait_for(request_checker));
+    ASSERT_TRUE(client_->message_record_.wait_for(reply_checker));
+
+    // Provider stops offering -> router announces RIE_DELETE_SERVICE_INSTANCE. The service is
+    // intentionally NOT re-offered (a re-offer would overwrite the stale entry and hide the bug).
+    server_->message_record_.clear();
+    client_->message_record_.clear();
+    stop_offer();
+    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::unavailable(service_instance_)));
+
+    // The service is gone. A request issued now must not be routed to the defunct provider. Without
+    // the available_services_.remove() fix the stale entry sends it straight back to the server (which
+    // still has its message handler registered), and the client even receives a reply.
+    client_->send_request(request_);
+    EXPECT_FALSE(server_->message_record_.wait_for(request_checker, std::chrono::milliseconds(100)))
+            << "request was routed to a provider that stopped offering: stale available_services_ entry "
+               "(missing available_services_.remove() on RIE_DELETE_SERVICE_INSTANCE)";
+    EXPECT_FALSE(client_->message_record_.wait_for(reply_checker, std::chrono::milliseconds(500)))
+            << "client received a reply from a provider that stopped offering";
+}
+
 TEST_F(test_protocol_messages, update_security_policy_configuration_calls) {
     /* There was a policy security test that would search for connected clients
     and send an UPDATE_SECURITY_POLICY_ID command. After a refactor, it was checking the wrong list,

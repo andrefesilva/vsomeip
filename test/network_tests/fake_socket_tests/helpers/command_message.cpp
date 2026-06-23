@@ -5,6 +5,7 @@
 
 #include "command_message.hpp"
 
+#include "../../../../implementation/protocol/include/deserialize.hpp"
 #include "test_logging.hpp"
 #include <cstdint>
 #include <ostream>
@@ -43,10 +44,29 @@ namespace vsomeip_v3::testing {
             return false;
         };
 
+        // ROUTING_INFO uses the struct-based codec, so it is parsed with the free-function
+        // deserialize overloads rather than the generic (member-based) deal_with_important_command.
+        auto const deal_with_routing_info = [&] {
+            protocol::routing_info_command_data its_command;
+            auto const its_size = static_cast<uint32_t>(_size);
+            uint32_t const its_header_size = protocol::deserialize(its_command.header_, _begin, its_size);
+            if (its_header_size == 0) {
+                return false;
+            }
+            if (its_command.header_.length_ > 0
+                && protocol::deserialize(its_command.payload_, _begin + its_header_size, its_size - its_header_size) == 0) {
+                return false;
+            }
+            out.id_ = its_command.header_.id_;
+            out.client_id_ = its_command.header_.client_;
+            out.payload_ = command_payload(std::move(its_command));
+            return true;
+        };
+
         // understand how to parse the data
         std::memcpy(&out.id_, &_begin[protocol::COMMAND_POSITION_ID], 1);
 
-        if (out.id_ == protocol::id_e::ROUTING_INFO_ID && deal_with_important_command(protocol::routing_info_command{})) {
+        if (out.id_ == protocol::id_e::ROUTING_INFO_ID && deal_with_routing_info()) {
             _out_message = std::move(out);
         } else if (out.id_ == protocol::id_e::CONFIG_ID && deal_with_important_command(protocol::config_command{})) {
             _out_message = std::move(out);
