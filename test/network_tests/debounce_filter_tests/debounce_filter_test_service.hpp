@@ -35,6 +35,7 @@ private:
 
     std::mutex run_mutex_;
     std::condition_variable run_condition_;
+    bool started_{false};
 
     std::atomic<bool> is_running_;
     std::thread runner_;
