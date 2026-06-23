@@ -1569,6 +1569,9 @@ void application_impl::on_message(std::shared_ptr<message>&& _message) {
                 handlers_.push_back(its_sync_handler);
             }
             dispatcher_condition_.notify_all();
+        } else {
+            VSOMEIP_WARNING_P << "No handler registered for the message: [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                              << hex4(its_method) << "]";
         }
     }
 }
