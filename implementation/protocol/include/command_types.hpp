@@ -10,6 +10,8 @@
 #include <vsomeip/message.hpp>
 #include <vsomeip/payload.hpp>
 
+#include <boost/asio/ip/address_v4.hpp>
+
 #include "protocol.hpp"
 #include "vsomeip/defines.hpp"
 
@@ -18,6 +20,7 @@
 #include <type_traits>
 #include <span>
 #include <memory>
+#include <vector>
 
 namespace vsomeip_v3::protocol {
 
@@ -229,6 +232,27 @@ struct remove_security_policy_command_data {
     remove_security_policy_data payload_;
 };
 
+// One entry of a ROUTING_INFO command. Unlike the fixed-size command payloads
+// above, an entry is variable-length: the (IPv4) address is optional and the
+// number of services varies, so this is an owning struct rather than a trivially
+// copyable POD.
+struct routing_info_entry_data {
+    bool operator==(routing_info_entry_data const&) const = default;
+
+    routing_info_entry_type_e type_{routing_info_entry_type_e::RIE_UNKNOWN};
+    client_t client_{};
+    boost::asio::ip::address_v4 address_{};
+    port_t port_{0};
+    std::vector<service_data> services_{};
+};
+
+struct routing_info_command_data {
+    bool operator==(routing_info_command_data const&) const = default;
+
+    command_header header_;
+    std::vector<routing_info_entry_data> payload_;
+};
+
 // Wire-size helpers (sum of field sizes, no padding)
 constexpr uint32_t wire_size(command_header const&) {
     return sizeof(id_e) + sizeof(version_t) + sizeof(client_t) + sizeof(uint32_t);
@@ -260,6 +284,18 @@ constexpr uint32_t wire_size(unsubscribe_ack_data const&) {
 
 constexpr uint32_t wire_size(remove_security_policy_data const&) {
     return remove_security_policy_data::wire_size_;
+}
+
+inline uint32_t wire_size(routing_info_entry_data const& _entry) {
+    // type (1) + entry-size field (4) + client (2)
+    uint32_t its_size = static_cast<uint32_t>(ROUTING_INFO_ENTRY_HEADER_SIZE);
+    its_size += sizeof(uint32_t); // client-info size field
+    if (!_entry.address_.is_unspecified()) {
+        its_size += static_cast<uint32_t>(sizeof(boost::asio::ip::address_v4::bytes_type) + sizeof(port_t));
+    }
+    its_size += sizeof(uint32_t); // services-array size field
+    its_size += static_cast<uint32_t>(_entry.services_.size()) * service_data::wire_size_;
+    return its_size;
 }
 
 template<typename T>
@@ -355,6 +391,14 @@ inline auto create_unsubscribe_ack_cmd(client_t _client, service_t _service, ins
 
 inline auto create_remove_security_policy_cmd(client_t _client, uint32_t _update_id, uid_t _uid, gid_t _gid) {
     return remove_security_policy_command_data::create(_client, _update_id, _uid, _gid);
+}
+
+inline routing_info_command_data create_routing_info_cmd(client_t _client, std::vector<routing_info_entry_data> _entries) {
+    uint32_t length = 0;
+    for (auto const& entry : _entries) {
+        length += wire_size(entry);
+    }
+    return {.header_ = command_header::create(id_e::ROUTING_INFO_ID, length, _client), .payload_ = std::move(_entries)};
 }
 
 inline auto create_subscribe_ack_cmd(client_t _client, subscribe_answer_data _data) {

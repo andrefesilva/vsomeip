@@ -210,25 +210,25 @@ char const* to_string(vsomeip_v3::sd::entry_type_e _id, ttl_t _ttl) {
         return "UNKNOWN_ID";
     }
 }
-std::string to_string(vsomeip_v3::protocol::service const& service) {
+std::string to_string(vsomeip_v3::protocol::service_data const& service) {
     std::stringstream s;
     s << "service: " << std::hex << std::setfill('0') << std::setw(4) << service.service_;
     s << ", instance: " << std::hex << std::setfill('0') << std::setw(4) << service.instance_;
     // omitting the major and minor version as they are of little interest for testing
     return s.str();
 }
-std::string to_string(vsomeip_v3::protocol::routing_info_entry const& e) {
+std::string to_string(vsomeip_v3::protocol::routing_info_entry_data const& e) {
     std::stringstream s;
-    s << "routing_info_type: " << to_string(e.get_type());
-    s << ", client_id: " << std::hex << std::setfill('0') << std::setw(4) << e.get_client();
-    s << ", address: " << e.get_address();
-    s << ", port: " << e.get_port();
-    s << ", services: " << to_string(e.get_services());
+    s << "routing_info_type: " << to_string(e.type_);
+    s << ", client_id: " << std::hex << std::setfill('0') << std::setw(4) << e.client_;
+    s << ", address: " << e.address_;
+    s << ", port: " << e.port_;
+    s << ", services: " << to_string(e.services_);
     return s.str();
 }
-std::string to_string(vsomeip_v3::protocol::routing_info_command const& c) {
+std::string to_string(vsomeip_v3::protocol::routing_info_command_data const& c) {
     std::stringstream s;
-    s << "routing_info: " << to_string(c.get_entries());
+    s << "routing_info: " << to_string(c.payload_);
     return s.str();
 }
 std::string to_string(command_message const& c) {

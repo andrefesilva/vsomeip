@@ -271,4 +271,60 @@ TEST(ut_commands_roundtrip, deserialize_rejects_truncated_payload) {
     EXPECT_FALSE(deserialize(payload, buf.data() + hdr_size, static_cast<uint32_t>(buf.size()) - hdr_size - 1));
 }
 
+// --- Routing info (owning vector payload) ---
+
+TEST(ut_commands_roundtrip, routing_info_empty) {
+    auto cmd = create_routing_info_cmd(0x1234, {});
+    auto buf = send(cmd);
+
+    command_header hdr{};
+    auto const hdr_size = deserialize(hdr, buf.data(), static_cast<uint32_t>(buf.size()));
+    ASSERT_GT(hdr_size, 0u);
+    EXPECT_EQ(hdr, cmd.header_);
+
+    std::vector<routing_info_entry_data> out;
+    deserialize(out, buf.data() + hdr_size, static_cast<uint32_t>(buf.size()) - hdr_size);
+    EXPECT_TRUE(out.empty());
+}
+
+TEST(ut_commands_roundtrip, routing_info_entry_without_address) {
+    routing_info_entry_data entry;
+    entry.type_ = routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE;
+    entry.client_ = 0x4242;
+    entry.services_.push_back({0x1111, 0x0001, 0x02, 0x00000003});
+
+    auto cmd = create_routing_info_cmd(0x1234, {entry});
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, routing_info_entry_with_v4_address) {
+    routing_info_entry_data entry;
+    entry.type_ = routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
+    entry.client_ = 0x0001;
+    entry.address_ = boost::asio::ip::make_address_v4("192.168.0.10");
+    entry.port_ = 30509;
+    entry.services_.push_back({0x1234, 0x0001, 0x01, 0x00000000});
+
+    auto cmd = create_routing_info_cmd(0x0001, {entry});
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, routing_info_multiple_services_and_entries) {
+    routing_info_entry_data entry_a;
+    entry_a.type_ = routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
+    entry_a.client_ = 0x0010;
+    entry_a.address_ = boost::asio::ip::make_address_v4("10.0.0.1");
+    entry_a.port_ = 30000;
+    entry_a.services_.push_back({0x0001, 0x0001, 0x01, 0x00000001});
+    entry_a.services_.push_back({0x0002, 0x0002, 0x02, 0x00000002});
+
+    routing_info_entry_data entry_b;
+    entry_b.type_ = routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE;
+    entry_b.client_ = 0x0020;
+    entry_b.services_.push_back({0x0003, 0x0003, 0x03, 0x00000003});
+
+    auto cmd = create_routing_info_cmd(0x0001, {entry_a, entry_b});
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
 } // namespace vsomeip_v3::protocol

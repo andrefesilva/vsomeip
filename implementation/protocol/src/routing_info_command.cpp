@@ -7,6 +7,9 @@
 
 #include "../include/routing_info_command.hpp"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 namespace vsomeip_v3 {
 namespace protocol {
 
@@ -79,3 +82,5 @@ void routing_info_command::add_entry(const routing_info_entry& _entry) {
 
 } // namespace protocol
 } // namespace vsomeip
+
+#pragma GCC diagnostic pop

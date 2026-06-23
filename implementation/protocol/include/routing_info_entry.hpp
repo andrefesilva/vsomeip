@@ -14,7 +14,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class routing_info_entry {
+class [[deprecated("routing_info_entry is deprecated")]] routing_info_entry {
 public:
     routing_info_entry();
     routing_info_entry(const routing_info_entry& _source);

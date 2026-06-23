@@ -30,7 +30,6 @@
 #include "../../protocol/include/protocol.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../utility/include/service_instance_map.hpp"
-#include "../../protocol/include/routing_info_entry.hpp"
 
 namespace vsomeip_v3 {
 
@@ -134,8 +133,8 @@ private:
 
     void remove_client_connections(client_t _client);
 
-    void send_client_routing_info(const client_t _target, protocol::routing_info_entry& _entry);
-    void send_client_routing_info(const client_t _target, std::vector<protocol::routing_info_entry>&& _entries);
+    void send_client_routing_info(const client_t _target, protocol::routing_info_entry_data _entry);
+    void send_client_routing_info(const client_t _target, std::vector<protocol::routing_info_entry_data>&& _entries);
 
     void send_client_credentials(client_t _target, std::set<std::pair<uid_t, gid_t>>& _credentials);
 
