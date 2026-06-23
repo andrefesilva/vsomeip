@@ -80,6 +80,9 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.id_, _value.version_, _value.client_, _value.length_);
     } else if constexpr (std::is_same_v<T, service_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.major_version_, _value.minor_version_);
+    } else if constexpr (std::is_same_v<T, register_event_data>) {
+        return write_fields(_mem, _value.service_, _value.instance_, _value.event_, _value.event_type_, _value.is_provided_,
+                            _value.reliability_, _value.is_cyclic_, static_cast<uint16_t>(_value.eventgroups_.size()), _value.eventgroups_);
     } else if constexpr (std::is_same_v<T, ipc_message_header>) {
         return write_fields(_mem, _value.instance_, _value.reliable_, _value.status_, _value.target_);
     } else if constexpr (std::is_same_v<T, extended_someip_message>) {

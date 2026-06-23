@@ -676,6 +676,10 @@ template bool local_endpoint::send<protocol::single_field_command_data<client_t>
                                                                                   std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::single_field_command_data<pending_remote_offer_id_t>>(
         protocol::single_field_command_data<pending_remote_offer_id_t> const&, std::shared_ptr<trace::connector_impl> const&);
+
+template bool local_endpoint::send<protocol::register_events_command_data>(protocol::register_events_command_data const&,
+                                                                           std::shared_ptr<trace::connector_impl> const&);
+
 template bool local_endpoint::send<protocol::unregister_event_command_data>(protocol::unregister_event_command_data const&,
                                                                             std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::unsubscribe_ack_command_data>(protocol::unsubscribe_ack_command_data const&,

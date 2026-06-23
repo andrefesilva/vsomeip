@@ -17,6 +17,7 @@
 
 #include <compare>
 #include <cstring>
+#include <vector>
 #include <type_traits>
 #include <span>
 #include <memory>
@@ -112,6 +113,26 @@ struct single_field_command_data {
     T payload_;
 };
 
+struct register_event_data {
+    auto operator<=>(register_event_data const&) const = default;
+
+    static constexpr uint32_t fixed_wire_size_{sizeof(service_t) + sizeof(instance_t) + sizeof(event_t) + sizeof(event_type_e)
+                                               + sizeof(bool) + sizeof(reliability_type_e) + sizeof(bool) + sizeof(uint16_t)};
+
+    uint32_t payload_size() const {
+        return fixed_wire_size_ + static_cast<uint32_t>(eventgroups_.size()) * static_cast<uint32_t>(sizeof(eventgroup_t));
+    }
+
+    service_t service_;
+    instance_t instance_;
+    event_t event_;
+    event_type_e event_type_;
+    bool is_provided_;
+    reliability_type_e reliability_;
+    bool is_cyclic_;
+    std::vector<eventgroup_t> eventgroups_;
+};
+
 struct ipc_message_header {
     static constexpr uint32_t wire_size_ = sizeof(instance_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(client_t);
     instance_t instance_;
@@ -145,11 +166,23 @@ struct unregister_event_data {
     auto operator<=>(unregister_event_data const&) const = default;
 
     static constexpr uint32_t wire_size_{sizeof(service_t) + sizeof(instance_t) + sizeof(event_t) + sizeof(uint8_t)};
-
     service_t service_;
     instance_t instance_;
     event_t event_;
     bool is_provided_;
+};
+
+struct register_events_command_data {
+    static register_events_command_data create(client_t _client, std::span<register_event_data const> _in) {
+        uint32_t length{0};
+        for (auto const& reg : _in) {
+            length += reg.payload_size();
+        }
+        return {.header_ = command_header::create(id_e::REGISTER_EVENT_ID, length, _client), .payload_ = _in};
+    }
+
+    command_header header_;
+    std::span<register_event_data const> payload_;
 };
 
 struct unregister_event_command_data {
@@ -262,6 +295,10 @@ constexpr uint32_t wire_size(service_data const&) {
     return service_data::wire_size_;
 }
 
+inline uint32_t wire_size(register_event_data const& _in) {
+    return _in.payload_size();
+}
+
 inline uint32_t wire_size(std::shared_ptr<message> const& _input) {
     if (!_input) {
         return 0;
@@ -356,6 +393,10 @@ inline auto create_request_service_cmd(client_t _client, std::span<service_data 
 
 inline auto create_offered_services_response_cmd(client_t _client, std::span<service_data const> _data) {
     return multiple_service_command_data::create(id_e::OFFERED_SERVICES_RESPONSE_ID, _client, std::move(_data));
+}
+
+inline auto create_register_events_cmd(client_t _client, std::span<register_event_data const> _data) {
+    return register_events_command_data::create(_client, std::move(_data));
 }
 
 // _sender is the client that emits the command (command header client).
