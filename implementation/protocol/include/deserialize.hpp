@@ -69,6 +69,43 @@ inline uint32_t deserialize(service_data& _out, unsigned char const* _mem, uint3
     return parse(_mem, _size, _out.service_, _out.instance_, _out.major_version_, _out.minor_version_);
 }
 
+inline uint32_t deserialize(register_event_data& _out, unsigned char const* _mem, uint32_t _size) {
+    uint16_t num_eventgroups{0};
+    auto const parsed = parse(_mem, _size, _out.service_, _out.instance_, _out.event_, _out.event_type_, _out.is_provided_,
+                              _out.reliability_, _out.is_cyclic_, num_eventgroups);
+    if (parsed == 0) {
+        return 0;
+    }
+
+    _out.eventgroups_.clear();
+    _out.eventgroups_.reserve(num_eventgroups);
+    uint32_t acc = parsed;
+    for (uint16_t i = 0; i < num_eventgroups; ++i) {
+        eventgroup_t its_eventgroup{};
+        auto const read = deserialize(its_eventgroup, _mem + acc, _size - acc);
+        if (read == 0) {
+            return 0;
+        }
+        acc += read;
+        _out.eventgroups_.push_back(its_eventgroup);
+    }
+    return acc;
+}
+
+inline uint32_t deserialize(std::vector<register_event_data>& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t acc = 0;
+    while (acc < _size) {
+        register_event_data its_registration{};
+        auto const read = deserialize(its_registration, _mem + acc, _size - acc);
+        if (read == 0) {
+            return 0;
+        }
+        acc += read;
+        _out.push_back(std::move(its_registration));
+    }
+    return acc;
+}
+
 inline uint32_t deserialize(std::vector<service_data>& _out, unsigned char const* _mem, uint32_t _size) {
     uint32_t acc = 0;
     auto elems = _size / service_data::wire_size_;

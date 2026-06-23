@@ -8,7 +8,9 @@
 #include <map>
 #include <mutex>
 #include <atomic>
+#include <span>
 #include <tuple>
+#include <vector>
 #include <condition_variable>
 #include <queue>
 #include <unordered_set>
@@ -34,6 +36,7 @@
 #include "event_dispatcher.hpp"
 #include "types.hpp"
 #include "../../protocol/include/protocol.hpp"
+#include "../../protocol/include/command_types.hpp"
 #include "../../endpoints/include/local_endpoint_manager_host.hpp"
 #include "../../utility/include/service_instance_map.hpp"
 #include "../../endpoints/include/endpoint_manager_base.hpp"
@@ -163,11 +166,7 @@ private:
 
     bool send_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
 
-    [[nodiscard]] bool send_pending_event_registrations(client_t _client);
-
-    void send_register_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
-                             const std::set<eventgroup_t>& _eventgroups, const event_type_e _type, reliability_type_e _reliability,
-                             bool _is_provided, bool _is_cyclic);
+    bool send_event_registrations(client_t _client, std::span<protocol::register_event_data const> _registrations);
 
     void send_subscribe(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, major_version_t _major,
                         event_t _event, const std::shared_ptr<debounce_filter_impl_t>& _filter);
@@ -320,23 +319,8 @@ private:
     std::shared_ptr<local_server> tcp_receiver_; // --> from everybody
     std::shared_ptr<local_server> uds_receiver_; // --> from everybody
 
-    struct event_data_t {
-        service_instance_t service_instance_;
-        event_t notifier_;
-        event_type_e type_;
-        reliability_type_e reliability_;
-        bool is_provided_;
-        bool is_cyclic_;
-        std::set<eventgroup_t> eventgroups_;
-
-        bool operator<(const event_data_t& _other) const {
-            return std::tie(service_instance_, notifier_, type_, reliability_, is_provided_, is_cyclic_, eventgroups_)
-                    < std::tie(_other.service_instance_, _other.notifier_, _other.type_, _other.reliability_, _other.is_provided_,
-                               _other.is_cyclic_, _other.eventgroups_);
-        }
-    };
     std::mutex pending_event_registrations_mutex_;
-    std::set<event_data_t> pending_event_registrations_;
+    std::vector<protocol::register_event_data> pending_event_registrations_;
 
     const bool client_side_logging_;
     const std::set<std::tuple<service_t, instance_t>> client_side_logging_filter_;
