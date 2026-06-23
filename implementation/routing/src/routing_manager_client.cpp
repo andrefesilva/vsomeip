@@ -400,19 +400,6 @@ void routing_manager_client::register_event(client_t _client, service_t _service
         new_registration = std::none_of(pending_event_registrations_.begin(), pending_event_registrations_.end(),
                                         [&reg_event_data](protocol::register_event_data const& _reg) { return _reg == reg_event_data; });
         if (new_registration) {
-            // Upgrading a plain event to a selective event: drop the superseded plain registration so it is
-            // neither re-sent on reconnect nor left dangling.
-            if (_type == event_type_e::ET_SELECTIVE_EVENT) {
-                auto its_plain = std::find_if(pending_event_registrations_.begin(), pending_event_registrations_.end(),
-                                              [&](protocol::register_event_data const& _reg) {
-                                                  return _reg.service_ == _service && _reg.instance_ == _instance
-                                                          && _reg.event_ == _notifier && _reg.is_provided_ == _is_provided
-                                                          && _reg.event_type_ == event_type_e::ET_EVENT;
-                                              });
-                if (its_plain != pending_event_registrations_.end()) {
-                    pending_event_registrations_.erase(its_plain);
-                }
-            }
             pending_event_registrations_.push_back(reg_event_data);
         }
     }
