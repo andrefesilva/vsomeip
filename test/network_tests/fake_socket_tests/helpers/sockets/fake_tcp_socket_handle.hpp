@@ -18,6 +18,8 @@
 
 #include <optional>
 #include <memory>
+#include <functional>
+#include <vector>
 
 namespace vsomeip_v3::testing {
 
@@ -181,6 +183,22 @@ struct fake_tcp_socket_handle : public fake_socket_handle {
     void delay_processing(bool _delay);
 
     /**
+     * if _delay == true, the completion callbacks of write_boardnet (i.e. the asynchronous
+     * send callbacks that drive server_endpoint_impl::send_cbk) are not posted immediately
+     * but stashed in FIFO order. Setting _delay == false posts every stashed completion in
+     * the order they were captured, modelling the boardnet socket finishing the in-flight
+     * writes. The transmitted bytes themselves are always delivered to the peer synchronously
+     * (consume_boardnet); only the local completion is held back. This allows reproducing
+     * races where a write completion runs after the target it belonged to has been recreated.
+     **/
+    void delay_boardnet_completion(bool _delay);
+
+    /**
+     * Number of write_boardnet completions currently stashed (held) on this socket.
+     **/
+    [[nodiscard]] size_t held_boardnet_completion_count() const;
+
+    /**
      * if _ignore == true, then no error will be reported when async_receive is called,
      * without a connected socket. This is helpful if this socket is "suspended".
      **/
@@ -271,6 +289,8 @@ private:
     };
     std::optional<stashed_send> stashed_send_;
     bool is_open_{false};
+    bool delay_boardnet_completion_{false};
+    std::vector<std::function<void()>> held_boardnet_completions_;
     socket_id socket_id_;
     std::weak_ptr<socket_manager> socket_manager_;
     std::weak_ptr<fake_tcp_socket_handle> connected_socket_;

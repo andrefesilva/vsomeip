@@ -22,8 +22,10 @@
 #include <vsomeip/vsomeip.hpp>
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <thread>
 #include <utility>
 
 namespace vsomeip_v3::testing {
@@ -2453,6 +2455,112 @@ TEST_F(test_offer_stop_offer_subscription, subscriptions_are_acknowledged_after_
     server_->offer(interface_);
 
     EXPECT_TRUE(client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_)));
+}
+
+// Regression test to reproduce a crash:
+//
+// send_error() erases the TCP send target while its async write completion (send_cbk) is still
+// pending; once the target is recreated by a notification and the held completion is released,
+// send_cbk runs on an empty queue and crashes in read_uint16_be.
+struct tcp_send_error_target_recreate : public base_fake_socket_fixture {
+
+    std::vector<interface::event_spec> const reliable_field_{{0x8001, 0x1, vsomeip::reliability_type_e::RT_RELIABLE}};
+    interface tcp_interface_{0x3346, {}, reliable_field_};
+
+    vsomeip::method_t const method_{0x8001};
+
+    ecu_config ecu_one_config_{boardnet::ecu_one_config};
+    ecu_config ecu_two_config_{boardnet::ecu_two_config};
+
+    ecu_setup ecu_one_{"ecu_one", ecu_one_config_, *socket_manager_};
+    ecu_setup ecu_two_{"ecu_two", ecu_two_config_.add_interface({tcp_interface_}), *socket_manager_};
+
+    event_ids tcp_field_{tcp_interface_.fields_[0]};
+
+    [[nodiscard]] message_checker notification_checker(std::vector<unsigned char> _payload) const {
+        return message_checker{std::nullopt, tcp_interface_.instance_, tcp_field_.event_id_, vsomeip::message_type_e::MT_NOTIFICATION,
+                               std::move(_payload)};
+    }
+
+    // Builds a well-framed SOME/IP request with a WRONG protocol version (0xFF instead of 0x01).
+    // The frame is accepted by the endpoint and forwarded to routing_manager_impl::on_message(),
+    // where check_error() returns E_WRONG_PROTOCOL_VERSION and send_error() is invoked on the TCP
+    // server endpoint, targeting the request's source (router_one).
+    [[nodiscard]] std::vector<unsigned char> bad_protocol_request(app* _client) {
+        return construct_someip_raw_message(static_cast<uint16_t>(tcp_interface_.instance_.service_), // service id
+                                            static_cast<uint16_t>(method_), // method id
+                                            static_cast<uint32_t>(0x00000008), // correct length
+                                            static_cast<uint16_t>(_client->get_client()), // client id
+                                            static_cast<uint16_t>(0x0001), // session id
+                                            static_cast<uint8_t>(0xff), // WRONG protocol version
+                                            static_cast<uint8_t>(0x01), // interface version
+                                            static_cast<uint8_t>(0x00), // message type (MT_REQUEST)
+                                            static_cast<uint8_t>(0x00) // return code
+        );
+    }
+
+    // Polls until at least _count write completions are held on router_two's TCP server socket, or
+    // the timeout elapses. Returns whether the count was reached.
+    bool wait_for_held(size_t _count, std::chrono::milliseconds _timeout) {
+        auto const deadline = std::chrono::steady_clock::now() + _timeout;
+        do {
+            if (held_boardnet_completion_count(router_one_name_, router_two_name_, socket_role::server) == _count) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        } while (std::chrono::steady_clock::now() < deadline);
+        return held_boardnet_completion_count(router_one_name_, router_two_name_, socket_role::server) == _count;
+    }
+};
+
+TEST_F(tcp_send_error_target_recreate, recreate_after_send_error_does_not_crash) {
+
+    ecu_one_.prepare();
+    ecu_two_.prepare();
+    ecu_one_.start_apps();
+    ecu_two_.start_apps();
+
+    auto* router_one_ = ecu_one_.router_;
+    auto* router_two_ = ecu_two_.router_;
+
+    router_two_->offer(tcp_interface_);
+    router_one_->request_service(tcp_interface_.instance_);
+    router_one_->subscribe_event(tcp_field_);
+
+    EXPECT_TRUE(router_one_->availability_record_.wait_for_last(service_availability::available(tcp_interface_.instance_)));
+    EXPECT_TRUE(router_one_->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(tcp_field_)));
+
+    router_two_->send_event(tcp_field_, {0x01});
+    EXPECT_TRUE(router_one_->message_record_.wait_for_any(notification_checker({0x01}))) << router_one_->message_record_;
+    router_one_->message_record_.clear();
+
+    // Hold every outgoing write completion on router_two's TCP server socket so that
+    // server_endpoint_impl::send_cbk does not run until released.
+    ASSERT_TRUE(delay_boardnet_completion(router_one_name_, router_two_name_, true, socket_role::server));
+
+    // Steps 1 + 2: force send_error on the TCP connection (held).
+    auto bad_request = bad_protocol_request(router_one_);
+    inject_message_tcp(router_one_name_, router_two_name_, bad_request);
+    ASSERT_TRUE(wait_for_held(1, std::chrono::seconds(2))) << "send_error did not produce a held write completion";
+
+    // Step 3: recreate the target with a normal notification (also held). The bounded wait gives
+    // the recreate time to settle before release.If the target is not recreated, it is not possible
+    // to verify that the notification was held because it is queued in the same target and therefore
+    // will not increment the counter.
+    router_two_->send_event(tcp_field_, {0x02});
+    ASSERT_TRUE(wait_for_command(router_two_name_, router_two_name_, protocol::id_e::NOTIFY_ID, socket_role::server))
+            << "router_two did not receive the 0x02 NOTIFY that recreates the target";
+    wait_for_held(2, std::chrono::seconds(1));
+
+    // Step 4: unblock send_cbk.
+    ASSERT_TRUE(delay_boardnet_completion(router_one_name_, router_two_name_, false, socket_role::server));
+
+    // The routing manager must have survived: the recreate notification and a subsequent one are
+    // both delivered to router_one.
+    EXPECT_TRUE(router_one_->message_record_.wait_for_any(notification_checker({0x02}))) << router_one_->message_record_;
+
+    router_two_->send_event(tcp_field_, {0x03});
+    EXPECT_TRUE(router_one_->message_record_.wait_for_any(notification_checker({0x03}))) << router_one_->message_record_;
 }
 
 struct test_someip_record : public base_fake_socket_fixture {
