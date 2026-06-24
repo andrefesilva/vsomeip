@@ -101,6 +101,16 @@ bool app_connection::delay_message_processing(bool _delay, socket_role _role) {
     return apply_options(std::move(lock));
 }
 
+bool app_connection::delay_boardnet_completion(bool _delay, socket_role _role) {
+    std::unique_lock lock{mtx_};
+    if (_role == socket_role::unspecified || _role == socket_role::client) {
+        client_options_.delay_boardnet_completion_ = _delay;
+    }
+    if (_role == socket_role::unspecified || _role == socket_role::server) {
+        server_options_.delay_boardnet_completion_ = _delay;
+    }
+    return apply_options(std::move(lock));
+}
 bool app_connection::delay_sending(bool _delay, socket_role _role) {
     std::unique_lock lock{mtx_};
     if (_role == socket_role::unspecified || _role == socket_role::client) {
@@ -110,6 +120,17 @@ bool app_connection::delay_sending(bool _delay, socket_role _role) {
         server_options_.delay_sending_ = _delay;
     }
     return apply_options(std::move(lock));
+}
+
+size_t app_connection::held_boardnet_completion_count(socket_role _role) const {
+    auto [client, server] = promoted();
+    if (_role == socket_role::client && client) {
+        return client->held_boardnet_completion_count();
+    }
+    if (_role == socket_role::server && server) {
+        return server->held_boardnet_completion_count();
+    }
+    return 0;
 }
 
 [[nodiscard]] bool app_connection::set_ignore_inner_close(bool _client, bool _server) {
@@ -252,6 +273,7 @@ bool app_connection::apply_options(std::unique_lock<std::mutex> _lock) {
         if (ptr) {
             ptr->block_on_close_for(opt.block_on_close_time_);
             ptr->delay_processing(opt.delay_message_processing_);
+            ptr->delay_boardnet_completion(opt.delay_boardnet_completion_);
             ptr->delay_sending(opt.delay_sending_);
             if (opt.ignore_inner_close_) {
                 ptr->ignore_inner_close();

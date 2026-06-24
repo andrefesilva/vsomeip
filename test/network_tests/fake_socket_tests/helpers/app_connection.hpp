@@ -58,6 +58,19 @@ public:
     [[nodiscard]] bool delay_message_processing(bool _delay, socket_role _role);
 
     /**
+     * Holds (or releases) the boardnet write completions on the socket having the corresponding
+     * role (can be set ahead of time). While held, the asynchronous send callbacks that drive
+     * server_endpoint_impl::send_cbk are stashed and only fired once released, modelling a slow
+     * in-flight write. @see fake_tcp_socket_handle::delay_boardnet_completion.
+     **/
+    [[nodiscard]] bool delay_boardnet_completion(bool _delay, socket_role _role);
+
+    /**
+     * Number of boardnet write completions currently held on the socket of the given role.
+     **/
+    [[nodiscard]] size_t held_boardnet_completion_count(socket_role _role) const;
+
+    /**
      * Delays send-completion callbacks on the socket having the corresponding role (can be set ahead of time)
      **/
     [[nodiscard]] bool delay_sending(bool _delay, socket_role _role);
@@ -147,6 +160,7 @@ public:
 private:
     struct connection_options {
         bool delay_message_processing_{false};
+        bool delay_boardnet_completion_{false};
         bool delay_sending_{false};
         bool ignore_inner_close_{false};
         bool ignore_nothing_to_read_from_{false};

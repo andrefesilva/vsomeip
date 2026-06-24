@@ -161,6 +161,17 @@ struct base_fake_socket_fixture : ::testing::Test {
                                                 socket_role _role = socket_role::server);
 
     /**
+     * @see socket_manager::delay_boardnet_completion()
+     **/
+    [[nodiscard]] bool delay_boardnet_completion(std::string const& _client, std::string const& _server, bool _delay,
+                                                 socket_role _role = socket_role::server);
+
+    /**
+     * @see socket_manager::held_boardnet_completion_count()
+     **/
+    [[nodiscard]] size_t held_boardnet_completion_count(std::string const& _client, std::string const& _server,
+                                                        socket_role _role = socket_role::server);
+    /**
      * @see socket_manager::delay_sending()
      **/
     [[nodiscard]] bool delay_sending(std::string const& _client, std::string const& _server, bool _delay,
