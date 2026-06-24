@@ -358,7 +358,15 @@ void fake_tcp_socket_handle::write_boardnet(boost::asio::const_buffer const& _bu
 
     if (receiver) {
         size_t size = receiver->consume_boardnet(_buffer);
-        boost::asio::post(io_, [size, handler = std::move(_handler)] { handler(boost::system::error_code(), size); });
+        auto completion = [size, handler = std::move(_handler)] { handler(boost::system::error_code(), size); };
+        auto const lock = std::scoped_lock(mtx_);
+        if (delay_boardnet_completion_) {
+            TEST_LOG << "[fake-socket] holding boardnet write completion on: " << socket_id_
+                     << " (held: " << held_boardnet_completions_.size() + 1 << ")";
+            held_boardnet_completions_.push_back(std::move(completion));
+            return;
+        }
+        boost::asio::post(io_, std::move(completion));
         return;
     }
 
@@ -373,6 +381,29 @@ void fake_tcp_socket_handle::write_boardnet(boost::asio::const_buffer const& _bu
 
     boost::asio::post(
             io_, [handler = std::move(_handler)] { handler(boost::asio::error::make_error_code(boost::asio::error::broken_pipe), 0); });
+}
+
+void fake_tcp_socket_handle::delay_boardnet_completion(bool _delay) {
+    std::vector<std::function<void()>> to_release;
+    {
+        auto const lock = std::scoped_lock(mtx_);
+        if (delay_boardnet_completion_ != _delay) {
+            TEST_LOG << "[fake-socket] setting delay_boardnet_completion: " << (_delay ? "true" : "false") << " on: " << socket_id_;
+        }
+        delay_boardnet_completion_ = _delay;
+        if (!_delay) {
+            to_release.swap(held_boardnet_completions_);
+        }
+    }
+    // release outside the lock, preserving FIFO order
+    for (auto& completion : to_release) {
+        boost::asio::post(io_, std::move(completion));
+    }
+}
+
+size_t fake_tcp_socket_handle::held_boardnet_completion_count() const {
+    auto const lock = std::scoped_lock(mtx_);
+    return held_boardnet_completions_.size();
 }
 
 void fake_tcp_socket_handle::async_receive(boost::asio::mutable_buffer _buffer, rw_handler _handler) {

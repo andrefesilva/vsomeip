@@ -142,6 +142,22 @@ public:
                                                 socket_role _role = socket_role::server);
 
     /**
+     * Holds (or releases) the boardnet write completions on the socket of the given role for the
+     * connection between _client and _server. While held, the asynchronous send callbacks that
+     * drive server_endpoint_impl::send_cbk are stashed and only fired once released.
+     *
+     * @return false, if the connection does not exist.
+     **/
+    [[nodiscard]] bool delay_boardnet_completion(std::string const& _client, std::string const& _server, bool _delay,
+                                                 socket_role _role = socket_role::server);
+
+    /**
+     * @return the number of boardnet write completions currently held on the socket of the given
+     * role for the connection between _client and _server.
+     **/
+    [[nodiscard]] size_t held_boardnet_completion_count(std::string const& _client, std::string const& _server,
+                                                        socket_role _role = socket_role::server);
+    /**
      * Delays send-completion callbacks on the socket identified by the connection
      * _client -> _server. While delayed, the local_endpoint's send queue fills up
      * because the next async_write is not triggered until the completion fires.
