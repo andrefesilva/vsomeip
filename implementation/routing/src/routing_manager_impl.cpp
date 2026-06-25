@@ -1781,17 +1781,12 @@ void routing_manager_impl::del_routing_info(service_t _service, instance_t _inst
 
     ep_mgr_impl_->clear_multicast_endpoints(_service, _instance);
 
-    if (_has_reliable)
-        clear_service_info(_service, _instance, true);
-    if (_has_unreliable)
-        clear_service_info(_service, _instance, false);
+    clear_service_info(_service, _instance);
 
     // For expired services using only unreliable endpoints that have never been created before
     if (!_has_reliable && !_has_unreliable) {
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, true);
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, false);
-        clear_service_info(_service, _instance, true);
-        clear_service_info(_service, _instance, false);
     }
 }
 
@@ -3760,37 +3755,25 @@ services_t routing_manager_impl::get_services_remote() const {
     return services_remote_;
 }
 
-void routing_manager_impl::clear_service_info(service_t _service, instance_t _instance, bool _reliable) {
+void routing_manager_impl::clear_service_info(service_t _service, instance_t _instance) {
     std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance));
     if (!its_info) {
         return;
     }
 
-    bool deleted_instance(false);
-    bool deleted_service(false);
     {
-        std::scoped_lock its_lock(services_mutex_);
-
+        std::scoped_lock its_lock(services_mutex_, services_remote_mutex_);
         // Clear service_info and service_group
-        if (!its_info->get_endpoint(!_reliable)) {
-            if (1 >= services_[_service].size()) {
-                services_.erase(_service);
-                deleted_service = true;
-            } else {
-                services_[_service].erase(_instance);
-                deleted_instance = true;
+        if (1 >= services_[_service].size()) {
+            services_.erase(_service);
+            if (!its_info->is_local()) {
+                services_remote_.erase(_service);
             }
         } else {
-            its_info->set_endpoint(nullptr, _reliable);
-        }
-    }
-
-    if ((deleted_instance || deleted_service) && !its_info->is_local()) {
-        std::scoped_lock its_lock(services_remote_mutex_);
-        if (deleted_service) {
-            services_remote_.erase(_service);
-        } else if (deleted_instance) {
-            services_remote_[_service].erase(_instance);
+            services_[_service].erase(_instance);
+            if (!its_info->is_local()) {
+                services_remote_[_service].erase(_instance);
+            }
         }
     }
 }
