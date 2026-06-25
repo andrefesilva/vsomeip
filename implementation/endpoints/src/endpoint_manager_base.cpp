@@ -5,6 +5,7 @@
 
 #include "../include/endpoint_manager_base.hpp"
 
+#include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
 
 #include "logger_ext.hpp"
@@ -15,8 +16,8 @@
 #include "../include/local_socket_tcp_impl.hpp"
 #include "../include/local_socket_uds_impl.hpp"
 #include "../../configuration/include/configuration.hpp"
-#include "../../protocol/include/assign_client_command.hpp"
-#include "../../protocol/include/config_command.hpp"
+#include "../../protocol/include/command_types.hpp"
+#include "../../protocol/include/serialize.hpp"
 #include "../../utility/include/utility.hpp"
 
 #include <iomanip>
@@ -338,17 +339,10 @@ std::shared_ptr<local_endpoint> endpoint_manager_base::create_local_client_endpo
 
     if (its_endpoint) {
         // need to send some initial info, and it must be done before the _caller_ code sends something else
-        protocol::config_command config_command;
-        config_command.set_client(_own_id);
-        config_command.insert("hostname", get_client_env());
         auto id_str = std::string(sizeof(_client), '0');
         std::memcpy(id_str.data(), &_client, sizeof(_client));
-        config_command.insert("expected_id", std::move(id_str));
-
-        std::vector<byte_t> config_buffer;
-        config_command.serialize(config_buffer);
-
-        its_endpoint->send(&config_buffer[0], static_cast<uint32_t>(config_buffer.size()));
+        auto client_env = get_client_env();
+        its_endpoint->send(protocol::create_config_cmd(_own_id, {{"hostname", client_env}, {"expected_id", id_str}}));
 
     } else {
         VSOMEIP_WARNING_P << "0x" << hex4(_own_id) << " not connected. Ignoring client assignment";
@@ -361,17 +355,10 @@ std::shared_ptr<local_endpoint> endpoint_manager_base::create_routing_client() {
                                                      configuration_->get_routing_host_address(), configuration_->get_routing_host_port(),
                                                      !configuration_->get_routing_host_address().is_unspecified());
     if (its_endpoint) {
-        protocol::assign_client_command assign_command;
-        assign_command.set_client(get_client_id());
-        assign_command.set_name(name_);
-
-        assign_command.set_address(configuration_->get_routing_guest_address());
-        assign_command.set_port(local_port_);
-
-        std::vector<byte_t> assign_buffer;
-        assign_command.serialize(assign_buffer);
-
-        its_endpoint->send(&assign_buffer[0], static_cast<uint32_t>(assign_buffer.size()));
+        auto guest_addr = configuration_->get_routing_guest_address();
+        bool has_addr = !guest_addr.is_unspecified();
+        its_endpoint->send(protocol::create_assign_client_cmd(
+                get_client_id(), name_, has_addr ? guest_addr.to_v4().to_bytes() : std::array<uint8_t, 4>{}, local_port_, has_addr));
     }
     return its_endpoint;
 }

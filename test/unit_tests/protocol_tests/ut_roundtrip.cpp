@@ -9,6 +9,10 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #if __GNUC__ > 11
 // taken over from security/policy.cpp
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
@@ -341,6 +345,150 @@ TEST(ut_commands_roundtrip, register_events_command) {
         EXPECT_EQ(out_payload, payload);
     }
 }
+// --- Variable-sized commands with non-owning payloads (string_view / span) ---
+// Their payloads view directly into the wire buffer, so the buffer must outlive the
+// deserialized result; they therefore cannot use the owning roundtrip() helper.
+
+TEST(ut_commands_roundtrip, assign_client_command_with_address) {
+    auto const cmd = create_assign_client_cmd(0x0042, "my_app", {127, 0, 0, 2}, 31492, true);
+
+    auto const buf = send(cmd);
+
+    // Pin the exact little-endian wire layout (consolidated from the former ut_assign_client_command
+    // suite): header | name_length(4) | name | has_address(1) | address_v4(4) | port(2).
+    const std::vector<uint8_t> expected = {
+            0x00, // ASSIGN_CLIENT_ID
+            static_cast<uint8_t>(IPC_VERSION & 0xFF),
+            static_cast<uint8_t>((IPC_VERSION >> 8) & 0xFF), // Version.
+            0x42,
+            0x00, // Client.
+            0x11,
+            0x00,
+            0x00,
+            0x00, // Size (payload = 17 bytes).
+            0x06,
+            0x00,
+            0x00,
+            0x00, // name_length = 6.
+            0x6d,
+            0x79,
+            0x5f,
+            0x61,
+            0x70,
+            0x70, // "my_app"
+            0x01, // has_address = true.
+            0x7f,
+            0x00,
+            0x00,
+            0x02, // 127.0.0.2
+            0x04,
+            0x7b, // port = 31492 (0x7B04 little-endian)
+    };
+    EXPECT_EQ(buf, expected);
+
+    auto const size = static_cast<uint32_t>(buf.size());
+
+    command_header hdr{};
+    auto const hdr_size = deserialize(hdr, buf.data(), size);
+    ASSERT_GT(hdr_size, 0u);
+    EXPECT_EQ(hdr, cmd.header_);
+
+    assign_client_data out{};
+    ASSERT_GT(deserialize(out, buf.data() + hdr_size, size - hdr_size), 0u);
+    EXPECT_EQ(out.name_, cmd.payload_.name_);
+    EXPECT_TRUE(out.has_address_);
+    EXPECT_EQ(out.address_bytes_, cmd.payload_.address_bytes_);
+    EXPECT_EQ(out.port_, cmd.payload_.port_);
+}
+
+TEST(ut_commands_roundtrip, assign_client_command_without_address) {
+    auto const cmd = create_assign_client_cmd(0x0010, "client");
+
+    auto const buf = send(cmd);
+    auto const size = static_cast<uint32_t>(buf.size());
+
+    command_header hdr{};
+    auto const hdr_size = deserialize(hdr, buf.data(), size);
+    ASSERT_GT(hdr_size, 0u);
+    EXPECT_EQ(hdr, cmd.header_);
+
+    assign_client_data out{};
+    ASSERT_GT(deserialize(out, buf.data() + hdr_size, size - hdr_size), 0u);
+    EXPECT_EQ(out.name_, cmd.payload_.name_);
+    EXPECT_FALSE(out.has_address_);
+}
+
+TEST(ut_commands_roundtrip, config_command) {
+    // create_config_cmd takes an initializer_list whose backing array only lives for the
+    // enclosing full-expression, so the command is serialized inline inside send().
+    auto const buf = send(create_config_cmd(0x0001, {{"abcd", "1234"}, {"efgh", "5678"}}));
+
+    // Pin the exact little-endian wire layout (consolidated from the former ut_config_command suite):
+    // repeated [key_length(4) | key | value_length(4) | value].
+    const std::vector<uint8_t> expected = {
+            0x31, // CONFIG_ID
+            static_cast<uint8_t>(IPC_VERSION & 0xFF),
+            static_cast<uint8_t>((IPC_VERSION >> 8) & 0xFF), // Version.
+            0x01,
+            0x00, // Client.
+            0x20,
+            0x00,
+            0x00,
+            0x00, // Size.
+            0x04,
+            0x00,
+            0x00,
+            0x00,
+            0x61,
+            0x62,
+            0x63,
+            0x64, // "abcd"
+            0x04,
+            0x00,
+            0x00,
+            0x00,
+            0x31,
+            0x32,
+            0x33,
+            0x34, // "1234"
+            0x04,
+            0x00,
+            0x00,
+            0x00,
+            0x65,
+            0x66,
+            0x67,
+            0x68, // "efgh"
+            0x04,
+            0x00,
+            0x00,
+            0x00,
+            0x35,
+            0x36,
+            0x37,
+            0x38, // "5678"
+    };
+    ASSERT_EQ(buf, expected);
+
+    auto const size = static_cast<uint32_t>(buf.size());
+
+    command_header hdr{};
+    auto const hdr_size = deserialize(hdr, buf.data(), size);
+    ASSERT_GT(hdr_size, 0u);
+    EXPECT_EQ(hdr.id_, id_e::CONFIG_ID);
+    EXPECT_EQ(hdr.client_, 0x0001);
+
+    auto const* payload = buf.data() + hdr_size;
+    std::vector<std::pair<std::string, std::string>> configs;
+    auto const consumed = deserialize(configs, payload, hdr.length_);
+    EXPECT_EQ(consumed, hdr.length_);
+    ASSERT_EQ(configs.size(), 2u);
+    EXPECT_EQ(configs[0].first, "abcd");
+    EXPECT_EQ(configs[0].second, "1234");
+    EXPECT_EQ(configs[1].first, "efgh");
+    EXPECT_EQ(configs[1].second, "5678");
+}
+
 // send command
 TEST(ut_commands_roundtrip, send_id_command) {
     auto input = std::make_shared<message_impl>();
