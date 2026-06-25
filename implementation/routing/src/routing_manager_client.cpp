@@ -36,13 +36,7 @@
 #include "../../endpoints/include/local_server.hpp"
 #include "../../endpoints/include/local_endpoint.hpp"
 #include "../../message/include/message_impl.hpp"
-#include "../../protocol/include/expire_command.hpp"
-#include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
-#include "../../protocol/include/request_service_command.hpp"
-#include "../../protocol/include/send_command.hpp"
-#include "../../protocol/include/subscribe_command.hpp"
-#include "../../protocol/include/unsubscribe_command.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../protocol/include/serialize.hpp"
 #include "../../service_discovery/include/runtime.hpp"
@@ -512,24 +506,18 @@ void routing_manager_client::send_subscribe(client_t _client, service_t _service
         }
     }
 
-    protocol::subscribe_command its_command;
-    its_command.set_client(_client);
-    its_command.set_service(_service);
-    its_command.set_instance(_instance);
-    its_command.set_eventgroup(_eventgroup);
-    its_command.set_major(_major);
-    its_command.set_event(_event);
-    its_command.set_pending_id(PENDING_SUBSCRIPTION_ID);
-    its_command.set_filter(_filter);
-
-    std::vector<byte_t> its_buffer;
-    its_command.serialize(its_buffer);
-
+    auto const cmd = protocol::create_subscribe_cmd(_client, _filter,
+                                                    protocol::subscribe_data{.service_ = _service,
+                                                                             .instance_ = _instance,
+                                                                             .eventgroup_ = _eventgroup,
+                                                                             .major_ = _major,
+                                                                             .event_ = _event,
+                                                                             .pending_id_ = PENDING_SUBSCRIPTION_ID});
     client_t its_target_client = find_local_client(_service, _instance);
     if (its_target_client != VSOMEIP_ROUTING_CLIENT) {
         auto its_target = find_or_create_consumer_ep(its_target_client);
         if (its_target) {
-            its_target->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            its_target->send(cmd);
         } else {
             VSOMEIP_WARNING_P << "No target available to send subscription. Client=0x" << hex4(_client) << " service=" << hex4(_service)
                               << "." << hex4(_instance) << "." << hex2(_major) << " event=" << hex4(_event);
@@ -537,7 +525,7 @@ void routing_manager_client::send_subscribe(client_t _client, service_t _service
     } else {
         std::scoped_lock its_sender_lock{sender_mutex_};
         if (sender_) {
-            sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
+            sender_->send(cmd);
         } else {
             VSOMEIP_ERROR_P << "Failed due to a missing sender";
         }
@@ -617,28 +605,23 @@ void routing_manager_client::unsubscribe(client_t _client, service_t _service, i
 
         if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
 
-            protocol::unsubscribe_command its_command;
-            its_command.set_client(_client);
-            its_command.set_service(_service);
-            its_command.set_instance(_instance);
-            its_command.set_eventgroup(_eventgroup);
-            its_command.set_major(ANY_MAJOR);
-            its_command.set_event(_event);
-            its_command.set_pending_id(PENDING_SUBSCRIPTION_ID);
-
-            std::vector<byte_t> its_buffer;
-            its_command.serialize(its_buffer);
-
+            auto cmd = protocol::create_unsubscribe_cmd(_client,
+                                                        protocol::subscribe_data{.service_ = _service,
+                                                                                 .instance_ = _instance,
+                                                                                 .eventgroup_ = _eventgroup,
+                                                                                 .major_ = ANY_MAJOR,
+                                                                                 .event_ = _event,
+                                                                                 .pending_id_ = PENDING_SUBSCRIPTION_ID});
             auto its_target = find_consumer_ep(find_local_client(_service, _instance));
             if (its_target) {
-                its_target->send(&its_buffer[0], uint32_t(its_buffer.size()));
+                its_target->send(cmd);
             } else {
                 if (_client != VSOMEIP_ROUTING_CLIENT) {
                     VSOMEIP_WARNING_P << "Could not find endpoint for client 0x" << hex4(_client) << ", sending to the router";
                 }
                 std::scoped_lock its_sender_lock{sender_mutex_};
                 if (sender_) {
-                    sender_->send(&its_buffer[0], uint32_t(its_buffer.size()));
+                    sender_->send(cmd);
                 } else {
                     VSOMEIP_ERROR_P << "Failed due to a missing sender";
                 }
@@ -648,24 +631,10 @@ void routing_manager_client::unsubscribe(client_t _client, service_t _service, i
 }
 
 void routing_manager_client::on_message(const byte_t* _data, length_t _size, const local_client_data& _peer_data) {
-    protocol::id_e its_id;
-    client_t its_client;
-    service_t its_service;
-    instance_t its_instance;
-    eventgroup_t its_eventgroup;
-    event_t its_event;
-    major_version_t its_major;
-    remote_subscription_id_t its_pending_id(PENDING_SUBSCRIPTION_ID);
-#ifndef VSOMEIP_DISABLE_SECURITY
-    bool is_internal_policy_update(false);
-#endif // !VSOMEIP_DISABLE_SECURITY
-    protocol::error_e its_error;
-
     protocol::command_header its_header{};
-    uint32_t parsed_hdr_bytes = 0;
-    if (parsed_hdr_bytes = protocol::deserialize(its_header, _data, _size); parsed_hdr_bytes) {
-        its_id = its_header.id_;
-        its_client = its_header.client_;
+    if (uint32_t parsed_hdr_bytes = protocol::deserialize(its_header, _data, _size); parsed_hdr_bytes) {
+        protocol::id_e its_id = its_header.id_;
+        client_t const its_client = its_header.client_;
 
         bool is_from_routing = (_peer_data.id_ == VSOMEIP_ROUTING_CLIENT);
 
@@ -675,6 +644,9 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
             return;
         }
 
+#ifndef VSOMEIP_DISABLE_SECURITY
+        bool is_internal_policy_update = false;
+#endif
         switch (its_id) {
         case protocol::id_e::SEND_ID: {
             if (std::shared_ptr<message_impl> its_message;
@@ -814,8 +786,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         }
 
         case protocol::id_e::ASSIGN_CLIENT_ACK_ID: {
-            if (client_t its_client; protocol::deserialize(its_client, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                on_client_assign_ack(its_client, !_peer_data.routing_address_.is_unspecified());
+            if (client_t new_id; protocol::deserialize(new_id, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+                on_client_assign_ack(new_id, !_peer_data.routing_address_.is_unspecified());
             } else {
                 VSOMEIP_ERROR_P << "Assign client ack command deserialization failed memory: " << utility::dump(_data, _size);
                 return;
@@ -839,18 +811,16 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         }
 
         case protocol::id_e::SUBSCRIBE_ID: {
-            protocol::subscribe_command its_subscribe_command;
-            std::vector<byte_t> its_buffer(_data, _data + _size);
-            its_subscribe_command.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
+            if (protocol::subscribe_with_filter_data its_data;
+                protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-                its_service = its_subscribe_command.get_service();
-                its_instance = its_subscribe_command.get_instance();
-                its_eventgroup = its_subscribe_command.get_eventgroup();
-                its_major = its_subscribe_command.get_major();
-                its_event = its_subscribe_command.get_event();
-                its_pending_id = its_subscribe_command.get_pending_id();
-                auto its_filter = its_subscribe_command.get_filter();
+                auto its_service = its_data.data_.service_;
+                auto its_instance = its_data.data_.instance_;
+                auto its_eventgroup = its_data.data_.eventgroup_;
+                auto its_major = its_data.data_.major_;
+                auto its_event = its_data.data_.event_;
+                auto its_pending_id = its_data.data_.pending_id_;
+                auto its_filter = its_data.filter_;
 
                 if (its_pending_id != PENDING_SUBSCRIPTION_ID) {
                     auto its_info = find_service(its_service, its_instance);
@@ -975,23 +945,19 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                              << hex4(its_eventgroup) << ":" << hex4(its_event) << ":" << static_cast<uint16_t>(its_major) << "] "
                              << std::boolalpha << (its_pending_id != PENDING_SUBSCRIPTION_ID);
             } else {
-                VSOMEIP_ERROR_P << "Subscribe command deserialization failed (" << static_cast<int>(its_error) << ")";
+                VSOMEIP_ERROR_P << "Subscribe command deserialization failed:" << utility::dump(_data, _size);
             }
             break;
         }
 
         case protocol::id_e::UNSUBSCRIBE_ID: {
-            protocol::unsubscribe_command its_unsubscribe;
-            std::vector<byte_t> its_buffer(_data, _data + _size);
-            its_unsubscribe.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
+            if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-                its_client = its_unsubscribe.get_client();
-                its_service = its_unsubscribe.get_service();
-                its_instance = its_unsubscribe.get_instance();
-                its_eventgroup = its_unsubscribe.get_eventgroup();
-                its_event = its_unsubscribe.get_event();
-                its_pending_id = its_unsubscribe.get_pending_id();
+                auto its_service = its_data.service_;
+                auto its_instance = its_data.instance_;
+                auto its_eventgroup = its_data.eventgroup_;
+                auto its_event = its_data.event_;
+                auto its_pending_id = its_data.pending_id_;
 
                 // Notify user asynchronously (informational only; unsubscription cannot be rejected)
                 host_->on_subscription(
@@ -1038,22 +1004,18 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                              << (its_pending_id != PENDING_SUBSCRIPTION_ID);
 
             } else
-                VSOMEIP_ERROR_P << "Unsubscribe command deserialization failed (" << static_cast<int>(its_error) << ")";
+                VSOMEIP_ERROR_P << "Unsubscribe command deserialization failed: " << utility::dump(_data, _size);
             break;
         }
 
         case protocol::id_e::EXPIRE_ID: {
-            protocol::expire_command its_expire;
-            std::vector<byte_t> its_buffer(_data, _data + _size);
-            its_expire.deserialize(its_buffer, its_error);
-            if (its_error == protocol::error_e::ERROR_OK) {
+            if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-                its_client = its_expire.get_client();
-                its_service = its_expire.get_service();
-                its_instance = its_expire.get_instance();
-                its_eventgroup = its_expire.get_eventgroup();
-                its_event = its_expire.get_event();
-                its_pending_id = its_expire.get_pending_id();
+                auto its_service = its_data.service_;
+                auto its_instance = its_data.instance_;
+                auto its_eventgroup = its_data.eventgroup_;
+                auto its_event = its_data.event_;
+                auto its_pending_id = its_data.pending_id_;
 
                 host_->on_subscription(
                         its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, false,
@@ -1090,7 +1052,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                              << "." << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
                              << (its_pending_id != PENDING_SUBSCRIPTION_ID);
             } else
-                VSOMEIP_ERROR_P << "Expire deserialization failed (" << static_cast<int>(its_error) << ")";
+                VSOMEIP_ERROR_P << "Expire deserialization failed: " << utility::dump(_data, _size);
             break;
         }
 
@@ -1156,7 +1118,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 #ifndef VSOMEIP_DISABLE_SECURITY
         case protocol::id_e::UPDATE_SECURITY_POLICY_INT_ID:
             is_internal_policy_update = true;
-            [[gnu::fallthrough]];
+            [[fallthrough]];
         case protocol::id_e::UPDATE_SECURITY_POLICY_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
                 if (protocol::update_security_policy_data its_data;
@@ -1274,8 +1236,9 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         default:
             break;
         }
-    } else
+    } else {
         VSOMEIP_ERROR_P << "Deserialization of command header failed, memory: " << utility::dump(_data, _size);
+    }
 }
 
 void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size) {

@@ -15,7 +15,7 @@ struct debounce_filter_impl_t;
 
 namespace protocol {
 
-class subscribe_command : public subscribe_command_base {
+class [[deprecated("Use create_subscribe_cmd() from command_types.hpp")]] subscribe_command : public subscribe_command_base {
 
 public:
     subscribe_command();
