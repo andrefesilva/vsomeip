@@ -226,7 +226,13 @@ protected:
     void TearDown() {
         shutdown_thread_.join();
         app_->stop();
+        std::weak_ptr<vsomeip::application> weak_app = app_;
         app_.reset();
+        // a reference to `app_` is kept in the dispatcher thread, so we need to "really wait" until it is gone
+        // otherwise a new vsomeip::application will not the routing host and break the next test
+        while (!weak_app.expired()) { // disgusting
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
     }
 
     void on_state(vsomeip::state_type_e _state) {
