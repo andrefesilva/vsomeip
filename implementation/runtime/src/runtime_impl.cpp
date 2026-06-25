@@ -55,46 +55,44 @@ std::shared_ptr<application> runtime_impl::create_application(const std::string&
 }
 
 std::shared_ptr<message> runtime_impl::create_message(bool _reliable) const {
-    auto its_message = std::make_shared<message_impl>();
-    its_message->set_protocol_version(VSOMEIP_PROTOCOL_VERSION);
-    its_message->set_return_code(return_code_e::E_OK);
-    its_message->set_reliable(_reliable);
-    its_message->set_interface_version(DEFAULT_MAJOR);
-    return its_message;
+    message_header_impl its_header;
+    its_header.protocol_version_ = VSOMEIP_PROTOCOL_VERSION;
+    its_header.interface_version_ = DEFAULT_MAJOR;
+    its_header.code_ = return_code_e::E_OK;
+    return std::make_shared<message_impl>(its_header, _reliable, 0x0 /* check_result */);
 }
 
 std::shared_ptr<message> runtime_impl::create_request(bool _reliable) const {
-    auto its_request = std::make_shared<message_impl>();
-    its_request->set_protocol_version(VSOMEIP_PROTOCOL_VERSION);
-    its_request->set_message_type(message_type_e::MT_REQUEST);
-    its_request->set_return_code(return_code_e::E_OK);
-    its_request->set_reliable(_reliable);
-    its_request->set_interface_version(DEFAULT_MAJOR);
-    return its_request;
+    message_header_impl its_header;
+    its_header.protocol_version_ = VSOMEIP_PROTOCOL_VERSION;
+    its_header.interface_version_ = DEFAULT_MAJOR;
+    its_header.type_ = message_type_e::MT_REQUEST;
+    its_header.code_ = return_code_e::E_OK;
+    return std::make_shared<message_impl>(its_header, _reliable, 0x0 /* check_result */);
 }
 
 std::shared_ptr<message> runtime_impl::create_response(const std::shared_ptr<message>& _request) const {
-    auto its_response = std::make_shared<message_impl>();
-    its_response->set_service(_request->get_service());
-    its_response->set_instance(_request->get_instance());
-    its_response->set_method(_request->get_method());
-    its_response->set_client(_request->get_client());
-    its_response->set_session(_request->get_session());
-    its_response->set_interface_version(_request->get_interface_version());
-    its_response->set_message_type(message_type_e::MT_RESPONSE);
-    its_response->set_return_code(return_code_e::E_OK);
-    its_response->set_reliable(_request->is_reliable());
-    return its_response;
+    // protocol_version is intentionally left at the header default, mirroring
+    // the previous behavior which never set it on responses.
+    message_header_impl its_header;
+    its_header.service_ = _request->get_service();
+    its_header.instance_ = _request->get_instance();
+    its_header.method_ = _request->get_method();
+    its_header.client_ = _request->get_client();
+    its_header.session_ = _request->get_session();
+    its_header.interface_version_ = _request->get_interface_version();
+    its_header.type_ = message_type_e::MT_RESPONSE;
+    its_header.code_ = return_code_e::E_OK;
+    return std::make_shared<message_impl>(its_header, _request->is_reliable(), 0x0 /* check_result */);
 }
 
 std::shared_ptr<message> runtime_impl::create_notification(bool _reliable) const {
-    auto its_notification = std::make_shared<message_impl>();
-    its_notification->set_protocol_version(VSOMEIP_PROTOCOL_VERSION);
-    its_notification->set_message_type(message_type_e::MT_NOTIFICATION);
-    its_notification->set_return_code(return_code_e::E_OK);
-    its_notification->set_reliable(_reliable);
-    its_notification->set_interface_version(DEFAULT_MAJOR);
-    return its_notification;
+    message_header_impl its_header;
+    its_header.protocol_version_ = VSOMEIP_PROTOCOL_VERSION;
+    its_header.interface_version_ = DEFAULT_MAJOR;
+    its_header.type_ = message_type_e::MT_NOTIFICATION;
+    its_header.code_ = return_code_e::E_OK;
+    return std::make_shared<message_impl>(its_header, _reliable, 0x0 /* check_result */);
 }
 
 std::shared_ptr<payload> runtime_impl::create_payload() const {
