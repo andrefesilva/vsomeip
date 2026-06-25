@@ -17,7 +17,8 @@
 #include "../../../implementation/endpoints/include/local_socket_uds_impl.hpp"
 #include "../../../implementation/configuration/include/configuration_impl.hpp"
 #include "../../../implementation/protocol/include/protocol.hpp"
-#include "../../../implementation/protocol/include/config_command.hpp"
+#include "../../../implementation/protocol/include/command_types.hpp"
+#include "../../../implementation/protocol/include/serialize.hpp"
 #include "../../../implementation/protocol/include/offer_service_command.hpp"
 #include <boost/asio/local/stream_protocol.hpp>
 #include <boost/system/error_code.hpp>
@@ -85,10 +86,11 @@ struct test_uds_local_endpoint : base_endpoint_fixture {
     }
     auto create_client_config_command() {
         std::vector<byte_t> msg;
-        protocol::config_command command;
-        command.set_client(client_);
-        command.insert("hostname", "");
-        command.serialize(msg);
+        auto serialize_cmd = [&](protocol::config_command_data const& _cmd) {
+            msg.resize(protocol::wire_size(_cmd));
+            protocol::serialize(_cmd, msg.data());
+        };
+        serialize_cmd(protocol::create_config_cmd(client_, {{"hostname", ""}}));
         return msg;
     }
     void add_offer_service_command(std::vector<std::vector<byte_t>>& _queue) {

@@ -36,7 +36,6 @@
 #include "../../endpoints/include/local_server.hpp"
 #include "../../endpoints/include/local_endpoint.hpp"
 #include "../../message/include/message_impl.hpp"
-#include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
@@ -1262,16 +1261,13 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         }
 #endif // !VSOMEIP_DISABLE_SECURITY
         case protocol::id_e::CONFIG_ID: {
-            protocol::config_command its_command;
-            protocol::error_e its_command_error;
-            std::vector<byte_t> its_buffer(_data, _data + _size);
-            its_command.deserialize(its_buffer, its_command_error);
-            if (its_command_error != protocol::error_e::ERROR_OK) {
-                VSOMEIP_ERROR_P << "Config command deserialization failed (" << static_cast<int>(its_command_error) << ")";
-                break;
-            }
-            if (its_command.contains("hostname")) {
-                lazy_load(its_command.at("hostname"));
+            std::vector<std::pair<std::string, std::string>> its_configs;
+            protocol::deserialize(its_configs, _data + parsed_hdr_bytes, its_header.length_);
+            for (auto const& [key, value] : its_configs) {
+                if (key == "hostname") {
+                    lazy_load(value);
+                    break;
+                }
             }
             break;
         }

@@ -160,8 +160,6 @@ private:
 
         void async_receive();
         void receive_cbk(boost::system::error_code const& _ec, size_t _bytes);
-        client_t assign_client(uint8_t const* _data, uint32_t const _message_size);
-        client_t read_config_command(uint8_t const* _data, uint32_t _message_size, bool& _version_matches);
         void hand_over(client_t _client);
 
         bool const is_router_{false};

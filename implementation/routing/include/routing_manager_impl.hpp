@@ -212,7 +212,7 @@ public:
     bool remove_security_policy_configuration(uid_t _uid, gid_t _gid, const security_update_handler_t& _handler);
 #endif
 
-    void lazy_load(const std::string& _client_host);
+    void lazy_load(std::string_view _client_host);
 
     void register_message_acceptance_handler(const message_acceptance_handler_t& _handler);
 

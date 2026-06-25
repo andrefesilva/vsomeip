@@ -36,7 +36,6 @@
 #include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
-#include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../protocol/include/serialize.hpp"
 #include "../../security/include/policy_manager_impl.hpp"

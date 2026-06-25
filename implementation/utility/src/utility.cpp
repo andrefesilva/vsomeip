@@ -274,7 +274,7 @@ std::string utility::get_base_path(const std::string& _network) {
     return base_path() + _network + "-";
 }
 
-client_t utility::request_client_id(const std::shared_ptr<configuration>& _config, const std::string& _name, client_t _client) {
+client_t utility::request_client_id(const std::shared_ptr<configuration>& _config, std::string_view _name, client_t _client) {
     std::scoped_lock its_lock(get_utility_mutex());
     auto& data = get_utility_data();
     static const std::uint16_t its_max_num_clients = get_max_client_number(_config);
@@ -303,7 +303,7 @@ client_t utility::request_client_id(const std::shared_ptr<configuration>& _confi
             // that do not specify the vsomeip application name
 
             // check if app name is configured
-            if (auto config_id = _config->get_id(_name); config_id != VSOMEIP_CLIENT_UNSET) {
+            if (auto config_id = _config->get_id(std::string(_name)); config_id != VSOMEIP_CLIENT_UNSET) {
                 if (config_id == _client) {
                     return _client;
                 } else {

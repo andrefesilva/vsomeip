@@ -11,6 +11,7 @@
 #include "../../configuration/include/configuration.hpp"
 
 #include "../../protocol/include/protocol.hpp"
+#include "../../protocol/include/deserialize.hpp"
 #include "../../protocol/include/assign_client_command.hpp"
 #include "../../protocol/include/config_command.hpp"
 
@@ -22,6 +23,7 @@
 
 #include <cstdint>
 #include <boost/asio/error.hpp>
+#include <boost/asio/ip/address_v4.hpp>
 
 #include <iomanip>
 
@@ -242,13 +244,7 @@ void local_server::add_connection(client_t _client, [[maybe_unused]] client_t _e
                 ep->stop(true);
                 return;
             }
-            protocol::config_command config_command;
-            config_command.set_client(own_client_id_);
-            config_command.insert("hostname", std::string(server_host_));
-            std::vector<byte_t> config_buffer;
-            config_command.serialize(config_buffer);
-
-            ep->send(&config_buffer[0], static_cast<uint32_t>(config_buffer.size()));
+            ep->send(protocol::create_config_cmd(own_client_id_, {{"hostname", server_host_}}));
 
             if (is_router_) {
                 ep->send(protocol::create_assign_client_ack_cmd(VSOMEIP_ROUTING_CLIENT, _client));
@@ -308,25 +304,65 @@ void local_server::tmp_connection::receive_cbk(boost::system::error_code const& 
         return;
     }
     while (receive_buffer_->next_message(result)) {
-        if (result.message_data_[protocol::COMMAND_POSITION_ID] == protocol::id_e::ASSIGN_CLIENT_ID && is_router_) {
-            auto client_id = assign_client(result.message_data_, result.message_size_);
+        protocol::command_header its_header{};
+        auto parsed_hdr_bytes = protocol::deserialize(its_header, result.message_data_, result.message_size_);
+        if (!parsed_hdr_bytes || its_header.version_ != protocol::IPC_VERSION) {
+            VSOMEIP_ERROR_P << "Deserialization failed, memory: " << utility::dump(result.message_data_, result.message_size_)
+                            << " Breaking connection > " << socket_->to_string();
+            socket_->stop(true);
+            return;
+        }
+        auto const* payload = result.message_data_ + parsed_hdr_bytes;
+
+        if (its_header.id_ == protocol::id_e::ASSIGN_CLIENT_ID && is_router_) {
+            protocol::assign_client_data parsed{};
+            if (!protocol::deserialize(parsed, payload, its_header.length_)) {
+                VSOMEIP_ERROR_P << "Assign client command payload deserialization failed, memory: "
+                                << utility::dump(payload, its_header.length_) << " Breaking connection > " << socket_->to_string();
+                socket_->stop(true);
+                return;
+            }
+            auto client_id = utility::request_client_id(configuration_, parsed.name_, its_header.client_);
+            if (parsed.has_address_) {
+                routing_address_ = boost::asio::ip::address_v4(parsed.address_bytes_);
+                routing_port_ = parsed.port_;
+            }
             hand_over(client_id);
             return;
-        } else if (result.message_data_[protocol::COMMAND_POSITION_ID] == protocol::id_e::CONFIG_ID) {
-            bool matches{true};
-            auto const client = read_config_command(result.message_data_, result.message_size_, matches);
-            if (!matches) {
-                VSOMEIP_ERROR_P << "Breaking connection > " << socket_->to_string();
+        } else if (its_header.id_ == protocol::id_e::CONFIG_ID) {
+            std::vector<std::pair<std::string, std::string>> its_configs;
+            if (protocol::deserialize(its_configs, payload, its_header.length_) != its_header.length_) {
+                VSOMEIP_ERROR_P << "Config command payload deserialization failed, memory: " << utility::dump(payload, its_header.length_)
+                                << " Breaking connection > " << socket_->to_string();
+                socket_->stop(true);
+                return;
+            }
+
+            bool has_hostname = false;
+            for (auto& [key, value] : its_configs) {
+                if (key == "expected_id") {
+                    if (value.size() == sizeof(expected_id_)) {
+                        std::memcpy(&expected_id_, value.data(), sizeof(expected_id_));
+                    }
+                } else if (key == "hostname") {
+                    client_host_ = std::move(value);
+                    has_hostname = true;
+                }
+            }
+            if (!has_hostname) {
+                VSOMEIP_ERROR_P << "Config command did not contain hostname, memory: " << utility::dump(payload, its_header.length_)
+                                << " Breaking connection > " << socket_->to_string();
                 socket_->stop(true);
                 return;
             }
             if (!is_router_) {
-                hand_over(client);
+                hand_over(its_header.client_);
                 return;
             }
         } else {
-            VSOMEIP_ERROR_P << "Unexpected command: 0x" << hex2(result.message_data_[protocol::COMMAND_POSITION_ID])
-                            << " received. Breaking connection > " << socket_->to_string();
+            VSOMEIP_ERROR_P << "Unexpected command: 0x" << hex2(static_cast<uint8_t>(its_header.id_))
+                            << " received. memory: " << utility::dump(payload, its_header.length_) << " Breaking connection > "
+                            << socket_->to_string();
             socket_->stop(true);
             return;
         }
@@ -338,58 +374,6 @@ void local_server::tmp_connection::receive_cbk(boost::system::error_code const& 
     }
     receive_buffer_->shift_front();
     async_receive();
-}
-
-client_t local_server::tmp_connection::assign_client(uint8_t const* _data, uint32_t const _message_size) {
-
-    std::vector<byte_t> its_data(_data, _data + _message_size);
-    protocol::assign_client_command command;
-    protocol::error_e ec;
-
-    command.deserialize(its_data, ec);
-    if (ec != protocol::error_e::ERROR_OK) {
-        VSOMEIP_ERROR_P << "Assign client command deserialization failed (" << static_cast<int>(ec) << ")";
-        return VSOMEIP_CLIENT_UNSET;
-    }
-
-    auto client_id = utility::request_client_id(configuration_, command.get_name(), command.get_client());
-
-    routing_address_ = command.get_address();
-    routing_port_ = command.get_port();
-
-    return client_id;
-}
-
-client_t local_server::tmp_connection::read_config_command(uint8_t const* _data, uint32_t _message_size, bool& _version_matches) {
-    std::vector<byte_t> its_data(_data, _data + _message_size);
-    protocol::config_command command;
-    protocol::error_e ec;
-
-    command.deserialize(its_data, ec);
-    if (ec != protocol::error_e::ERROR_OK) {
-        _version_matches = false;
-        VSOMEIP_ERROR_P << "Config command deserialization failed (" << static_cast<int>(ec) << ")";
-        return VSOMEIP_CLIENT_UNSET;
-    }
-    if (command.get_version() != protocol::IPC_VERSION) {
-        _version_matches = false;
-        VSOMEIP_ERROR_P << "Protocol version mismatch detected, expected: " << protocol::IPC_VERSION
-                        << ", received: " << command.get_version();
-        return VSOMEIP_CLIENT_UNSET;
-    }
-    if (command.contains("expected_id")) {
-        auto str = command.at("expected_id");
-        if (str.size() == sizeof(expected_id_)) {
-            std::memcpy(&expected_id_, str.data(), sizeof(expected_id_));
-        }
-    }
-    if (!command.contains("hostname")) {
-        _version_matches = false;
-        VSOMEIP_ERROR_P << "Config command did not contain hostname";
-        return VSOMEIP_CLIENT_UNSET;
-    }
-    client_host_ = command.at("hostname");
-    return command.get_client();
 }
 
 void local_server::tmp_connection::hand_over(client_t _client) {

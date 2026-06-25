@@ -321,12 +321,14 @@ bool configuration_impl::load(const std::string& _name) {
 #ifndef VSOMEIP_DISABLE_SECURITY
 void configuration_impl::lazy_load_security(const std::string& _client_host) {
 
-    std::string its_folder = policy_manager_->get_policy_extension_path(_client_host);
+    std::string const its_client_host{_client_host};
+    std::string its_folder = policy_manager_->get_policy_extension_path(its_client_host);
     if (its_folder.empty()) {
         return; // nothing to do, host does not exist
     }
 
-    if (policy_manager_->is_policy_extension_loaded(_client_host) == policy_manager_impl::policy_loaded_e::POLICY_PATH_FOUND_AND_LOADED) {
+    if (policy_manager_->is_policy_extension_loaded(its_client_host)
+        == policy_manager_impl::policy_loaded_e::POLICY_PATH_FOUND_AND_LOADED) {
         return; // nothing to do, host already loaded
     }
 
@@ -351,7 +353,7 @@ void configuration_impl::lazy_load_security(const std::string& _client_host) {
         VSOMEIP_WARNING_P << "Reading of configuration file \"" << f << "\" failed. Configuration may be incomplete";
     }
 
-    policy_manager_->set_is_policy_extension_loaded(_client_host, true);
+    policy_manager_->set_is_policy_extension_loaded(its_client_host, true);
 
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 

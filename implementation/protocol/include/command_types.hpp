@@ -15,8 +15,16 @@
 
 #include <boost/asio/ip/address_v4.hpp>
 
+#include "protocol.hpp"
+#include "vsomeip/defines.hpp"
+
+#include <array>
 #include <compare>
 #include <cstring>
+#include <initializer_list>
+#include <span>
+#include <string_view>
+#include <compare>
 #include <vector>
 #include <type_traits>
 #include <span>
@@ -114,6 +122,27 @@ struct single_field_command_data {
     T payload_;
 };
 
+struct config_entry {
+    std::string_view key_{};
+    std::string_view value_{};
+};
+
+struct config_command_data {
+    command_header header_;
+    std::span<const config_entry> payload_;
+};
+
+struct assign_client_data {
+    std::string_view name_;
+    std::array<uint8_t, 4> address_bytes_{};
+    port_t port_{0};
+    bool has_address_{false};
+};
+
+struct assign_client_command_data {
+    command_header header_;
+    assign_client_data payload_;
+};
 struct register_event_data {
     auto operator<=>(register_event_data const&) const = default;
 
@@ -368,6 +397,20 @@ inline uint32_t wire_size(routing_info_entry_data const& _entry) {
     return its_size;
 }
 
+inline uint32_t wire_size(config_command_data const& _d) {
+    size_t size = wire_size(_d.header_);
+    for (auto const& e : _d.payload_)
+        size += sizeof(uint32_t) + e.key_.size() + sizeof(uint32_t) + e.value_.size();
+    return static_cast<uint32_t>(size);
+}
+
+inline uint32_t wire_size(assign_client_data const& _d) {
+    size_t size = sizeof(uint32_t) + _d.name_.size() + sizeof(uint8_t);
+    if (_d.has_address_)
+        size += _d.address_bytes_.size() + sizeof(port_t);
+    return static_cast<uint32_t>(size);
+}
+
 template<typename T>
 uint32_t wire_size(T const& _in) {
     return wire_size(_in.header_) + _in.header_.length_;
@@ -505,6 +548,21 @@ inline auto create_subscribe_ack_cmd(client_t _client, subscribe_answer_data _da
 inline auto create_subscribe_nack_cmd(client_t _client, subscribe_answer_data _data) {
     return subscribe_answer_command_data{
             .header_ = command_header::create(id_e::SUBSCRIBE_NACK_ID, subscribe_answer_data::wire_size_, _client), .payload_ = _data};
+}
+
+inline config_command_data create_config_cmd(client_t _client, std::initializer_list<config_entry> _entries) {
+    uint32_t payload_size = 0;
+    for (auto const& e : _entries)
+        payload_size += static_cast<uint32_t>(sizeof(uint32_t) + e.key_.size() + sizeof(uint32_t) + e.value_.size());
+    return {.header_ = command_header::create(id_e::CONFIG_ID, payload_size, _client),
+            .payload_ = std::span<const config_entry>(_entries.begin(), _entries.size())};
+}
+
+inline assign_client_command_data create_assign_client_cmd(client_t _client, std::string_view _name,
+                                                           std::array<uint8_t, 4> _address_bytes = {}, port_t _port = 0,
+                                                           bool _has_address = false) {
+    assign_client_data data{.name_ = _name, .address_bytes_ = _address_bytes, .port_ = _port, .has_address_ = _has_address};
+    return {.header_ = command_header::create(id_e::ASSIGN_CLIENT_ID, wire_size(data), _client), .payload_ = data};
 }
 
 } // namespace vsomeip_v3::protocol
