@@ -15,7 +15,8 @@ struct policy;
 
 namespace protocol {
 
-class update_security_credentials_command : public command {
+class [[deprecated("Use create_update_security_credentials_cmd() from command_types.hpp")]] update_security_credentials_command
+    : public command {
 public:
     update_security_credentials_command();
 

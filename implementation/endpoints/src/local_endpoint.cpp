@@ -686,6 +686,13 @@ template bool local_endpoint::send<protocol::unsubscribe_ack_command_data>(proto
                                                                            std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::remove_security_policy_command_data>(protocol::remove_security_policy_command_data const&,
                                                                                   std::shared_ptr<trace::connector_impl> const&);
+template bool
+local_endpoint::send<protocol::update_security_credentials_command_data>(protocol::update_security_credentials_command_data const&,
+                                                                         std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::update_security_policy_command_data>(protocol::update_security_policy_command_data const&,
+                                                                                  std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::distribute_security_policies_data>(protocol::distribute_security_policies_data const&,
+                                                                                std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::routing_info_command_data>(protocol::routing_info_command_data const&,
                                                                         std::shared_ptr<trace::connector_impl> const&);
 }

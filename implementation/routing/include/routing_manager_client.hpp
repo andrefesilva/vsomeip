@@ -57,7 +57,6 @@ class routing_client_state_machine;
 
 namespace protocol {
 class offered_services_response_command;
-class update_security_credentials_command;
 }
 
 class routing_manager_client : public local_endpoint_manager_host,
@@ -208,7 +207,7 @@ private:
     void log_status();
     void log_version();
 #ifndef VSOMEIP_DISABLE_SECURITY
-    void on_update_security_credentials(const protocol::update_security_credentials_command& _command);
+    void on_update_security_credentials(std::vector<std::pair<uid_t, gid_t>> const& _credentials);
 #endif
     void on_client_assign_ack(const client_t& _client, bool _is_tcp);
 
