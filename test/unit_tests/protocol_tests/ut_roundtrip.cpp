@@ -9,6 +9,11 @@
 
 #include <gtest/gtest.h>
 
+#if __GNUC__ > 11
+// taken over from security/policy.cpp
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+
 #include "../../../implementation/protocol/include/command_types.hpp"
 #include "../../../implementation/protocol/include/deserialize.hpp"
 #include "../../../implementation/protocol/include/serialize.hpp"
@@ -35,6 +40,10 @@ Cmd receive(std::vector<uint8_t> const& _buf) {
     }
     if constexpr (has_payload<Cmd>) {
         if (0 == deserialize(out.payload_, _buf.data() + hdr_size, size - hdr_size)) {
+            if constexpr (std::is_same_v<update_security_credentials_command_data, Cmd>) {
+                // the payload is optional in this command
+                return size - hdr_size == 0 ? out : Cmd{};
+            }
             return {};
         }
     }
@@ -46,6 +55,26 @@ auto roundtrip(Cmd const& _input) {
     if constexpr (std::is_same_v<multiple_service_command_data, Cmd>) {
         // this command owns the data only on reception, not on sending
         std::pair<command_header, std::vector<protocol::service_data>> out;
+        auto buf = send(_input);
+        auto const size = static_cast<uint32_t>(buf.size());
+        auto const hdr_size = deserialize(out.first, buf.data(), size);
+        if (hdr_size == 0) {
+            return out;
+        }
+        deserialize(out.second, buf.data() + hdr_size, size - hdr_size);
+        return out;
+    } else if constexpr (std::is_same_v<update_security_policy_command_data, Cmd>) {
+        std::pair<command_header, update_security_policy_data> out;
+        auto buf = send(_input);
+        auto const size = static_cast<uint32_t>(buf.size());
+        auto const hdr_size = deserialize(out.first, buf.data(), size);
+        if (hdr_size == 0) {
+            return out;
+        }
+        deserialize(out.second, buf.data() + hdr_size, size - hdr_size);
+        return out;
+    } else if constexpr (std::is_same_v<distribute_security_policies_data, Cmd>) {
+        std::pair<command_header, std::vector<std::shared_ptr<policy>>> out;
         auto buf = send(_input);
         auto const size = static_cast<uint32_t>(buf.size());
         auto const hdr_size = deserialize(out.first, buf.data(), size);
@@ -154,6 +183,97 @@ TEST(ut_commands_roundtrip, subscribe_nack_command) {
             0x1234,
             {.service_ = 0x121, .instance_ = 0x122, .eventgroup_ = 0x123, .subscriber_ = 0x124, .event_ = 0x125, .pending_id_ = 0x126});
     EXPECT_EQ(roundtrip(cmd), cmd);
+}
+
+TEST(ut_commands_roundtrip, update_security_credentials) {
+    std::set<std::pair<uid_t, gid_t>> none = {};
+    std::set<std::pair<uid_t, gid_t>> one = {{0x1, 0x1}};
+    std::set<std::pair<uid_t, gid_t>> many = {{0x2, 0x2}, {0x3, 0x3}};
+
+    for (auto const& ids : {none, one, many}) {
+        auto cmd = protocol::create_update_security_credentials_cmd(0x7, ids);
+        EXPECT_EQ(roundtrip(cmd), cmd);
+    }
+}
+TEST(ut_commands_roundtrip, update_security_policy) {
+    std::shared_ptr<policy> none = {};
+    std::shared_ptr<policy> one = std::make_shared<policy>();
+    auto its_uid_interval = boost::icl::construct<boost::icl::discrete_interval<uid_t>>(0x1, 0x1, boost::icl::interval_bounds::closed());
+
+    auto its_gid_interval = boost::icl::construct<boost::icl::discrete_interval<gid_t>>(0x2, 0x2, boost::icl::interval_bounds::closed());
+    boost::icl::interval_set<gid_t> its_gid_interval_set;
+    its_gid_interval_set.insert(its_gid_interval);
+    one->credentials_ += std::make_pair(its_uid_interval, its_gid_interval_set);
+    one->allow_who_ = true;
+
+    for (auto const& policy : {none, one}) {
+        std::vector<unsigned char> buffer;
+        if (policy) {
+            ASSERT_TRUE(policy->serialize(buffer));
+        }
+
+        auto cmd = protocol::create_update_security_policy_cmd(0x7, 0x13, buffer);
+        auto [header, data] = roundtrip(cmd);
+        EXPECT_EQ(header, cmd.header_);
+        EXPECT_EQ(data.update_id_, cmd.payload_.update_id_);
+        EXPECT_EQ(data.policy_, buffer);
+    }
+}
+TEST(ut_commands_roundtrip, distribute_security_policy) {
+    std::shared_ptr<policy> example_one = std::make_shared<policy>();
+    {
+        auto its_uid_interval =
+                boost::icl::construct<boost::icl::discrete_interval<uid_t>>(0x1, 0x1, boost::icl::interval_bounds::closed());
+        auto its_gid_interval =
+                boost::icl::construct<boost::icl::discrete_interval<gid_t>>(0x2, 0x2, boost::icl::interval_bounds::closed());
+        boost::icl::interval_set<gid_t> its_gid_interval_set;
+        its_gid_interval_set.insert(its_gid_interval);
+        example_one->credentials_ += std::make_pair(its_uid_interval, its_gid_interval_set);
+        example_one->allow_who_ = true;
+    }
+
+    std::shared_ptr<policy> example_two = std::make_shared<policy>();
+    {
+        auto its_uid_interval =
+                boost::icl::construct<boost::icl::discrete_interval<uid_t>>(0x2, 0x2, boost::icl::interval_bounds::closed());
+        auto its_gid_interval =
+                boost::icl::construct<boost::icl::discrete_interval<gid_t>>(0x3, 0x3, boost::icl::interval_bounds::closed());
+        boost::icl::interval_set<gid_t> its_gid_interval_set;
+        its_gid_interval_set.insert(its_gid_interval);
+        example_two->credentials_ += std::make_pair(its_uid_interval, its_gid_interval_set);
+        example_two->allow_who_ = true;
+    }
+
+    std::vector<std::shared_ptr<policy>> none;
+    std::vector<std::shared_ptr<policy>> one{example_one};
+    std::vector<std::shared_ptr<policy>> two{example_one, example_two};
+
+    for (auto const& policies : {none, one, two}) {
+        std::vector<std::vector<byte_t>> buffer;
+        for (auto const& p : policies) {
+            auto& mem = buffer.emplace_back();
+            ASSERT_TRUE(p->serialize(mem));
+        }
+        std::vector<std::span<byte_t const>> input;
+        for (auto const& buf : buffer) {
+            input.push_back(std::span<byte_t const>(buf));
+        }
+
+        auto cmd = protocol::create_distribute_security_policy_cmd(0x13, input);
+        auto [header, data] = roundtrip(cmd);
+        EXPECT_EQ(header, cmd.header_);
+        ASSERT_EQ(data.size(), buffer.size());
+        for (size_t i = 0; i < data.size(); ++i) {
+            auto& input = policies[i];
+            auto& output = data[i];
+            EXPECT_EQ(output->credentials_, input->credentials_);
+            EXPECT_EQ(output->requests_, input->requests_);
+            EXPECT_EQ(output->offers_, input->offers_);
+            // these values are not (de)serialized
+            // EXPECT_EQ(output->allow_who_, input->allow_who_);
+            // EXPECT_EQ(output->allow_what_, input->allow_what_);
+        }
+    }
 }
 
 // --- Non-owning commands

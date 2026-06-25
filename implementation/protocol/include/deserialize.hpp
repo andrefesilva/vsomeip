@@ -8,15 +8,21 @@
 #include "command_types.hpp"
 #include "../../message/include/message_impl.hpp"
 #include "../../message/include/payload_impl.hpp"
-#include "vsomeip/defines.hpp"
-#include "vsomeip/enumeration_types.hpp"
-#include "vsomeip/primitive_types.hpp"
+#include "../../security/include/policy.hpp"
+#include "update_security_policy_command.hpp"
 
+#include <vsomeip/defines.hpp>
+#include <vsomeip/enumeration_types.hpp>
+#include <vsomeip/primitive_types.hpp>
+
+#include <cstdint>
 #include <cstring> // memcpy
 #include <optional>
 #include <type_traits>
 
 namespace vsomeip_v3::protocol {
+
+uint32_t deserialize(std::vector<std::pair<uid_t, gid_t>>& _out, unsigned char const* _mem, uint32_t _size);
 
 template<typename T>
     requires(std::is_integral_v<T> || std::is_enum_v<T>)
@@ -145,6 +151,35 @@ inline uint32_t deserialize(subscribe_answer_data& _out, unsigned char const* _m
     return parse(_mem, _size, _out.service_, _out.instance_, _out.eventgroup_, _out.subscriber_, _out.event_, _out.pending_id_);
 }
 
+inline uint32_t deserialize(update_security_policy_data& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t const parsed = deserialize(_out.update_id_, _mem, _size);
+    if (parsed == 0) {
+        return 0;
+    }
+    auto const left = _size - parsed;
+    if (left > 0) {
+        _out.policy_.reserve(left);
+        _out.policy_.insert(_out.policy_.end(), _mem + parsed, _mem + _size);
+    }
+    return _size;
+}
+inline uint32_t deserialize(std::vector<std::pair<uid_t, gid_t>>& _out, unsigned char const* _mem, uint32_t _size) {
+    static constexpr uint32_t const element_size = sizeof(uid_t) + sizeof(gid_t);
+    uint32_t const elems = _size / element_size;
+    if (elems * element_size != _size) {
+        // some remaining bytes?
+        return 0;
+    }
+    _out.resize(elems);
+    uint32_t acc = 0;
+    for (auto& out : _out) {
+        // there is no need to check for the amount of parsed bytes,
+        // as we only allocated enough space to also deserialize the payload
+        acc += parse(_mem + acc, _size - acc, out.first, out.second);
+    }
+    return acc;
+}
+
 inline uint32_t deserialize(routing_info_entry_data& _out, unsigned char const* _mem, uint32_t _size) {
     // Wire layout: type (1) | entry-size (4) | client-info-size (4) | client (2)
     //              [ IPv4 address (4) | port (2) ] | services-size (4) | N * service (wire_size_)
@@ -218,6 +253,56 @@ inline uint32_t deserialize(std::vector<routing_info_entry_data>& _out, unsigned
         acc += consumed;
     }
     return acc;
+}
+
+inline uint32_t deserialize(std::vector<std::shared_ptr<policy>>& _out, unsigned char const* _mem, uint32_t _size) {
+    static constexpr uint32_t su32 = sizeof(uint32_t);
+    if (_size < su32) {
+        return 0;
+    }
+    uint32_t total_size = _size;
+    uint32_t element_count{0};
+    deserialize(element_count, _mem, _size);
+    _size -= su32;
+    _mem += su32;
+    // no reserve call to avoid over-allocation
+    for (uint32_t i = 0; i < element_count; ++i) {
+        if (_size < su32) {
+            return 0;
+        }
+        uint32_t policy_length;
+        deserialize(policy_length, _mem, _size);
+        _size -= su32;
+        _mem += su32;
+
+        if (_size < policy_length) {
+            _out.clear();
+            return 0;
+        }
+        auto its_policy = std::make_shared<policy>();
+        // policy::deserialize takes both the pointer and the size by reference: it
+        // advances _mem and decrements the available size by the number of bytes it
+        // consumed. Pass a copy as the available size so policy_length keeps the
+        // declared length and _mem is advanced exactly once.
+        auto remaining = policy_length;
+        if (policy_length == 0 || !its_policy->deserialize(_mem, remaining)) {
+            _out.clear();
+            return 0;
+        }
+        // a policy must consume exactly its declared length
+        if (remaining != 0) {
+            _out.clear();
+            return 0;
+        }
+        _size -= policy_length;
+        _out.push_back(its_policy);
+    }
+
+    if (_size != 0) {
+        _out.clear();
+        return 0;
+    }
+    return total_size;
 }
 
 inline uint32_t deserialize(std::shared_ptr<message_impl>& _out, unsigned char const* _mem, uint32_t _size) {

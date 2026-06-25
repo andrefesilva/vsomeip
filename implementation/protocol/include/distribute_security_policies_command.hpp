@@ -19,7 +19,8 @@ struct policy;
 
 namespace protocol {
 
-class distribute_security_policies_command : public command {
+class [[deprecated("Use create_distribute_security_policy_cmd() from command_types.hpp")]] distribute_security_policies_command
+    : public command {
 public:
     distribute_security_policies_command();
 
