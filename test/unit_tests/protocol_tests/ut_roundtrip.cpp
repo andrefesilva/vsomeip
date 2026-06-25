@@ -189,6 +189,54 @@ TEST(ut_commands_roundtrip, subscribe_nack_command) {
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
 
+TEST(ut_commands_roundtrip, expire_command) {
+    auto cmd = protocol::create_expire_cmd(
+            0x7, subscribe_data{.service_ = 0x1, .instance_ = 0x2, .eventgroup_ = 0x3, .major_ = 0x4, .event_ = 0x5, .pending_id_ = 0x6});
+
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+TEST(ut_commands_roundtrip, unsubscribe_command) {
+    auto cmd = protocol::create_unsubscribe_cmd(
+            0x14,
+            subscribe_data{.service_ = 0x8, .instance_ = 0x9, .eventgroup_ = 0x10, .major_ = 0x11, .event_ = 0x12, .pending_id_ = 0x13});
+
+    EXPECT_EQ(roundtrip(cmd), cmd);
+}
+TEST(ut_commands_roundtrip, subscribe_command) {
+    auto data =
+            subscribe_data{.service_ = 0x13, .instance_ = 0x42, .eventgroup_ = 0x11, .major_ = 0x12, .event_ = 0x13, .pending_id_ = 0x1};
+
+    std::shared_ptr<debounce_filter_impl_t> no_filter = nullptr;
+    std::shared_ptr<debounce_filter_impl_t> no_map = std::make_shared<debounce_filter_impl_t>();
+    no_map->on_change_ = true;
+    no_map->on_change_resets_interval_ = true;
+    no_map->interval_ = 64;
+    no_map->send_current_value_after_ = true;
+    std::shared_ptr<debounce_filter_impl_t> one_entry = std::make_shared<debounce_filter_impl_t>();
+    one_entry->ignore_[0] = 0x0;
+    one_entry->send_current_value_after_ = true;
+
+    std::shared_ptr<debounce_filter_impl_t> many_entries = std::make_shared<debounce_filter_impl_t>();
+    many_entries->ignore_[1] = 0x2;
+    many_entries->ignore_[2] = 0x33;
+    many_entries->ignore_[2092834] = 0x8;
+    many_entries->send_current_value_after_ = true;
+
+    for (auto filter : {no_filter, no_map, one_entry, many_entries}) {
+        auto const input = protocol::create_subscribe_cmd(0x2, filter, data);
+        auto const output = roundtrip(input);
+
+        EXPECT_EQ(input.header_, output.header_);
+        EXPECT_EQ(input.payload_.data_, output.payload_.data_);
+        if (input.payload_.filter_) {
+            ASSERT_NE(output.payload_.filter_, nullptr);
+            EXPECT_EQ(*input.payload_.filter_, *output.payload_.filter_);
+        } else {
+            EXPECT_EQ(nullptr, output.payload_.filter_);
+        }
+    }
+}
+
 TEST(ut_commands_roundtrip, update_security_credentials) {
     std::set<std::pair<uid_t, gid_t>> none = {};
     std::set<std::pair<uid_t, gid_t>> one = {{0x1, 0x1}};

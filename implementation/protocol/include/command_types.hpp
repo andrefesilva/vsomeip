@@ -7,6 +7,8 @@
 
 #include "protocol.hpp"
 
+#include "../../configuration/include/debounce_filter_impl.hpp"
+
 #include <vsomeip/enumeration_types.hpp>
 #include <vsomeip/primitive_types.hpp>
 #include <vsomeip/message.hpp>
@@ -228,6 +230,43 @@ struct unregister_event_command_data {
     unregister_event_data payload_;
 };
 
+struct subscribe_data {
+    auto operator<=>(subscribe_data const&) const = default;
+
+    static constexpr uint32_t wire_size_{sizeof(service_t) + sizeof(instance_t) + sizeof(eventgroup_t) + sizeof(major_version_t)
+                                         + sizeof(event_t) + sizeof(pending_id_t)};
+
+    service_t service_;
+    instance_t instance_;
+    eventgroup_t eventgroup_;
+    major_version_t major_;
+    event_t event_;
+    pending_id_t pending_id_;
+};
+
+struct subscribe_with_filter_data {
+    auto operator<=>(subscribe_with_filter_data const&) const = default;
+
+    subscribe_data data_;
+    std::shared_ptr<debounce_filter_impl_t> filter_;
+};
+
+struct unsubscribe_command_data {
+    auto operator<=>(unsubscribe_command_data const&) const = default;
+
+    static unsubscribe_command_data create(id_e _id, client_t _client, subscribe_data _data) {
+        return {.header_ = command_header::create(_id, subscribe_data::wire_size_, _client), .payload_ = _data};
+    }
+
+    command_header header_;
+    subscribe_data payload_;
+};
+
+struct subscribe_command_data {
+    command_header header_;
+    subscribe_with_filter_data payload_;
+};
+
 struct subscribe_answer_data {
     auto operator<=>(subscribe_answer_data const&) const = default;
 
@@ -385,6 +424,12 @@ constexpr uint32_t wire_size(remove_security_policy_data const&) {
     return remove_security_policy_data::wire_size_;
 }
 
+inline uint32_t wire_size(std::shared_ptr<debounce_filter_impl_t> const& _filter) {
+    return _filter ? static_cast<uint32_t>(sizeof(bool) + sizeof(bool) + sizeof(int64_t)
+                                           + (_filter->ignore_.size() * (sizeof(size_t) + sizeof(byte_t))) + sizeof(bool))
+                   : 0;
+}
+
 inline uint32_t wire_size(routing_info_entry_data const& _entry) {
     // type (1) + entry-size field (4) + client (2)
     uint32_t its_size = static_cast<uint32_t>(ROUTING_INFO_ENTRY_HEADER_SIZE);
@@ -510,6 +555,20 @@ inline auto create_remove_security_policy_cmd(client_t _client, uint32_t _update
     return remove_security_policy_command_data::create(_client, _update_id, _uid, _gid);
 }
 
+inline auto create_expire_cmd(client_t _client, subscribe_data _data) {
+    return unsubscribe_command_data::create(id_e::EXPIRE_ID, _client, _data);
+}
+
+inline auto create_unsubscribe_cmd(client_t _client, subscribe_data _data) {
+    return unsubscribe_command_data::create(id_e::UNSUBSCRIBE_ID, _client, _data);
+}
+
+inline auto create_subscribe_cmd(client_t _client, std::shared_ptr<debounce_filter_impl_t> _filter, subscribe_data _data) {
+    return subscribe_command_data{
+            .header_ = command_header::create(id_e::SUBSCRIBE_ID, subscribe_data::wire_size_ + wire_size(_filter), _client),
+            .payload_ = {.data_ = _data, .filter_ = _filter}};
+}
+
 inline auto create_update_security_credentials_cmd(client_t _client, std::set<std::pair<uid_t, gid_t>> const& _input) {
     std::vector<std::pair<uid_t, gid_t>> data{_input.begin(), _input.end()};
     return update_security_credentials_command_data{
@@ -564,5 +623,4 @@ inline assign_client_command_data create_assign_client_cmd(client_t _client, std
     assign_client_data data{.name_ = _name, .address_bytes_ = _address_bytes, .port_ = _port, .has_address_ = _has_address};
     return {.header_ = command_header::create(id_e::ASSIGN_CLIENT_ID, wire_size(data), _client), .payload_ = data};
 }
-
 } // namespace vsomeip_v3::protocol

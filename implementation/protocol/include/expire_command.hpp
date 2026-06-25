@@ -18,7 +18,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class expire_command : public subscribe_command_base {
+class [[deprecated("Use create_expire_cmd() from command_types.hpp")]] expire_command : public subscribe_command_base {
 
 public:
     expire_command();
