@@ -14,7 +14,7 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class unsubscribe_command : public subscribe_command_base {
+class [[deprecated("Use create_unsubscribe_cmd() from command_types.hpp")]] unsubscribe_command : public subscribe_command_base {
 
 public:
     unsubscribe_command();

@@ -155,6 +155,19 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.pending_id_);
     } else if constexpr (std::is_same_v<T, remove_security_policy_data>) {
         return write_fields(_mem, _value.update_id_, _value.uid_, _value.gid_);
+    } else if constexpr (std::is_same_v<T, subscribe_data>) {
+        return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.major_, _value.event_, _value.pending_id_);
+    } else if constexpr (is_pair<T>) {
+        return write_fields(_mem, _value.first, _value.second);
+    } else if constexpr (std::is_same_v<T, std::shared_ptr<debounce_filter_impl_t>>) {
+        return _value ? write_fields(_mem, _value->on_change_, _value->on_change_resets_interval_, _value->interval_, _value->ignore_,
+                                     _value->send_current_value_after_)
+                      : 0;
+    } else if constexpr (std::is_same_v<T, subscribe_with_filter_data>) {
+        return write_fields(_mem, _value.data_, _value.filter_);
+    } else if constexpr (std::is_same_v<T, subscribe_answer_data>) {
+        return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.subscriber_, _value.event_,
+                            _value.pending_id_);
     } else if constexpr (std::is_same_v<T, update_security_policy_view>) {
         return write_fields(_mem, _value.update_id_, _value.policy_);
     } else if constexpr (std::is_same_v<T, routing_info_entry_data>) {
@@ -182,8 +195,6 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
     } else if constexpr (std::is_same_v<T, subscribe_answer_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.subscriber_, _value.event_,
                             _value.pending_id_);
-    } else if constexpr (is_pair<T>) {
-        return write_fields(_mem, _value.first, _value.second);
     } else if constexpr (is_serializable_range<T>) {
         if constexpr (std::is_same_v<T, std::vector<std::span<const byte_t>>>) {
             auto count = static_cast<uint32_t>(_value.size());

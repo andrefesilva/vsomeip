@@ -24,6 +24,8 @@
 
 namespace vsomeip_v3::protocol {
 
+uint32_t deserialize(std::map<std::size_t, byte_t>& _out, unsigned char const* _mem, uint32_t _size);
+uint32_t deserialize(std::shared_ptr<debounce_filter_impl_t>& _out, unsigned char const* _mem, uint32_t _size);
 uint32_t deserialize(std::vector<std::pair<uid_t, gid_t>>& _out, unsigned char const* _mem, uint32_t _size);
 
 template<typename T>
@@ -224,6 +226,47 @@ inline uint32_t deserialize(remove_security_policy_data& _out, unsigned char con
 }
 inline uint32_t deserialize(subscribe_answer_data& _out, unsigned char const* _mem, uint32_t _size) {
     return parse(_mem, _size, _out.service_, _out.instance_, _out.eventgroup_, _out.subscriber_, _out.event_, _out.pending_id_);
+}
+
+inline uint32_t deserialize(subscribe_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.service_, _out.instance_, _out.eventgroup_, _out.major_, _out.event_, _out.pending_id_);
+}
+
+inline uint32_t deserialize(std::map<std::size_t, byte_t>& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t its_offset = 0;
+    size_t its_key;
+    byte_t its_value;
+    while (_size - its_offset > sizeof(size_t) + sizeof(byte_t)) {
+        uint32_t parsed = parse(_mem + its_offset, _size - its_offset, its_key, its_value);
+        if (parsed == 0) {
+            break;
+        }
+        _out.emplace(std::pair(its_key, its_value));
+        its_offset += parsed;
+    }
+    return its_offset;
+}
+
+inline uint32_t deserialize(std::shared_ptr<debounce_filter_impl_t>& _out, unsigned char const* _mem, uint32_t _size) {
+    if (_size > 0) {
+        _out = std::make_shared<debounce_filter_impl_t>();
+    } else {
+        return 0;
+    }
+
+    uint32_t parsed = parse(_mem, _size, _out->on_change_, _out->on_change_resets_interval_, _out->interval_);
+    // this step is optional and may return 0
+    parsed += deserialize(_out->ignore_, _mem + parsed, _size - parsed);
+    return parsed + deserialize(_out->send_current_value_after_, _mem + parsed, _size - parsed);
+}
+
+inline uint32_t deserialize(subscribe_with_filter_data& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t parsed = deserialize(_out.data_, _mem, _size);
+    if (parsed == 0) {
+        return 0;
+    }
+    // do not use "parse" here, as the filter is optional!
+    return parsed + deserialize(_out.filter_, _mem + parsed, _size - parsed);
 }
 
 inline uint32_t deserialize(update_security_policy_data& _out, unsigned char const* _mem, uint32_t _size) {

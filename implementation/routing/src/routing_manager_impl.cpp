@@ -3372,18 +3372,29 @@ void routing_manager_impl::on_unsubscribe_ack(client_t _client, service_t _servi
 void routing_manager_impl::send_subscription(const client_t _offering_client, const service_t _service, const instance_t _instance,
                                              const eventgroup_t _eventgroup, const major_version_t _major,
                                              const std::set<client_t>& _clients, const remote_subscription_id_t _id) {
-    { // service hosted by local client
-        for (const auto its_client : _clients) {
-            if (!stub_->send_subscribe(find_routing_endpoint(_offering_client), its_client, _service, _instance, _eventgroup, _major,
-                                       ANY_EVENT, nullptr, _id)) {
-                try {
-                    const auto its_callback = std::bind(&routing_manager_stub_host::on_subscribe_nack,
-                                                        std::dynamic_pointer_cast<routing_manager_stub_host>(shared_from_this()),
-                                                        its_client, _service, _instance, _eventgroup, true, _id);
-                    boost::asio::post(io_, its_callback);
-                } catch (const std::exception& e) {
-                    VSOMEIP_ERROR_P << e.what();
-                }
+    protocol::subscribe_data data{.service_ = _service,
+                                  .instance_ = _instance,
+                                  .eventgroup_ = _eventgroup,
+                                  .major_ = _major,
+                                  .event_ = ANY_EVENT,
+                                  .pending_id_ = _id};
+    auto target = find_routing_endpoint(_offering_client);
+    if (!target) {
+        VSOMEIP_WARNING_P << "Couldn't send any subscription to local client [" << hex4(_service) << "." << hex4(_instance) << "."
+                          << hex4(_eventgroup) << "." << hex4(ANY_EVENT) << "]";
+        return;
+    }
+    for (const auto its_client : _clients) {
+        if (!target->send(protocol::create_subscribe_cmd(its_client, nullptr, data))) {
+            VSOMEIP_WARNING_P << "Couldn't send subscription to local client [" << hex4(_service) << "." << hex4(_instance) << "."
+                              << hex4(_eventgroup) << "." << hex4(ANY_EVENT) << "] subscriber: " << hex4(its_client);
+            try {
+                const auto its_callback = std::bind(&routing_manager_stub_host::on_subscribe_nack,
+                                                    std::dynamic_pointer_cast<routing_manager_stub_host>(shared_from_this()), its_client,
+                                                    _service, _instance, _eventgroup, true, _id);
+                boost::asio::post(io_, its_callback);
+            } catch (const std::exception& e) {
+                VSOMEIP_ERROR_P << e.what();
             }
         }
     }
@@ -3474,18 +3485,29 @@ void routing_manager_impl::send_unsubscription(client_t _offering_client, servic
                                                remote_subscription_id_t _id) {
 
     (void)_major; // TODO: Remove completely?
-    {
-        for (const auto its_client : _removed) {
-            if (!stub_->send_unsubscribe(find_routing_endpoint(_offering_client), its_client, _service, _instance, _eventgroup, ANY_EVENT,
-                                         _id)) {
-                try {
-                    const auto its_callback = std::bind(&routing_manager_stub_host::on_unsubscribe_ack,
-                                                        std::dynamic_pointer_cast<routing_manager_stub_host>(shared_from_this()),
-                                                        its_client, _service, _instance, _eventgroup, _id);
-                    boost::asio::post(io_, its_callback);
-                } catch (const std::exception& e) {
-                    VSOMEIP_ERROR_P << e.what();
-                }
+    auto const target = find_routing_endpoint(_offering_client);
+    if (!target) {
+        VSOMEIP_WARNING_P << "Couldn't send unsubscription to any client [" << hex4(_service) << "." << hex4(_instance) << "."
+                          << hex4(_eventgroup) << "." << hex4(ANY_EVENT) << "]";
+        return;
+    }
+    for (const auto its_client : _removed) {
+        if (!target->send(protocol::create_unsubscribe_cmd(its_client,
+                                                           protocol::subscribe_data{.service_ = _service,
+                                                                                    .instance_ = _instance,
+                                                                                    .eventgroup_ = _eventgroup,
+                                                                                    .major_ = ANY_MAJOR,
+                                                                                    .event_ = ANY_EVENT,
+                                                                                    .pending_id_ = _id}))) {
+            VSOMEIP_WARNING_P << "Couldn't send unsubscription to local client [" << hex4(_service) << "." << hex4(_instance) << "."
+                              << hex4(_eventgroup) << "." << hex4(ANY_EVENT) << "] subscriber: " << hex4(its_client);
+            try {
+                const auto its_callback = std::bind(&routing_manager_stub_host::on_unsubscribe_ack,
+                                                    std::dynamic_pointer_cast<routing_manager_stub_host>(shared_from_this()), its_client,
+                                                    _service, _instance, _eventgroup, _id);
+                boost::asio::post(io_, its_callback);
+            } catch (const std::exception& e) {
+                VSOMEIP_ERROR_P << e.what();
             }
         }
     }
@@ -3497,8 +3519,17 @@ void routing_manager_impl::send_expired_subscription(client_t _offering_client, 
 
     {
         for (const auto its_client : _removed) {
-            stub_->send_expired_subscription(find_routing_endpoint(_offering_client), its_client, _service, _instance, _eventgroup,
-                                             ANY_EVENT, _id);
+            if (auto target = find_routing_endpoint(_offering_client); !target
+                || !target->send(protocol::create_expire_cmd(its_client,
+                                                             protocol::subscribe_data{.service_ = _service,
+                                                                                      .instance_ = _instance,
+                                                                                      .eventgroup_ = _eventgroup,
+                                                                                      .major_ = ANY_MAJOR,
+                                                                                      .event_ = ANY_EVENT,
+                                                                                      .pending_id_ = _id}))) {
+                VSOMEIP_WARNING_P << "Couldn't send expired subscription to local client [" << hex4(_service) << "." << hex4(_instance)
+                                  << "." << hex4(_eventgroup) << "." << hex4(ANY_EVENT) << "] subscriber: " << hex4(its_client);
+            }
         }
     }
 }

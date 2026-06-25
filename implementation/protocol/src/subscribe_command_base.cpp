@@ -87,7 +87,7 @@ void subscribe_command_base::serialize(std::vector<byte_t>& _buffer) const {
     std::memcpy(&_buffer[its_offset], &instance_, sizeof(instance_));
     its_offset += sizeof(instance_);
     std::memcpy(&_buffer[its_offset], &eventgroup_, sizeof(eventgroup_));
-    its_offset += sizeof(instance_);
+    its_offset += sizeof(eventgroup_);
     _buffer[its_offset] = major_;
     its_offset += sizeof(major_);
     std::memcpy(&_buffer[its_offset], &event_, sizeof(event_));

@@ -655,6 +655,10 @@ std::string local_endpoint::name() const {
     return socket_->to_string();
 }
 
+template bool local_endpoint::send<protocol::subscribe_command_data>(protocol::subscribe_command_data const&,
+                                                                     std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::unsubscribe_command_data>(protocol::unsubscribe_command_data const&,
+                                                                       std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::send_command_data>(protocol::send_command_data const&,
                                                                 std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::send_command_raw>(protocol::send_command_raw const&,
