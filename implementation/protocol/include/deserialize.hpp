@@ -310,25 +310,16 @@ inline uint32_t deserialize(std::shared_ptr<message_impl>& _out, unsigned char c
         return 0;
     }
 
-    // first we need to add our own auxiliary data
-    _out = std::make_shared<message_impl>();
+    // first we need to read our own auxiliary data
     ipc_message_header ipc_header;
     uint32_t its_offset = deserialize(ipc_header, _mem, _size);
-    _out->set_instance(ipc_header.instance_);
-    _out->set_reliable(ipc_header.reliable_);
-    _out->set_check_result(ipc_header.status_);
-    // the "target" of the former "command" was only of interest in the rmc
-    // in which only the ipc_header is read. In the rmc reading the whole
-    // message the client of the message is the one of importance.
+
+    message_header_impl its_header;
+    its_header.instance_ = ipc_header.instance_;
 
     // now comes the "official" someip message part
-    service_t service;
-    its_offset += deserialize_be(service, _mem + its_offset);
-    _out->set_service(service);
-
-    method_t method;
-    its_offset += deserialize_be(method, _mem + its_offset);
-    _out->set_method(method);
+    its_offset += deserialize_be(its_header.service_, _mem + its_offset);
+    its_offset += deserialize_be(its_header.method_, _mem + its_offset);
 
     length_t length;
     its_offset += deserialize_be(length, _mem + its_offset);
@@ -339,29 +330,23 @@ inline uint32_t deserialize(std::shared_ptr<message_impl>& _out, unsigned char c
         return 0;
     }
 
-    client_t target;
-    its_offset += deserialize_be(target, _mem + its_offset);
-    _out->set_client(target);
-
-    session_t session;
-    its_offset += deserialize_be(session, _mem + its_offset);
-    _out->set_session(session);
-
-    protocol_version_t pv;
-    its_offset += deserialize_be(pv, _mem + its_offset);
-    _out->set_protocol_version(pv);
-
-    interface_version_t iv;
-    its_offset += deserialize_be(iv, _mem + its_offset);
-    _out->set_interface_version(iv);
+    // the "target" of the former "command" was only of interest in the rmc
+    // in which only the ipc_header is read. In the rmc reading the whole
+    // message the client of the message is the one of importance.
+    its_offset += deserialize_be(its_header.client_, _mem + its_offset);
+    its_offset += deserialize_be(its_header.session_, _mem + its_offset);
+    its_offset += deserialize_be(its_header.protocol_version_, _mem + its_offset);
+    its_offset += deserialize_be(its_header.interface_version_, _mem + its_offset);
 
     uint8_t message_type;
     its_offset += deserialize_be(message_type, _mem + its_offset);
-    _out->set_message_type(static_cast<message_type_e>(message_type));
+    its_header.type_ = static_cast<message_type_e>(message_type);
 
     uint8_t return_code;
     its_offset += deserialize_be(return_code, _mem + its_offset);
-    _out->set_return_code(static_cast<return_code_e>(return_code));
+    its_header.code_ = static_cast<return_code_e>(return_code);
+
+    _out = std::make_shared<message_impl>(its_header, ipc_header.reliable_, ipc_header.status_);
 
     auto const payload_size = _size - its_offset;
     if (payload_size > 0) {

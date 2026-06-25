@@ -52,6 +52,8 @@ public:
 
 public:
     // not exported, these are internal to the codebase
+    message_impl(const message_header_impl& _header, bool _reliable, uint8_t _check_result);
+
     void set_sec_client(const vsomeip_sec_client_t& _sec_client);
     void set_env(const std::string& _env);
 
