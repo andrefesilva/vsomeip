@@ -884,11 +884,14 @@ void socket_manager::send_someip(std::vector<unsigned char> const& _buffer, boos
 }
 
 bool socket_manager::insert_udp_recv_error(const boost::asio::ip::udp::endpoint& _endpoint, boost::system::error_code _ec) {
+    std::shared_ptr<fake_udp_socket_handle> handle; // cannot hold mtx_ while destroying handle!
+    std::scoped_lock lock(mtx_);
     if (auto fd_it = endpoint_udp_to_fd_.find(_endpoint); fd_it != endpoint_udp_to_fd_.end()) {
         auto& [endpoint, fd] = *fd_it;
         if (auto handle_it = fd_to_handle_.find(fd); handle_it != fd_to_handle_.end()) {
             auto [fd, weak_handle] = *handle_it;
-            if (auto handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(weak_handle.lock()); handle) {
+            handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(weak_handle.lock());
+            if (handle) {
                 handle->stash_recv_ec(_ec);
                 return true;
             }
@@ -898,11 +901,14 @@ bool socket_manager::insert_udp_recv_error(const boost::asio::ip::udp::endpoint&
 }
 
 bool socket_manager::insert_udp_send_error(const boost::asio::ip::udp::endpoint& _endpoint, boost::system::error_code _ec) {
+    std::shared_ptr<fake_udp_socket_handle> handle; // cannot hold mtx_ while destroying handle!
+    std::scoped_lock lock(mtx_);
     if (auto fd_it = endpoint_udp_to_fd_.find(_endpoint); fd_it != endpoint_udp_to_fd_.end()) {
         auto& [endpoint, fd] = *fd_it;
         if (auto handle_it = fd_to_handle_.find(fd); handle_it != fd_to_handle_.end()) {
             auto [fd, weak_handle] = *handle_it;
-            if (auto handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(weak_handle.lock()); handle) {
+            handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(weak_handle.lock());
+            if (handle) {
                 handle->stash_send_ec(_ec);
                 return true;
             }
