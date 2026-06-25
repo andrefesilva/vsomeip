@@ -114,7 +114,6 @@ public:
     // local_endpoint_manager_host
     client_t get_client_id() override;
     void set_port(port_t _port) override;
-    bool get_connection_param(client_t _client, boost::asio::ip::address& _address, port_t& _port) override;
     void register_error_handler(client_t _client, std::shared_ptr<local_endpoint> _ep) override;
 
     void on_offered_services_info(std::vector<protocol::service_data> const& _services);
@@ -240,7 +239,7 @@ private:
     /// @param _requested_services what services were requested by us and offered by client;
     void remove_local(bool _due_to_error, client_t _client, local_service_table& _requested_services);
 
-    void cleanup_routing_data();
+    void cleanup_consumer();
     void cleanup_subscriber(std::scoped_lock<std::mutex> const& _provider_lock);
 
     client_t find_local_client(service_t _service, instance_t _instance) const;
@@ -296,6 +295,13 @@ private:
                                                     eventgroup_t _eventgroup, std::scoped_lock<std::mutex> const&) const;
 
     void finish_shutdown();
+
+    std::shared_ptr<local_endpoint> find_or_create_consumer_ep(client_t _client);
+    std::shared_ptr<local_endpoint> find_consumer_ep(client_t _client);
+
+    void remove_consumer(client_t _client, bool _due_to_error, std::scoped_lock<std::mutex> const& _consumer_lock);
+
+    async::hook flush_consumer();
 
 private:
     routing_manager_host* host_;
@@ -356,12 +362,18 @@ private:
     // is trying to access data relevant for its "consumer" side
     mutable std::mutex consumer_mutex_;
 
+    struct consumer_data {
+        std::shared_ptr<local_endpoint> ep_;
+        boost::asio::ip::address address_;
+        port_t port_;
+    };
+    std::unordered_map<client_t, consumer_data> consumer_;
+
     bool request_debounce_timer_running_;
     boost::asio::steady_timer request_debounce_timer_;
 
     local_service_table requests_;
     local_service_table requests_to_debounce_;
-    std::map<client_t, std::pair<boost::asio::ip::address, port_t>> address_table_;
     local_offering_table available_services_;
     service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> consumed_events_;
     eventgroups_t consumed_eventgroups_;
@@ -380,6 +392,7 @@ private:
     std::set<subscription_data_t> pending_subscriptions_;
 
     async::trigger on_sender_stopped_;
+    async::trigger on_consumer_flushed_;
 };
 
 } // namespace vsomeip_v3

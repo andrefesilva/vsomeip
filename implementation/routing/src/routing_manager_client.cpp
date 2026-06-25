@@ -151,6 +151,17 @@ void routing_manager_client::start() {
 void routing_manager_client::log_status() {
     VSOMEIP_INFO_P << " ";
     ep_mgr_->print_status();
+    {
+        std::scoped_lock its_lock{consumer_mutex_};
+        VSOMEIP_INFO_P << "status local consumer endpoints: " << consumer_.size();
+        for (const auto& [client, data] : consumer_) {
+            if (data.ep_) {
+                data.ep_->print_status();
+            } else {
+                VSOMEIP_INFO_P << "No consumer connection to client 0x" << hex4(client);
+            }
+        }
+    }
 }
 
 void routing_manager_client::log_version() {
@@ -179,7 +190,7 @@ async::hook routing_manager_client::stop() {
             on_sender_stopped_ = {};
         }
     }
-    auto when_endpoints_flushed = ep_mgr_->stop();
+    auto when_provider_eps_flushed = ep_mgr_->stop();
 
     {
         std::scoped_lock its_lock{consumer_mutex_};
@@ -201,10 +212,17 @@ async::hook routing_manager_client::stop() {
     if (version_logger_) {
         version_logger_->stop();
     }
-    auto when_no_eps = when_endpoints_flushed.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
-        VSOMEIP_WARNING << "rmc::stop: endpoints where not flushed within time. Enforcing stop";
+    auto when_no_provider_eps = when_provider_eps_flushed.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
+        VSOMEIP_WARNING << "rmc::stop: producer endpoints where not flushed within time. Enforcing stop";
         if (auto self = weak_self.lock(); self) {
             self->ep_mgr_->force_stop();
+        }
+    });
+    auto when_consumer_eps_flushed = flush_consumer();
+    auto when_no_consumer_eps = when_consumer_eps_flushed.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
+        VSOMEIP_WARNING << "rmc::stop: consumer endpoints where not flushed within time. Enforcing stop";
+        if (auto self = weak_self.lock(); self) {
+            self->cleanup_consumer();
         }
     });
     auto when_no_sender = when_sender_stopped.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this(), this] {
@@ -221,6 +239,7 @@ async::hook routing_manager_client::stop() {
             }
         }
     });
+    auto when_no_eps = async::when_all(when_no_provider_eps, when_no_consumer_eps);
     auto when_all_stopped = async::when_all(when_no_eps, when_no_sender);
     return when_all_stopped.then([weak_self = weak_from_this()] {
         if (auto self = weak_self.lock(); self) {
@@ -512,7 +531,7 @@ void routing_manager_client::send_subscribe(client_t _client, service_t _service
 
     client_t its_target_client = find_local_client(_service, _instance);
     if (its_target_client != VSOMEIP_ROUTING_CLIENT) {
-        auto its_target = ep_mgr_->find_or_create_local_client(its_target_client);
+        auto its_target = find_or_create_consumer_ep(its_target_client);
         if (its_target) {
             its_target->send(&its_buffer[0], uint32_t(its_buffer.size()));
         } else {
@@ -614,7 +633,7 @@ void routing_manager_client::unsubscribe(client_t _client, service_t _service, i
             std::vector<byte_t> its_buffer;
             its_command.serialize(its_buffer);
 
-            auto its_target = ep_mgr_->find_local_client(find_local_client(_service, _instance));
+            auto its_target = find_consumer_ep(find_local_client(_service, _instance));
             if (its_target) {
                 its_target->send(&its_buffer[0], uint32_t(its_buffer.size()));
             } else {
@@ -1293,7 +1312,9 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
             std::vector<subscription_data_t> collected_subscriptions;
             {
                 std::scoped_lock its_lock(consumer_mutex_);
-                address_table_[its_client] = std::make_pair(its_address, its_port);
+                auto& data = consumer_[its_client];
+                data.address_ = its_address;
+                data.port_ = its_port;
                 for (const auto& s : e.services_) {
                     const auto its_service(s.service_);
                     const auto its_instance(s.instance_);
@@ -1390,8 +1411,7 @@ void routing_manager_client::reconnect() {
     // it is not guaranteed that all routing data was used for creating an endpoint
     // therefore it is better to remove the whole set, without a dependency to
     // a client id.
-    cleanup_routing_data();
-    ep_mgr_->clear_consumer_endpoints();
+    cleanup_consumer();
 
     // Restart Phase
     //
@@ -1725,16 +1745,6 @@ void routing_manager_client::set_port(port_t _port) {
     set_sec_client_port(_port);
 }
 
-bool routing_manager_client::get_connection_param(client_t _client, boost::asio::ip::address& _address, port_t& _port) {
-    std::scoped_lock lock{consumer_mutex_};
-    if (auto const it = address_table_.find(_client); it != address_table_.end()) {
-        _address = it->second.first;
-        _port = it->second.second;
-        return true;
-    }
-    return false;
-}
-
 void routing_manager_client::register_error_handler(client_t _client, std::shared_ptr<local_endpoint> _ep) {
     register_client_error_handler(_client, _ep);
 }
@@ -1920,6 +1930,7 @@ void routing_manager_client::restart_sender([[maybe_unused]] std::unique_lock<st
     }
     sender_ = ep_mgr_->create_routing_client();
     if (sender_) {
+        register_error_handler(VSOMEIP_ROUTING_CLIENT, sender_);
         // save to read even without acquiring the provider_mutex_, as a new
         // token is only generated during a reconnect or stop, start sequence,
         // which are serialized with the start of the sender.
@@ -1977,10 +1988,8 @@ void routing_manager_client::remove_local(bool _due_to_error, client_t _client, 
         // can mess up the book-keeping when checking the endpoint token
         ep_mgr_->remove_provider_endpoint(_client, _due_to_error);
     }
-    ep_mgr_->remove_consumer_endpoint(_client, _due_to_error);
     {
         std::scoped_lock its_lock(consumer_mutex_);
-        address_table_.erase(_client);
         auto removed = available_services_.remove_all_for_client(_client);
         for (auto const& [its_service, its_instance, its_major, its_minor, its_client] : removed) {
             // save the removed available services to re-request them from the router
@@ -1988,17 +1997,27 @@ void routing_manager_client::remove_local(bool _due_to_error, client_t _client, 
                     .service_ = its_service, .instance_ = its_instance, .major_version_ = its_major, .minor_version_ = its_minor});
             on_stop_offer_service(its_service, its_instance, its_major, its_minor, its_lock);
         }
+        remove_consumer(_client, _due_to_error, its_lock);
     }
 }
 
-void routing_manager_client::cleanup_routing_data() {
+void routing_manager_client::cleanup_consumer() {
     {
         std::scoped_lock lock(consumer_mutex_);
         auto removed = available_services_.clear();
         for (auto const& [service, instance, major, minor, client] : removed) {
             on_stop_offer_service(service, instance, major, minor, lock);
         }
-        address_table_.clear();
+        for (auto const& [client, data] : consumer_) {
+            if (data.ep_) {
+                data.ep_->stop(true);
+            }
+        }
+        consumer_.clear();
+        if (on_consumer_flushed_) {
+            on_consumer_flushed_.fire();
+            on_consumer_flushed_ = {};
+        }
     }
 }
 
@@ -2045,15 +2064,15 @@ void routing_manager_client::cleanup_subscriber(std::scoped_lock<std::mutex> con
 
 client_t routing_manager_client::get_client_by_address(const boost::asio::ip::address& _address, port_t _port) const {
     std::scoped_lock lock{consumer_mutex_};
-    auto const it = std::find_if(address_table_.begin(), address_table_.end(),
-                                 [&_address, &_port](const std::pair<client_t, std::pair<boost::asio::ip::address, port_t>>& p) {
-                                     return p.second.first == _address && p.second.second == _port;
-                                 });
-    return it == address_table_.end() ? VSOMEIP_CLIENT_UNSET : it->first;
+    auto const it = std::find_if(consumer_.begin(), consumer_.end(), [&_address, &_port](std::pair<client_t, consumer_data> const& p) {
+        return p.second.address_ == _address && p.second.port_ == _port;
+    });
+    return it == consumer_.end() ? VSOMEIP_CLIENT_UNSET : it->first;
 }
 
 client_t routing_manager_client::find_local_client(service_t _service, instance_t _instance) const {
     std::scoped_lock its_lock(consumer_mutex_);
+
     return available_services_.find_client(_service, _instance);
 }
 
@@ -2104,7 +2123,7 @@ bool routing_manager_client::send(client_t _client, std::shared_ptr<message> _me
         // Request
         client_t its_offerer = find_local_client(its_service, its_instance);
         if (its_offerer != VSOMEIP_ROUTING_CLIENT) {
-            its_target = ep_mgr_->find_or_create_local_client(its_offerer);
+            its_target = find_or_create_consumer_ep(its_offerer);
             if (!its_target) {
                 VSOMEIP_WARNING_P << "No endpoint to service to client: " << hex4(its_offerer) << " found or created";
             }
@@ -2826,10 +2845,17 @@ void routing_manager_client::finish_shutdown() {
         clear_remote_subscriptions(its_lock);
         cleanup_subscriber(its_lock);
     }
+    {
+        std::scoped_lock lock(consumer_mutex_);
+        auto removed = available_services_.clear();
+        for (auto const& [service, instance, major, minor, client] : removed) {
+            on_stop_offer_service(service, instance, major, minor, lock);
+        }
+    }
     if (status_logger_) {
         status_logger_->stop();
     }
-    cleanup_routing_data();
+
     host_->on_state(state_type_e::ST_DEREGISTERED);
 }
 std::string const& routing_manager_client::get_name() const {
@@ -2846,6 +2872,74 @@ vsomeip_sec_client_t routing_manager_client::get_sec_client() const {
 
 void routing_manager_client::set_sec_client_port(port_t _port) {
     host_->set_sec_client_port(_port);
+}
+
+std::shared_ptr<local_endpoint> routing_manager_client::find_or_create_consumer_ep(client_t _client) {
+    std::scoped_lock lock{consumer_mutex_};
+    auto const it = consumer_.find(_client);
+    if (it == consumer_.end()) {
+        // because we add unconditionally an entry to this map, upon receiving routing_info
+        // -> not finding any entry means we better not connect (would be possible via uds)
+        VSOMEIP_WARNING_P << "No consumer entry found for: 0x" << hex4(_client);
+        return nullptr;
+    }
+    if (!it->second.ep_) {
+        auto ep = ep_mgr_->create_consumer_endpoint(_client, get_client(), it->second.address_, it->second.port_);
+        if (!ep) {
+            return nullptr;
+        }
+        it->second.ep_ = ep;
+        // TODO this should be adjusted, but it does imply we need to take a deep look how to delete what security mapping
+        register_error_handler(_client, ep);
+        ep->start();
+    }
+    return it->second.ep_;
+}
+
+std::shared_ptr<local_endpoint> routing_manager_client::find_consumer_ep(client_t _client) {
+    std::scoped_lock lock{consumer_mutex_};
+    auto const it = consumer_.find(_client);
+    return it == consumer_.end() ? nullptr : it->second.ep_;
+}
+
+void routing_manager_client::remove_consumer(client_t _client, bool _due_to_error,
+                                             [[maybe_unused]] std::scoped_lock<std::mutex> const& _consumer_lock) {
+    VSOMEIP_INFO_P << "self 0x" << hex4(get_client_id()) << ", client 0x" << hex4(_client) << ", error " << _due_to_error;
+    if (auto const it = consumer_.find(_client); it != consumer_.end()) {
+        if (it->second.ep_) {
+            it->second.ep_->stop(_due_to_error);
+        }
+        consumer_.erase(it);
+        if (on_consumer_flushed_) {
+            for (auto const& [_, data] : consumer_) {
+                if (data.ep_) {
+                    return;
+                }
+            }
+            // no endpoint remains (note that it would not suffice to check for emptiness, as we might have received routing_info
+            on_consumer_flushed_.fire();
+            on_consumer_flushed_ = {};
+        }
+    }
+}
+
+async::hook routing_manager_client::flush_consumer() {
+    std::scoped_lock its_lock{consumer_mutex_};
+    assert(!on_consumer_flushed_);
+    on_consumer_flushed_ = async::trigger(io_);
+    bool done{true};
+    for (auto const& [client, data] : consumer_) {
+        if (data.ep_) {
+            done = false;
+            data.ep_->start_flushing();
+        }
+    }
+    auto ret = on_consumer_flushed_.get_hook();
+    if (done) {
+        on_consumer_flushed_.fire();
+        on_consumer_flushed_ = {};
+    }
+    return ret;
 }
 
 } // namespace vsomeip_v3
