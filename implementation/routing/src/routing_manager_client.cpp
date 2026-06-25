@@ -37,7 +37,6 @@
 #include "../../endpoints/include/local_endpoint.hpp"
 #include "../../message/include/message_impl.hpp"
 #include "../../protocol/include/config_command.hpp"
-#include "../../protocol/include/distribute_security_policies_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
 #include "../../protocol/include/deserialize.hpp"
@@ -45,8 +44,6 @@
 #include "../../protocol/include/send_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
-#include "../../protocol/include/update_security_credentials_command.hpp"
-#include "../../protocol/include/update_security_policy_command.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../protocol/include/serialize.hpp"
 #include "../../service_discovery/include/runtime.hpp"
@@ -1163,11 +1160,16 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
             [[gnu::fallthrough]];
         case protocol::id_e::UPDATE_SECURITY_POLICY_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
-                protocol::update_security_policy_command its_command(is_internal_policy_update);
-                std::vector<byte_t> its_buffer(_data, _data + _size);
-                its_command.deserialize(its_buffer, its_error);
-                if (its_error == protocol::error_e::ERROR_OK) {
-                    auto its_policy = its_command.get_policy();
+                if (protocol::update_security_policy_data its_data;
+                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+                    auto its_policy = std::make_shared<policy>();
+                    const byte_t* ptr = its_data.policy_.data();
+                    uint32_t size = static_cast<uint32_t>(its_data.policy_.size());
+                    if (its_data.policy_.size() == 0 || !its_policy->deserialize(ptr, size)) {
+                        VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed: " << utility::dump(_data, _size);
+                        break;
+                    }
+
                     uid_t its_uid;
                     gid_t its_gid;
                     if (its_policy->get_uid_gid(its_uid, its_gid)) {
@@ -1176,8 +1178,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                             configuration_->get_policy_manager()->update_security_policy(its_uid, its_gid, its_policy);
                             std::scoped_lock its_sender_lock{sender_mutex_};
                             if (sender_) {
-                                sender_->send(
-                                        protocol::create_update_security_policy_response_cmd(get_client(), its_command.get_update_id()));
+                                sender_->send(protocol::create_update_security_policy_response_cmd(get_client(), its_data.update_id_));
                             } else {
                                 VSOMEIP_ERROR_P << "Failed due to a missing sender";
                             }
@@ -1186,7 +1187,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                         VSOMEIP_ERROR << "vSomeIP Security: Policy has no valid uid/gid!";
                     }
                 } else {
-                    VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed!";
+                    VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed: " << utility::dump(_data, _size);
                 }
             } else {
                 VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " : routing_manager_client::on_message: "
@@ -1224,36 +1225,34 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
         case protocol::id_e::DISTRIBUTE_SECURITY_POLICIES_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
-                protocol::distribute_security_policies_command its_command;
-                std::vector<byte_t> its_buffer(_data, _data + _size);
-                its_command.deserialize(its_buffer, its_error);
-                if (its_error == protocol::error_e::ERROR_OK) {
-                    for (auto p : its_command.get_policies()) {
+                if (std::vector<std::shared_ptr<policy>> its_data;
+                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+                    for (auto p : its_data) {
                         uid_t its_uid;
                         gid_t its_gid;
                         p->get_uid_gid(its_uid, its_gid);
-                        if (configuration_->get_policy_manager()->is_policy_update_allowed(its_uid, p))
+                        if (configuration_->get_policy_manager()->is_policy_update_allowed(its_uid, p)) {
                             configuration_->get_policy_manager()->update_security_policy(its_uid, its_gid, p);
+                        }
                     }
-                } else
-                    VSOMEIP_ERROR_P << "Distribute security policies command deserialization failed (" << static_cast<int>(its_error)
-                                    << ")";
-            } else
+                } else {
+                    VSOMEIP_ERROR_P << "Distribute security policies command deserialization failed: " << utility::dump(_data, _size);
+                }
+            } else {
                 VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " : routing_manager_client::on_message: "
                                 << " received a security policy distribution command from a client which isn't the routing manager"
                                 << " : Skip message!";
+            }
             break;
         }
 
         case protocol::id_e::UPDATE_SECURITY_CREDENTIALS_ID: {
             if (!configuration_->is_security_enabled() || is_from_routing) {
-                protocol::update_security_credentials_command its_command;
-                std::vector<byte_t> its_buffer(_data, _data + _size);
-                its_command.deserialize(its_buffer, its_error);
-                if (its_error == protocol::error_e::ERROR_OK) {
-                    on_update_security_credentials(its_command);
+                if (std::vector<std::pair<uid_t, gid_t>> its_data;
+                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+                    on_update_security_credentials(its_data);
                 } else
-                    VSOMEIP_ERROR_P << "Update security credentials command deserialization failed (" << static_cast<int>(its_error) << ")";
+                    VSOMEIP_ERROR_P << "Update security credentials command deserialization failed: " << utility::dump(_data, _size);
             } else
                 VSOMEIP_WARNING << "vSomeIP Security: Client 0x" << hex4(get_client()) << " : routing_manager_client::on_message: "
                                 << "received a security credential update from a client which isn't the routing manager"
@@ -1811,8 +1810,8 @@ void routing_manager_client::resend_provided_event_registrations() {
 
 #ifndef VSOMEIP_DISABLE_SECURITY
 
-void routing_manager_client::on_update_security_credentials(const protocol::update_security_credentials_command& _command) {
-    for (const auto& c : _command.get_credentials()) {
+void routing_manager_client::on_update_security_credentials(std::vector<std::pair<uid_t, gid_t>> const& _credentials) {
+    for (const auto& c : _credentials) {
         std::shared_ptr<policy> its_policy(std::make_shared<policy>());
         boost::icl::interval_set<gid_t> its_gid_set;
         uid_t its_uid(c.first);

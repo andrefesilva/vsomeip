@@ -5,23 +5,24 @@
 
 #pragma once
 
+#include "protocol.hpp"
+
 #include <vsomeip/enumeration_types.hpp>
 #include <vsomeip/primitive_types.hpp>
 #include <vsomeip/message.hpp>
 #include <vsomeip/payload.hpp>
+#include <vsomeip/defines.hpp>
 
 #include <boost/asio/ip/address_v4.hpp>
-
-#include "protocol.hpp"
-#include "vsomeip/defines.hpp"
 
 #include <compare>
 #include <cstring>
 #include <vector>
 #include <type_traits>
 #include <span>
+#include <set>
 #include <memory>
-#include <vector>
+#include <numeric>
 
 namespace vsomeip_v3::protocol {
 
@@ -265,6 +266,34 @@ struct remove_security_policy_command_data {
     remove_security_policy_data payload_;
 };
 
+struct update_security_credentials_command_data {
+    auto operator<=>(update_security_credentials_command_data const&) const = default;
+
+    command_header header_;
+    std::vector<std::pair<uid_t, gid_t>> payload_;
+};
+
+// used for serialization and the compound command
+struct update_security_policy_view {
+    uint32_t update_id_;
+    std::span<byte_t const> policy_;
+};
+
+// used for deserialization
+struct update_security_policy_data {
+    uint32_t update_id_;
+    std::vector<byte_t> policy_;
+};
+
+struct update_security_policy_command_data {
+    command_header header_;
+    update_security_policy_view payload_;
+};
+
+struct distribute_security_policies_data {
+    command_header header_;
+    std::vector<std::span<byte_t const>> payload_;
+};
 // One entry of a ROUTING_INFO command. Unlike the fixed-size command payloads
 // above, an entry is variable-length: the (IPv4) address is optional and the
 // number of services varies, so this is an owning struct rather than a trivially
@@ -293,6 +322,10 @@ constexpr uint32_t wire_size(command_header const&) {
 
 constexpr uint32_t wire_size(service_data const&) {
     return service_data::wire_size_;
+}
+
+inline uint32_t wire_size(std::set<std::pair<uid_t, gid_t>> const& _input) {
+    return static_cast<uint32_t>(_input.size()) * (sizeof(uid_t) + sizeof(gid_t));
 }
 
 inline uint32_t wire_size(register_event_data const& _in) {
@@ -434,6 +467,28 @@ inline auto create_remove_security_policy_cmd(client_t _client, uint32_t _update
     return remove_security_policy_command_data::create(_client, _update_id, _uid, _gid);
 }
 
+inline auto create_update_security_credentials_cmd(client_t _client, std::set<std::pair<uid_t, gid_t>> const& _input) {
+    std::vector<std::pair<uid_t, gid_t>> data{_input.begin(), _input.end()};
+    return update_security_credentials_command_data{
+            .header_ = command_header::create(id_e::UPDATE_SECURITY_CREDENTIALS_ID, wire_size(_input), _client),
+            .payload_ = std::move(data)};
+}
+
+inline auto create_update_security_policy_cmd(client_t _client, uint32_t _update_id, std::span<byte_t const> _payload) {
+    return update_security_policy_command_data{
+            .header_ = command_header::create(id_e::UPDATE_SECURITY_POLICY_ID, static_cast<uint32_t>(_payload.size()) + sizeof(uint32_t),
+                                              _client),
+            .payload_ = update_security_policy_view{.update_id_ = _update_id, .policy_ = std::move(_payload)}};
+}
+inline auto create_distribute_security_policy_cmd(client_t _client, std::vector<std::span<byte_t const>> _payload) {
+    uint32_t length = static_cast<uint32_t>(_payload.size() + 1) * sizeof(uint32_t);
+    for (auto const& payload : _payload) {
+        length += static_cast<uint32_t>(payload.size());
+    }
+    return distribute_security_policies_data{.header_ = command_header::create(id_e::DISTRIBUTE_SECURITY_POLICIES_ID, length, _client),
+                                             .payload_ = std::move(_payload)};
+}
+
 inline routing_info_command_data create_routing_info_cmd(client_t _client, std::vector<routing_info_entry_data> _entries) {
     uint32_t length = 0;
     for (auto const& entry : _entries) {
@@ -446,6 +501,7 @@ inline auto create_subscribe_ack_cmd(client_t _client, subscribe_answer_data _da
     return subscribe_answer_command_data{
             .header_ = command_header::create(id_e::SUBSCRIBE_ACK_ID, subscribe_answer_data::wire_size_, _client), .payload_ = _data};
 }
+
 inline auto create_subscribe_nack_cmd(client_t _client, subscribe_answer_data _data) {
     return subscribe_answer_command_data{
             .header_ = command_header::create(id_e::SUBSCRIBE_NACK_ID, subscribe_answer_data::wire_size_, _client), .payload_ = _data};

@@ -19,6 +19,11 @@ concept has_header = requires(T t) { t.header_; };
 template<typename T>
 concept has_payload = requires(T t) { t.payload_; };
 template<typename T>
+concept is_pair = requires(T t) {
+    t.first;
+    t.second;
+};
+template<typename T>
 concept is_serializable_range = requires(T const& t) {
     std::begin(t);
     std::end(t);
@@ -28,6 +33,8 @@ static_assert(has_header<service_command_data>);
 static_assert(has_payload<service_command_data>);
 static_assert(has_header<single_field_command_data<offer_type_e>>);
 static_assert(has_payload<single_field_command_data<offer_type_e>>);
+static_assert(is_pair<std::pair<int, int>>);
+static_assert(!is_pair<int>);
 
 // Forward declaration so write_fields can call serialize in its fold expression.
 template<typename T>
@@ -119,6 +126,8 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.pending_id_);
     } else if constexpr (std::is_same_v<T, remove_security_policy_data>) {
         return write_fields(_mem, _value.update_id_, _value.uid_, _value.gid_);
+    } else if constexpr (std::is_same_v<T, update_security_policy_view>) {
+        return write_fields(_mem, _value.update_id_, _value.policy_);
     } else if constexpr (std::is_same_v<T, routing_info_entry_data>) {
         bool const has_address = !_value.address_.is_unspecified();
 
@@ -144,13 +153,26 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
     } else if constexpr (std::is_same_v<T, subscribe_answer_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.eventgroup_, _value.subscriber_, _value.event_,
                             _value.pending_id_);
+    } else if constexpr (is_pair<T>) {
+        return write_fields(_mem, _value.first, _value.second);
     } else if constexpr (is_serializable_range<T>) {
-        // covers span, vector, set, map etc..
-        uint32_t written = 0;
-        for (auto const& v : _value) {
-            written += serialize(v, _mem + written);
+        if constexpr (std::is_same_v<T, std::vector<std::span<const byte_t>>>) {
+            auto count = static_cast<uint32_t>(_value.size());
+            uint32_t written = serialize(count, _mem);
+            for (auto const& range : _value) {
+                auto length = static_cast<uint32_t>(range.size());
+                written += serialize(length, _mem + written);
+                written += serialize(range, _mem + written);
+            }
+            return written;
+        } else {
+            // covers span, vector, set, map etc..
+            uint32_t written = 0;
+            for (auto const& v : _value) {
+                written += serialize(v, _mem + written);
+            }
+            return written;
         }
-        return written;
     } else if constexpr (has_header<T>) {
         if constexpr (has_payload<T>) {
             // non-trivial commands -> recurse!

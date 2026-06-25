@@ -27,7 +27,6 @@
 #include "../../endpoints/include/abstract_socket_factory.hpp"
 #include "../../endpoints/include/local_endpoint.hpp"
 #include "../../endpoints/include/local_server.hpp"
-#include "../../protocol/include/distribute_security_policies_command.hpp"
 #include "../../protocol/include/expire_command.hpp"
 #include "../../protocol/include/logging.hpp"
 #include "../../protocol/include/offered_services_request_command.hpp"
@@ -37,8 +36,6 @@
 #include "../../protocol/include/subscribe_ack_command.hpp"
 #include "../../protocol/include/subscribe_command.hpp"
 #include "../../protocol/include/unsubscribe_command.hpp"
-#include "../../protocol/include/update_security_credentials_command.hpp"
-#include "../../protocol/include/update_security_policy_command.hpp"
 #include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../protocol/include/serialize.hpp"
@@ -675,16 +672,10 @@ void routing_manager_stub::on_stop_offer_service_unlocked(client_t _client, serv
 void routing_manager_stub::send_client_credentials(const client_t _target, std::set<std::pair<uid_t, gid_t>>& _credentials) {
 
     if (auto its_endpoint = find_local_routing_endpoint(_target); its_endpoint) {
-        protocol::update_security_credentials_command its_command;
-        its_command.set_client(_target);
-        its_command.set_credentials(_credentials);
-
-        std::vector<byte_t> its_buffer;
-        its_command.serialize(its_buffer);
-
-        send_local(its_endpoint, its_buffer);
-    } else
+        its_endpoint->send(protocol::create_update_security_credentials_cmd(_target, _credentials));
+    } else {
         VSOMEIP_ERROR_P << "Sending credentials to client [" << hex4(_target) << "] failed";
+    }
 }
 
 void routing_manager_stub::send_client_routing_info(const client_t _target, protocol::routing_info_entry_data _entry) {
@@ -1162,33 +1153,8 @@ bool routing_manager_stub::send_update_security_policy_request(client_t _client,
     (void)_uid;
 
     if (auto its_endpoint = find_local_routing_endpoint(_client); its_endpoint) {
-        std::vector<byte_t> its_command;
-        // command
-        its_command.push_back(byte_t(protocol::id_e::UPDATE_SECURITY_POLICY_ID));
-
-        // version
-        its_command.push_back(0x00);
-        its_command.push_back(0x00);
-
-        // client ID
-        for (uint32_t i = 0; i < sizeof(client_t); ++i) {
-            its_command.push_back(reinterpret_cast<const byte_t*>(&_client)[i]);
-        }
-        // security update id length + payload length including gid and uid
-        std::uint32_t its_size = uint32_t(sizeof(pending_security_update_id_t) + _payload->get_length());
-        for (uint32_t i = 0; i < sizeof(its_size); ++i) {
-            its_command.push_back(reinterpret_cast<const byte_t*>(&its_size)[i]);
-        }
-        // ID of update request
-        for (uint32_t i = 0; i < sizeof(pending_security_update_id_t); ++i) {
-            its_command.push_back(reinterpret_cast<const byte_t*>(&_update_id)[i]);
-        }
-        // payload
-        for (uint32_t i = 0; i < _payload->get_length(); ++i) {
-            its_command.push_back(_payload->get_data()[i]);
-        }
-
-        return send_local(its_endpoint, its_command);
+        return its_endpoint->send(protocol::create_update_security_policy_cmd(
+                _client, _update_id, std::span<unsigned char>(_payload->get_data(), _payload->get_length())));
     } else {
         return false;
     }
@@ -1203,15 +1169,12 @@ bool routing_manager_stub::send_cached_security_policies(client_t _client) {
 
             VSOMEIP_INFO_P << "Distributing " << updated_security_policies_.size()
                            << " security policy updates to registering client: " << hex4(_client);
-
-            protocol::distribute_security_policies_command its_command;
-            its_command.set_client(VSOMEIP_ROUTING_CLIENT);
-            its_command.set_payloads(updated_security_policies_);
-
-            std::vector<byte_t> its_buffer;
-            its_command.serialize(its_buffer);
-
-            send_local(its_endpoint, its_buffer);
+            std::vector<std::span<byte_t const>> data;
+            data.reserve(updated_security_policies_.size());
+            for (auto const& [_, payload] : updated_security_policies_) {
+                data.push_back({payload->get_data(), payload->get_length()});
+            }
+            its_endpoint->send(protocol::create_distribute_security_policy_cmd(VSOMEIP_ROUTING_CLIENT, data));
         }
     } else
         VSOMEIP_WARNING_P << "Could not send cached security policies to registering client: 0x" << hex4(_client);
