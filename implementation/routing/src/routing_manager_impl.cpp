@@ -134,7 +134,7 @@ void routing_manager_impl::on_register_application(client_t _client, const boost
     }
 }
 
-void routing_manager_impl::lazy_load([[maybe_unused]] const std::string& _client_host) {
+void routing_manager_impl::lazy_load([[maybe_unused]] std::string_view _client_host) {
     VSOMEIP_ERROR_P << "Not supposed to be called";
 }
 

@@ -17,8 +17,10 @@
 
 #include <cstdint>
 #include <cstring> // memcpy
-#include <optional>
+#include <string>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace vsomeip_v3::protocol {
 
@@ -73,6 +75,79 @@ inline uint32_t deserialize(command_header& _out, unsigned char const* _mem, uin
 
 inline uint32_t deserialize(service_data& _out, unsigned char const* _mem, uint32_t _size) {
     return parse(_mem, _size, _out.service_, _out.instance_, _out.major_version_, _out.minor_version_);
+}
+
+// Deserializes a length-prefixed string. Returns bytes parsed (0 on error); _out owns the data.
+inline uint32_t deserialize(std::string& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t pos = 0;
+    uint32_t len = 0;
+    if (pos + sizeof(uint32_t) > _size)
+        return 0;
+    std::memcpy(&len, _mem + pos, sizeof(uint32_t));
+    pos += sizeof(uint32_t);
+
+    // _size >= pos here, so the subtraction cannot underflow and the check cannot overflow.
+    if (len > _size - pos)
+        return 0;
+    _out.assign(reinterpret_cast<const char*>(_mem + pos), len);
+    pos += len;
+    return pos;
+}
+
+// Deserializes a sequence of length-prefixed key/value string pairs (e.g. a config payload).
+// Returns bytes parsed (0 on error); each pair owns its data.
+inline uint32_t deserialize(std::vector<std::pair<std::string, std::string>>& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t acc = 0;
+    while (acc < _size) {
+        std::string key;
+        auto const key_read = deserialize(key, _mem + acc, _size - acc);
+        if (key_read == 0)
+            return 0;
+        acc += key_read;
+
+        std::string value;
+        auto const value_read = deserialize(value, _mem + acc, _size - acc);
+        if (value_read == 0)
+            return 0;
+        acc += value_read;
+
+        _out.emplace_back(std::move(key), std::move(value));
+    }
+    return acc;
+}
+
+/// Zero-copy deserialization for assign_client payload.
+/// Returns bytes parsed (0 on error). name_ is a view into _mem.
+inline uint32_t deserialize(assign_client_data& _out, unsigned char const* _mem, uint32_t _size) {
+    uint32_t pos = 0;
+
+    if (pos + sizeof(uint32_t) > _size)
+        return 0;
+    uint32_t name_len = 0;
+    std::memcpy(&name_len, _mem + pos, sizeof(uint32_t));
+    pos += sizeof(uint32_t);
+
+    if (pos + name_len > _size)
+        return 0;
+    _out.name_ = std::string_view(reinterpret_cast<const char*>(_mem + pos), name_len);
+    pos += name_len;
+
+    if (pos + sizeof(uint8_t) > _size)
+        return 0;
+    uint8_t has_addr = 0;
+    std::memcpy(&has_addr, _mem + pos, sizeof(uint8_t));
+    pos += sizeof(uint8_t);
+    _out.has_address_ = (has_addr != 0);
+
+    if (_out.has_address_) {
+        if (pos + _out.address_bytes_.size() + sizeof(port_t) > _size)
+            return 0;
+        std::memcpy(_out.address_bytes_.data(), _mem + pos, _out.address_bytes_.size());
+        pos += static_cast<uint32_t>(_out.address_bytes_.size());
+        std::memcpy(&_out.port_, _mem + pos, sizeof(port_t));
+        pos += sizeof(port_t);
+    }
+    return pos;
 }
 
 inline uint32_t deserialize(register_event_data& _out, unsigned char const* _mem, uint32_t _size) {

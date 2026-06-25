@@ -266,16 +266,4 @@ std::string to_string(vsomeip_v3::payload const& p) {
     std::copy(payload_it, payload_it + p.get_length(), std::back_inserter(input_payload));
     return to_string(input_payload);
 }
-
-std::string to_string(vsomeip_v3::protocol::config_command const& c) {
-    std::vector<std::pair<std::string, std::string>> v;
-    auto const& container = c.configs();
-    v.reserve(container.size());
-
-    for (const auto& [key, value] : container) {
-        v.emplace_back(key, (key == "expected_id") ? hex_bytes_to_string(value) : value);
-    }
-
-    return to_string(v);
-}
 }

@@ -21,7 +21,7 @@ namespace vsomeip_v3::protocol {
  * See the vsomeip protocol documentation for more information on how this command
  * is structured.
  */
-class config_command final : public command {
+class [[deprecated("config_command is deprecated")]] config_command final : public command {
 public:
     /** Creates a new `config_command`. */
     config_command() : command(id_e::CONFIG_ID) { }

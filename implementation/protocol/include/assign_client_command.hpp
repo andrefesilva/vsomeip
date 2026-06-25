@@ -13,13 +13,11 @@
 namespace vsomeip_v3 {
 namespace protocol {
 
-class assign_client_command : public command {
+class [[deprecated("assign_client_command is deprecated")]] assign_client_command : public command {
 public:
     assign_client_command();
 
     // command
-    id_e get_id() const;
-
     void serialize(std::vector<byte_t>& _buffer) const;
     void deserialize(const std::vector<byte_t>& _buffer, error_e& _error);
 

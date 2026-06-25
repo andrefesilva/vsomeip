@@ -12,6 +12,7 @@
 #include <cstring> // memcpy
 #include <iterator>
 #include <iostream>
+
 namespace vsomeip_v3::protocol {
 
 template<typename T>
@@ -53,6 +54,21 @@ uint32_t write_fields(unsigned char* _mem, Ts const&... _fields) {
     return written;
 }
 
+inline uint32_t write_string(unsigned char* _mem, std::string_view _value) {
+    auto len = static_cast<uint32_t>(_value.size());
+    std::memcpy(_mem, &len, sizeof(uint32_t));
+    std::memcpy(_mem + sizeof(uint32_t), _value.data(), _value.size());
+    return sizeof(uint32_t) + len;
+}
+
+template<is_serializable_range R>
+uint32_t write_range(unsigned char* _mem, R const& _range) {
+    uint32_t written = 0;
+    for (auto const& v : _range)
+        written += serialize(v, _mem + written);
+    return written;
+}
+
 template<typename T>
 uint32_t write_be_field(unsigned char* _mem, T _value) {
     if constexpr (std::is_same_v<T, uint8_t>) {
@@ -87,6 +103,19 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.id_, _value.version_, _value.client_, _value.length_);
     } else if constexpr (std::is_same_v<T, service_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.major_version_, _value.minor_version_);
+    } else if constexpr (std::is_same_v<T, std::string_view>) {
+        return write_string(_mem, _value);
+    } else if constexpr (std::is_same_v<T, config_entry>) {
+        return write_fields(_mem, _value.key_, _value.value_);
+    } else if constexpr (std::is_same_v<T, assign_client_data>) {
+        uint32_t written = write_string(_mem, _value.name_);
+        uint8_t has_addr = _value.has_address_ ? 1 : 0;
+        written += serialize(has_addr, _mem + written);
+        if (_value.has_address_) {
+            written += write_range(_mem + written, _value.address_bytes_);
+            written += serialize(_value.port_, _mem + written);
+        }
+        return written;
     } else if constexpr (std::is_same_v<T, register_event_data>) {
         return write_fields(_mem, _value.service_, _value.instance_, _value.event_, _value.event_type_, _value.is_provided_,
                             _value.reliability_, _value.is_cyclic_, static_cast<uint16_t>(_value.eventgroups_.size()), _value.eventgroups_);
@@ -175,11 +204,9 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         }
     } else if constexpr (has_header<T>) {
         if constexpr (has_payload<T>) {
-            // non-trivial commands -> recurse!
             return write_fields(_mem, _value.header_, _value.payload_);
         } else {
-            // simple commands (PING, PONG, SUSPEND)
-            return serialize(_value.header_, _mem);
+            return serialize(_value.header_, _mem); // simple commands (PING, PONG, SUSPEND)
         }
     } else {
         static_assert(!std::is_same_v<T, T>, "Unsupported type requested to be serialized");

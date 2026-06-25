@@ -29,23 +29,8 @@ namespace vsomeip_v3::testing {
             TEST_LOG << "wire bytes were not long enough to contain the header";
             return false;
         }
-        auto const deal_with_important_command = [&](auto command) {
-            std::vector<unsigned char> payload;
-            payload.reserve(_size);
-            std::copy(_begin, _begin + _size, std::back_inserter(payload));
-            protocol::error_e e;
-            command.deserialize(payload, e);
-            if (e == protocol::error_e::ERROR_OK) {
-                out.id_ = command.get_id();
-                out.client_id_ = command.get_client();
-                out.payload_ = command_payload(std::move(command));
-                return true;
-            }
-            return false;
-        };
-
         // ROUTING_INFO uses the struct-based codec, so it is parsed with the free-function
-        // deserialize overloads rather than the generic (member-based) deal_with_important_command.
+        // deserialize overloads.
         auto const deal_with_routing_info = [&] {
             protocol::routing_info_command_data its_command;
             auto const its_size = static_cast<uint32_t>(_size);
@@ -68,7 +53,16 @@ namespace vsomeip_v3::testing {
 
         if (out.id_ == protocol::id_e::ROUTING_INFO_ID && deal_with_routing_info()) {
             _out_message = std::move(out);
-        } else if (out.id_ == protocol::id_e::CONFIG_ID && deal_with_important_command(protocol::config_command{})) {
+        } else if (out.id_ == protocol::id_e::CONFIG_ID) {
+            protocol::command_header hdr{};
+            auto parsed_hdr = protocol::deserialize(hdr, _begin, static_cast<uint32_t>(_size));
+            if (parsed_hdr) {
+                out.client_id_ = hdr.client_;
+                // deserialize all key-value pairs for display
+                std::vector<std::pair<std::string, std::string>> entries;
+                protocol::deserialize(entries, _begin + parsed_hdr, hdr.length_);
+                out.payload_ = command_payload(std::move(entries));
+            }
             _out_message = std::move(out);
         } else {
             // the data is not important enough to parse the command payload. Lets parse the client

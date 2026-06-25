@@ -695,4 +695,8 @@ template bool local_endpoint::send<protocol::distribute_security_policies_data>(
                                                                                 std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::routing_info_command_data>(protocol::routing_info_command_data const&,
                                                                         std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::config_command_data>(protocol::config_command_data const&,
+                                                                  std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::assign_client_command_data>(protocol::assign_client_command_data const&,
+                                                                         std::shared_ptr<trace::connector_impl> const&);
 }
