@@ -55,27 +55,23 @@ public:
     std::shared_ptr<local_server> create_local_server(transport_protocol_e _transport_protocol);
 
     std::shared_ptr<local_endpoint> create_routing_client();
-    std::shared_ptr<local_endpoint> find_or_create_local_client(client_t _client);
-    std::shared_ptr<local_endpoint> find_local_client(client_t _client);
+    std::shared_ptr<local_endpoint> create_consumer_endpoint(client_t _client, client_t _own_id, boost::asio::ip::address _remote_address,
+                                                             port_t _remote_port);
 
     // server endpoint API (endpoints towards clients of this application)
     std::shared_ptr<local_endpoint> find_local_server_endpoint(client_t _client) const;
 
     void remove_provider_endpoint(client_t _client, bool _remove_due_to_error);
-    void remove_consumer_endpoint(client_t _client, bool _remove_due_to_error);
     void clear_provider_endpoints();
-    void clear_consumer_endpoints();
     void stop_all_endpoints();
 
     // Statistics
-    void log_client_states() const;
     void print_status() const;
 
     uint32_t provider_connection_token(client_t _client) const;
 
 private:
     void clear_provider_endpoints(std::scoped_lock<std::mutex> const& _lock);
-    void clear_consumer_endpoints(std::scoped_lock<std::mutex> const& _lock);
     client_t get_client_id() const;
     std::string get_client_env() const;
 
@@ -85,11 +81,6 @@ private:
     std::shared_ptr<local_endpoint> create_local_client_endpoint(client_t _client, client_t _own_id,
                                                                  boost::asio::ip::address const& _remote_address, port_t _remote_port,
                                                                  bool _is_guest);
-    std::shared_ptr<local_endpoint> create_local_client_unlocked(client_t _client, boost::asio::ip::address const& _remote_address,
-                                                                 port_t _remote_port, bool _is_guest);
-    std::shared_ptr<local_endpoint> find_local_client_unlocked(client_t _client);
-
-    void remove_local_client_endpoint_unlocked(client_t _client, bool _remove_due_to_error);
     void remove_local_server_endpoint_unlocked(client_t _client, bool _remove_due_to_error);
 
     bool get_local_server_port(port_t& _port, const std::set<port_t>& _used_ports) const;
@@ -116,7 +107,6 @@ private:
     mutable std::mutex mtx_;
     async::trigger stop_done_trigger_;
     std::weak_ptr<routing_host> local_message_handler_;
-    std::map<client_t, std::shared_ptr<local_endpoint>> local_client_endpoints_;
     std::map<client_t, std::shared_ptr<local_endpoint>> local_server_endpoints_;
     std::map<client_t, uint32_t> provider_tokens_;
 
