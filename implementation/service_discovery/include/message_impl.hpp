@@ -54,7 +54,6 @@ public:
     virtual ~message_impl();
 
     length_t get_length() const;
-    void set_length(length_t _length);
 
     length_t get_size() const;
 

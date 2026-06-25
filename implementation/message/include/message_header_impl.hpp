@@ -17,14 +17,17 @@ class message_base;
 class message_header_impl : virtual public serializable {
 public:
     VSOMEIP_EXPORT message_header_impl();
-    VSOMEIP_EXPORT message_header_impl(const message_header_impl& _header);
 
-    VSOMEIP_EXPORT bool serialize(serializer* _to) const;
-    VSOMEIP_EXPORT bool deserialize(deserializer* _from);
+    VSOMEIP_EXPORT bool serialize(serializer* _to) const override;
 
-    // internal
-    VSOMEIP_EXPORT message_base* get_owner() const;
-    VSOMEIP_EXPORT void set_owner(message_base* _owner);
+public:
+    // not exported, these are internal to the codebase
+    message_header_impl(const message_header_impl& _header);
+
+    bool deserialize(deserializer* _from);
+
+    message_base* get_owner() const;
+    void set_owner(message_base* _owner);
 
 public:
     service_t service_;
