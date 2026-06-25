@@ -15,6 +15,10 @@ namespace vsomeip_v3 {
 message_impl::message_impl() :
     payload_(runtime::get()->create_payload()), check_result_{0}, sec_client_{ANY_UID, ANY_GID, 0, VSOMEIP_SEC_PORT_UNUSED} { }
 
+message_impl::message_impl(const message_header_impl& _header, bool _reliable, uint8_t _check_result) :
+    message_base_impl(_header, _reliable), payload_(runtime::get()->create_payload()), check_result_{_check_result},
+    sec_client_{ANY_UID, ANY_GID, 0, VSOMEIP_SEC_PORT_UNUSED} { }
+
 message_impl::~message_impl() { }
 
 length_t message_impl::get_length() const {

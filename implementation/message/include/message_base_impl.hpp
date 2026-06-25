@@ -56,6 +56,8 @@ public:
 
 public:
     // not exported, these are internal to the codebase
+    message_base_impl(const message_header_impl& _header, bool _reliable);
+
     message* get_owner() const;
     void set_owner(message* _owner);
 

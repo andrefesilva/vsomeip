@@ -12,6 +12,11 @@ message_base_impl::message_base_impl() : is_reliable_(false), is_initial_(false)
     header_.set_owner(this);
 }
 
+message_base_impl::message_base_impl(const message_header_impl& _header, bool _reliable) :
+    header_(_header), is_reliable_(_reliable), is_initial_(false) {
+    header_.set_owner(this);
+}
+
 message_base_impl::~message_base_impl() { }
 
 // header interface
