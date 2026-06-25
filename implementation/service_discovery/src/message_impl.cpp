@@ -151,10 +151,6 @@ bool message_impl::has_option() const {
     return (0 < options_.size());
 }
 
-void message_impl::set_length(length_t _length) {
-    (void)_length;
-}
-
 const message_impl::entries_t& message_impl::get_entries() const {
     return entries_;
 }
