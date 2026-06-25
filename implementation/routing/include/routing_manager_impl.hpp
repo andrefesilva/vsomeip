@@ -374,7 +374,7 @@ private:
                                  minor_version_t _minor);
 
     services_t get_services_remote() const;
-    void clear_service_info(service_t _service, instance_t _instance, bool _reliable);
+    void clear_service_info(service_t _service, instance_t _instance);
     services_t get_services() const;
 
     void notify_one(service_t _service, instance_t _instance, event_t _event, std::shared_ptr<payload> _payload, client_t _client,
