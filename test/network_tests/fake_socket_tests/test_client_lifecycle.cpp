@@ -664,6 +664,57 @@ TEST_F(test_client_lifecycle, availability_callback_is_only_called_once_on_stop)
     })) << client_->availability_record_;
 }
 
+TEST_F(test_client_lifecycle, release_then_request_blocks_duplicate_available) {
+    /**
+     * After release_service(), the handler shadow remains AS_AVAILABLE.
+     * When request_service() is called again (service still offered), replay_availability()
+     * and the subsequent RIE_ADD from the routing manager both hit on_availability(AS_AVAILABLE).
+     * The shadow check (shadow == state) suppresses both — no second callback fires.
+     **/
+    start_apps();
+    request_service();
+    ASSERT_TRUE(await_service());
+
+    clear_command_record(client_name_, routingmanager_name_);
+    client_->release_service(service_instance_);
+    client_->request_service(service_instance_);
+
+    // Wait for the routing manager to receive the re-registration, ensuring RIE_ADD has had time to arrive
+    ASSERT_TRUE(wait_for_command(client_name_, routingmanager_name_, protocol::id_e::REQUEST_SERVICE_ID, socket_role::server));
+
+    // The dedup guard must suppress the duplicate AS_AVAILABLE — no second entry must appear
+    ASSERT_FALSE(client_->availability_record_.wait_for([](const auto& _r) { return _r.size() > 1; }, std::chrono::milliseconds(300)))
+            << client_->availability_record_;
+    ASSERT_TRUE(client_->availability_record_.equals({service_availability::available(service_instance_)}));
+}
+
+TEST_F(test_client_lifecycle, reoffer_after_stop_fires_available) {
+    /**
+     * Dedup guard test: full offer → stop_offer → re-offer cycle.
+     * The shadow transitions AS_UNKNOWN → AS_AVAILABLE → AS_UNAVAILABLE → AS_AVAILABLE.
+     * Each step satisfies shadow != state so each handler fires exactly once.
+     * Expected sequence: [AVAILABLE, UNAVAILABLE, AVAILABLE] — no entry omitted, no duplicates.
+     **/
+    std::vector<service_availability> expected_availabilities = {
+            service_availability::available(service_instance_),
+            service_availability::unavailable(service_instance_),
+            service_availability::available(service_instance_),
+    };
+
+    start_apps();
+    request_service();
+    ASSERT_TRUE(await_service());
+
+    stop_offer();
+    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::unavailable(service_instance_)));
+
+    server_->offer(service_instance_);
+
+    ASSERT_TRUE(client_->availability_record_.wait_for([&expected_availabilities](const auto& record) {
+        return record == expected_availabilities;
+    })) << client_->availability_record_;
+}
+
 TEST_F(test_client_lifecycle, service_re_request_does_not_block_new_request) {
     /**
      * 0. router, server and client are started
@@ -1103,6 +1154,69 @@ TEST_F(test_concurrent_registration, repeated_concurrent_registration_with_queui
         stop_client(app_name_);
     }
     stop_client(routingmanager_name_);
+}
+
+TEST_F(test_client_lifecycle, resubscribe_while_acked_replays_cache_without_duplicate_subscribe) {
+    start_apps();
+
+    // Wait for the client to subscribe and receive the initial field value from the server.
+    ASSERT_TRUE(subscribe_to_field());
+    send_field_message();
+    ASSERT_TRUE(client_->message_record_.wait_for(field_checker_));
+
+    // Clear records so only activity from the re-subscribe onward is visible.
+    client_->message_record_.clear();
+    clear_command_record(server_name_, routingmanager_name_);
+
+    // Re-subscribe without the server sending any new notification. The routing_manager_client
+    // must replay the cached field value locally via send_back_cached_event_unlocked().
+    client_->subscribe_field(offered_field_);
+    EXPECT_FALSE(wait_for_command(client_name_, routingmanager_name_, protocol::id_e::SUBSCRIBE_ID, socket_role::client,
+                                  std::chrono::milliseconds(200)));
+
+    // The replayed notification must arrive on the client.
+    EXPECT_TRUE(client_->message_record_.wait_for(field_checker_));
+
+    // No NOTIFY_ID must have been sent by the server during this window —
+    // proving the notification came from local cache replay, not a fresh server emission.
+    EXPECT_FALSE(wait_for_command(server_name_, routingmanager_name_, protocol::id_e::NOTIFY_ID, socket_role::server));
+}
+
+TEST_F(test_client_lifecycle, resubscribe_after_service_restart_delivers_fresh_notification_not_cache) {
+    start_apps();
+
+    ASSERT_TRUE(subscribe_to_field());
+    send_field_message();
+    ASSERT_TRUE(client_->message_record_.wait_for(field_checker_));
+
+    // Stop the service offer. Client must see the service go unavailable.
+    stop_offer();
+    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::unavailable(service_instance_)));
+
+    // Confirm that re-subscribing while the service is unavailable does NOT replay the stale v1 value.
+    // on_stop_offer_service() must have reset initial_notification_received_, so no cache replay fires.
+    client_->message_record_.clear();
+    client_->subscribe_field(offered_field_);
+    EXPECT_FALSE(client_->message_record_.wait_for(field_checker_, std::chrono::milliseconds(200)));
+
+    // Re-offer the service with a new field payload (v2).
+    std::vector<unsigned char> const payload_v2{0xBB};
+    message_checker const field_checker_v2{std::nullopt, service_instance_, offered_field_.event_id_,
+                                           vsomeip::message_type_e::MT_NOTIFICATION, payload_v2};
+
+    server_->offer_field(offered_field_);
+    server_->send_event(offered_field_, payload_v2);
+    server_->offer(service_instance_);
+
+    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::available(service_instance_)));
+
+    // Re-subscription is automatic: when the service re-offers, send_pending_commands() replays
+    // pending_subscriptions_. Because on_stop_offer_service() reset initial_notification_received_,
+    // no stale cache replay fires — the client must wait for the fresh v2 notification from the server.
+
+    EXPECT_TRUE(client_->message_record_.wait_for(field_checker_v2));
+    // The last recorded message must be v2, not the stale v1.
+    EXPECT_TRUE(client_->message_record_.wait_for_last(field_checker_v2));
 }
 
 /**
