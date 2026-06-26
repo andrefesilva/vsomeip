@@ -168,7 +168,7 @@ private:
 
     [[nodiscard]] bool is_local_client(client_t _client) const;
 
-    void register_application(client_t _client);
+    void register_application(client_t _client, std::unique_lock<std::mutex>& receiver_lock_);
 
     void reconnect();
 

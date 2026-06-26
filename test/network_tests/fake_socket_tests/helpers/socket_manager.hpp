@@ -331,9 +331,11 @@ public:
     std::future<protocol::id_e> drop_command_once(std::string const& _from, std::string const& _to, protocol::id_e _id);
 
     /**
-     * Forces the delivery of payload @param _payload from @param _client to @param _server with vsomeip message parsing
+     * Forces the delivery of payload @param _payload from @param _client to @param _server with vsomeip message parsing.
+     * @param _target_role controls which side of the connection receives the injected data.
      */
-    bool inject_command_tcp(std::string const& _client, std::string const& _server, std::vector<unsigned char>& _payload);
+    bool inject_command_tcp(std::string const& _client, std::string const& _server, std::vector<unsigned char>& _payload,
+                            socket_role _target_role = socket_role::server);
 
     /**
      * Forces the delivery of payload @param _payload from @param _client to @param _server with no parsing

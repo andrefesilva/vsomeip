@@ -38,9 +38,9 @@ public:
     void notify();
 
     /**
-     * Injects a payload into the receiving socket
+     * Injects a payload into the socket identified by @param _target_role..
      **/
-    [[nodiscard]] bool inject_command(std::vector<unsigned char> _payload) const;
+    [[nodiscard]] bool inject_command(std::vector<unsigned char> _payload, socket_role _target_role = socket_role::server) const;
 
     /**
      * Injects a payload into the receiving socket (no parsing)

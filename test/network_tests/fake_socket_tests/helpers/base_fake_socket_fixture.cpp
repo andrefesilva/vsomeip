@@ -217,8 +217,8 @@ void base_fake_socket_fixture::set_custom_command_handler(std::string const& _cl
 }
 
 bool base_fake_socket_fixture::inject_command_tcp(std::string const& _client, std::string const& _server,
-                                                  std::vector<unsigned char>& _payload) {
-    return socket_manager_->inject_command_tcp(_client, _server, _payload);
+                                                  std::vector<unsigned char>& _payload, socket_role _target_role) {
+    return socket_manager_->inject_command_tcp(_client, _server, _payload, _target_role);
 }
 
 bool base_fake_socket_fixture::inject_message_tcp(std::string const& _client, std::string const& _server,
