@@ -21,7 +21,6 @@
 #include <vsomeip/handler.hpp>
 
 #include "../../protocol/include/protocol.hpp"
-#include "../../protocol/include/send_command.hpp"
 #include "../../configuration/include/configuration.hpp"
 #include "../../configuration/include/debounce_filter_impl.hpp"
 

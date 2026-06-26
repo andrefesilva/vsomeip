@@ -9,7 +9,6 @@
 #include "../../message/include/message_impl.hpp"
 #include "../../message/include/payload_impl.hpp"
 #include "../../security/include/policy.hpp"
-#include "update_security_policy_command.hpp"
 
 #include <vsomeip/defines.hpp>
 #include <vsomeip/enumeration_types.hpp>
