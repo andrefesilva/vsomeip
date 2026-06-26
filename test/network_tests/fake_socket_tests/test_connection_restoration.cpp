@@ -13,6 +13,7 @@
 #include "helpers/service_state.hpp"
 #include "helpers/availability_checker.hpp"
 #include "helpers/command_gate.hpp"
+#include "../../../implementation/protocol/include/serialize.hpp"
 
 #include "sample_interfaces.hpp"
 
@@ -1304,6 +1305,40 @@ TEST_F(test_connection_restoration, process_offer_service_during_on_pong_process
     // Step 7: Verify no deadlock - system should recover
     ASSERT_TRUE(await_connection(client_name_, server_name_));
     ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::available(service_instance_)));
+}
+
+TEST_F(test_connection_restoration, double_assign_client_ack_id_diff_ids) {
+
+    std::shared_ptr<command_gate> router_to_server_gate = command_gate::create();
+    ASSERT_TRUE(setup_data_pipe(server_name_, routingmanager_name_, socket_role::server, router_to_server_gate->get_data_pipe()));
+
+    start_router();
+
+    // Block before the server receive its client id
+    router_to_server_gate->block_at(vsomeip_v3::protocol::id_e::CONFIG_ID);
+
+    // Start the server without checking if it is registered
+    server_ = start_client(server_name_);
+    ASSERT_NE(server_, nullptr);
+    server_->offer(service_instance_);
+    server_->offer_event(offered_event_);
+    server_->offer_field(offered_field_);
+    server_->request_service(service_instance_);
+
+    EXPECT_TRUE(router_to_server_gate->wait_for_blocked());
+
+    // Inject the old client id, different from the one host assigned to server
+    auto assign_client_ack_cmd = protocol::create_assign_client_ack_cmd(0, 0xcafe);
+    std::vector<unsigned char> old_client_id_payload(protocol::wire_size(assign_client_ack_cmd));
+    protocol::serialize(assign_client_ack_cmd, old_client_id_payload.data());
+    inject_command_tcp(server_name_, routingmanager_name_, old_client_id_payload, socket_role::client);
+
+    // Allow server to receive the client id assigned by the host after receiving the old one.
+    router_to_server_gate->block(false);
+
+    // Check if the server registered and received the service availability
+    EXPECT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    EXPECT_TRUE(server_->availability_record_.wait_for_last(service_availability::available(service_instance_)));
 }
 
 INSTANTIATE_TEST_SUITE_P(test_all_permutations, test_single_connection_breakdown,

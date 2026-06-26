@@ -737,9 +737,10 @@ std::future<protocol::id_e> socket_manager::drop_command_once(std::string const&
     return fut;
 }
 
-bool socket_manager::inject_command_tcp(std::string const& _client, std::string const& _server, std::vector<unsigned char>& _payload) {
+bool socket_manager::inject_command_tcp(std::string const& _client, std::string const& _server, std::vector<unsigned char>& _payload,
+                                        socket_role _target_role) {
     auto connection = get_or_create_connection(_client, _server);
-    return connection->inject_command(_payload);
+    return connection->inject_command(_payload, _target_role);
 }
 
 bool socket_manager::inject_message_tcp(std::string const& _client, std::string const& _server, std::vector<unsigned char>& _payload) {

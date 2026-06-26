@@ -37,12 +37,13 @@ void app_connection::notify() {
     cv_.notify_all();
 }
 
-bool app_connection::inject_command(std::vector<unsigned char> _payload) const {
+bool app_connection::inject_command(std::vector<unsigned char> _payload, socket_role _target_role) const {
     auto [from, to] = promoted();
-    if (to) {
+    auto& target = (_target_role == socket_role::server) ? to : from;
+    if (target) {
         std::vector<boost::asio::const_buffer> buffer;
         buffer.push_back(boost::asio::buffer(_payload));
-        to->consume(buffer, true);
+        target->consume(buffer, true);
         return true;
     } else {
         LOCAL_LOG << "[Error] command injection failed for " << name_;
