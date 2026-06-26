@@ -7,7 +7,6 @@
 
 #include "../../../../implementation/protocol/include/protocol.hpp"
 #include "../../../../implementation/protocol/include/command_types.hpp"
-#include "../../../../implementation/protocol/include/command.hpp"
 #include "../../../../implementation/service_discovery/include/enumeration_types.hpp"
 #include "../../../../implementation/service_discovery/include/entry_impl.hpp"
 #include "../../../../implementation/utility/include/utility.hpp"
