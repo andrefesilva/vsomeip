@@ -12,6 +12,7 @@
 #include <tuple>
 #include <vector>
 #include <condition_variable>
+#include <functional>
 #include <queue>
 #include <unordered_set>
 
@@ -66,6 +67,8 @@ class routing_manager_client : public local_endpoint_manager_host,
     struct subscription_data_t;
 
 public:
+    using available_t = std::map<service_t, std::map<instance_t, std::map<major_version_t, minor_version_t>>>;
+
     routing_manager_client(routing_manager_host* _host, bool _client_side_logging,
                            const std::set<std::tuple<service_t, instance_t>>& _client_side_logging_filter);
     virtual ~routing_manager_client();
@@ -142,6 +145,15 @@ public:
     vsomeip_sec_client_t get_sec_client() const;
     void set_sec_client_port(port_t _port);
 
+    bool is_available(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor) const;
+    bool are_available(available_t& _available, service_t _service, instance_t _instance, major_version_t _major,
+                       minor_version_t _minor) const;
+
+    // Registers the handler against the current availability under consumer_mutex_, avoiding the TOCTOU race of a
+    // separate get_availability_state(); for wildcard registrations it also replays the currently available instances.
+    void register_availability_handler(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
+                                       const std::function<void(bool _is_available)>& _register_handler);
+
 private:
     void unregister_event_base(client_t _client, service_t _service, instance_t _instance, event_t _event, bool _is_provided);
 
@@ -175,14 +187,23 @@ private:
     void send_subscribe_ack(client_t _subscriber, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
                             remote_subscription_id_t _id);
 
+    void update_subscription_state_and_notify(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
+                                              uint16_t _error);
+
     void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event);
 
     void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event);
 
-    void cache_event_payload(const std::shared_ptr<message>& _message);
+    [[nodiscard]] bool cache_event_payload(const std::shared_ptr<message>& _message);
+
+    void send_back_cached_event_unlocked(service_t _service, instance_t _instance, event_t _event,
+                                         std::scoped_lock<std::mutex> const& _consumer_lock);
+
+    void send_back_cached_eventgroup_unlocked(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
+                                              std::scoped_lock<std::mutex> const& _consumer_lock);
 
     void on_stop_offer_service(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                               std::scoped_lock<std::mutex> const& _consumer_lock);
+                               bool _was_available, std::scoped_lock<std::mutex> const& _consumer_lock);
 
     [[nodiscard]] bool send_pending_commands(std::scoped_lock<std::mutex, std::mutex> const& _consumer_provider_lock);
 
@@ -374,7 +395,22 @@ private:
     local_service_table requests_;
     local_service_table requests_to_debounce_;
     local_offering_table available_services_;
-    service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> consumed_events_;
+
+    struct consumed_event_entry_t {
+        std::shared_ptr<event> event_;
+
+        // Per-eventgroup subscription bookkeeping. An entry exists for an eventgroup if and only if the consumer is
+        // subscribing/subscribed to that eventgroup for this event; `state_` tracks the SUBSCRIBE/ACK/NACK
+        // lifecycle and `initial_notification_received_` records whether the initial (field) value was already
+        // delivered for that eventgroup (used to replay the cached value on a re-subscribe).
+        struct subscription_t {
+            subscription_state_e state_{subscription_state_e::IS_SUBSCRIBING};
+            bool initial_notification_received_{false};
+        };
+        std::map<eventgroup_t, subscription_t> subscriptions_;
+    };
+
+    service_instance_map<std::unordered_map<event_t, consumed_event_entry_t>> consumed_events_;
     eventgroups_t consumed_eventgroups_;
 
     struct subscription_data_t {

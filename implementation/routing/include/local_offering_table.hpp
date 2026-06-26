@@ -28,8 +28,13 @@ public:
         client_t client;
     };
 
-    void add(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, client_t _client) {
-        services_[_service][_instance] = std::make_tuple(_major, _minor, _client);
+    bool add(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, client_t _client) {
+        auto& its_instances = services_[_service];
+        auto found_instance = its_instances.find(_instance);
+        const bool is_new = found_instance == its_instances.end()
+                || (_major != ANY_MAJOR && _major != DEFAULT_MAJOR && _major != std::get<0>(found_instance->second));
+        its_instances[_instance] = std::make_tuple(_major, _minor, _client);
+        return is_new;
     }
 
     bool remove(service_t _service, instance_t _instance) {
@@ -80,19 +85,70 @@ public:
         return clients;
     }
 
-    bool is_available(service_t _service, instance_t _instance, major_version_t _major) const {
-        auto found_service = services_.find(_service);
-        if (found_service == services_.end()) {
-            return false;
-        }
-        if (_instance == ANY_INSTANCE) {
+    // Visit every stored entry matching (service, instance, major, minor) using the
+    // ANY_*/DEFAULT_* wildcard semantics. The callback returns true to continue the
+    // iteration or false to stop early. Concrete service/instance values are resolved
+    // via direct map lookups; only ANY_* widens the traversal, so the common point
+    // query stays O(log n) without copying the table.
+    template<typename Callback>
+    void for_each_available(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
+                            Callback&& _callback) const {
+        auto matches_version = [&](const std::tuple<major_version_t, minor_version_t, client_t>& _tuple) {
+            const major_version_t its_stored_major = std::get<0>(_tuple);
+            const minor_version_t its_stored_minor = std::get<1>(_tuple);
+            const bool its_major_ok = _major == ANY_MAJOR || _major == DEFAULT_MAJOR || _major == its_stored_major;
+            const bool its_minor_ok = _minor == ANY_MINOR || _minor == DEFAULT_MINOR || _minor <= its_stored_minor;
+            return its_major_ok && its_minor_ok;
+        };
+
+        auto make_entry = [](service_t _svc, instance_t _inst, const std::tuple<major_version_t, minor_version_t, client_t>& _tuple) {
+            return entry{_svc, _inst, std::get<0>(_tuple), std::get<1>(_tuple), std::get<2>(_tuple)};
+        };
+
+        // Returns false to request stopping the outer service iteration.
+        auto visit_instances = [&](service_t _svc, const instance_map_t& _instances) {
+            if (_instance != ANY_INSTANCE) {
+                auto found_instance = _instances.find(_instance);
+                if (found_instance == _instances.end() || !matches_version(found_instance->second)) {
+                    return true;
+                }
+                return _callback(make_entry(_svc, found_instance->first, found_instance->second));
+            }
+            for (const auto& [instance, tuple] : _instances) {
+                if (matches_version(tuple) && !_callback(make_entry(_svc, instance, tuple))) {
+                    return false;
+                }
+            }
             return true;
+        };
+
+        if (_service != ANY_SERVICE) {
+            auto found_service = services_.find(_service);
+            if (found_service != services_.end()) {
+                visit_instances(found_service->first, found_service->second);
+            }
+            return;
         }
-        auto found_instance = found_service->second.find(_instance);
-        if (found_instance == found_service->second.end()) {
-            return false;
+        for (const auto& [service, instances] : services_) {
+            if (!visit_instances(service, instances)) {
+                break;
+            }
         }
-        return _major == ANY_MAJOR || _major == DEFAULT_MAJOR || std::get<0>(found_instance->second) == _major;
+    }
+
+    [[nodiscard]] bool has_available(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor) const {
+        bool its_found = false;
+        for_each_available(_service, _instance, _major, _minor, [&its_found](const entry&) {
+            its_found = true;
+            return false; // stop at the first match
+        });
+        return its_found;
+    }
+
+    bool is_available(service_t _service, instance_t _instance, major_version_t _major) const {
+        // Single matching semantics for the whole table: the major-only availability
+        // check is the minor-agnostic (ANY_MINOR) case of has_available.
+        return has_available(_service, _instance, _major, ANY_MINOR);
     }
 
     [[nodiscard]] std::vector<entry> remove_all_for_client(client_t _client) {

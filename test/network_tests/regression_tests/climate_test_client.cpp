@@ -124,7 +124,7 @@ public:
                 // due to double initial notifications, might be stopping a "bit" early, hence the different number of
                 // expected availability callbacks
                 VSOMEIP_INFO << "availability_handler_calls: " << static_cast<int>(availability_handler_calls);
-                EXPECT_TRUE(availability_handler_calls == 5 || availability_handler_calls == 7);
+                EXPECT_TRUE(availability_handler_calls == 4 || availability_handler_calls == 6);
                 lock.unlock();
 
                 std::shared_ptr<vsomeip::message> its_set = vsomeip::runtime::get()->create_message();

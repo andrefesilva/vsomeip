@@ -229,14 +229,11 @@ private:
     //
     // Methods
     //
-    availability_state_e is_available_unlocked(service_t _service, instance_t _instance, major_version_t _major,
-                                               minor_version_t _minor) const;
-
-    availability_state_e are_available_unlocked(available_t& _available, service_t _service, instance_t _instance, major_version_t _major,
-                                                minor_version_t _minor) const;
-
-    void register_availability_handler_unlocked(service_t _service, instance_t _instance, const availability_state_handler_t& _handler,
+    void register_availability_handler_internal(service_t _service, instance_t _instance, const availability_state_handler_t& _handler,
                                                 major_version_t _major, minor_version_t _minor);
+    // NOTE: must only be called under the routing_manager_client's consumer_mutex_.
+    void register_availability_handler_unlocked(service_t _service, instance_t _instance, const availability_state_handler_t& _handler,
+                                                major_version_t _major, minor_version_t _minor, bool _is_available);
 
     void main_dispatch();
     void dispatch();
@@ -248,16 +245,7 @@ private:
     bool is_active_dispatcher(const std::thread::id& _id) const;
     void remove_elapsed_dispatchers(std::unique_lock<std::mutex>& _lock);
 
-    void send_back_cached_event(service_t _service, instance_t _instance, event_t _event);
-    void send_back_cached_eventgroup(service_t _service, instance_t _instance, eventgroup_t _eventgroup);
-    void check_send_back_cached_event(service_t _service, instance_t _instance, event_t _event, eventgroup_t _eventgroup,
-                                      bool* _send_back_cached_event, bool* _send_back_cached_eventgroup);
-    void remove_subscription(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event);
-    bool check_for_active_subscription(service_t _service, instance_t _instance, event_t _event);
-
     void deliver_subscription_state(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event, uint16_t _error);
-
-    bool check_subscription_state(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event);
 
     void print_blocking_call(const std::shared_ptr<sync_handler>& _handler);
 
@@ -266,8 +254,6 @@ private:
     bool is_local_endpoint(const boost::asio::ip::address& _unicast, port_t _port);
 
     const std::deque<message_handler_t>& find_handlers(service_t _service, instance_t _instance, method_t _method) const;
-
-    void invoke_availability_handler(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
 
     using availability_state_t =
             std::map<service_t, std::map<instance_t, std::map<major_version_t, std::map<minor_version_t, availability_state_e>>>>;
@@ -332,11 +318,6 @@ private:
     service_instance_map<availability_major_minor_t> availability_;
     mutable std::mutex availability_mutex_;
 
-    // Availability
-    typedef std::map<instance_t, std::map<major_version_t, std::pair<minor_version_t, availability_state_e>>> available_instance_t;
-    typedef std::map<service_t, available_instance_t> available_ext_t;
-    mutable available_ext_t available_;
-
     // Subscription handlers
     service_instance_map<std::map<eventgroup_t, std::pair<subscription_handler_sec_t, async_subscription_handler_sec_t>>> subscription_;
     mutable std::mutex subscription_mutex_;
@@ -372,18 +353,11 @@ private:
 
     bool is_routing_manager_host_;
 
-    // Event subscriptions
-    std::mutex subscriptions_mutex_;
-    service_instance_map<std::map<event_t, std::map<eventgroup_t, bool>>> subscriptions_;
-
     std::thread::id stop_caller_id_;
 
     service_instance_map<std::map<eventgroup_t, std::map<event_t, std::pair<subscription_status_handler_t, bool>>>>
             subscription_status_handlers_;
     std::mutex subscription_status_handlers_mutex_;
-
-    std::mutex subscriptions_state_mutex_;
-    service_instance_map<std::map<eventgroup_t, std::map<event_t, subscription_state_e>>> subscriptions_state_;
 
     std::mutex watchdog_timer_mutex_;
     boost::asio::steady_timer watchdog_timer_;
