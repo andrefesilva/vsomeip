@@ -107,17 +107,10 @@ private:
 
             VSOMEIP_DEBUG << "[TEST] STR simulation: iteration#" << std::dec << iteration << ", is_running_=" << std::boolalpha
                           << is_running_ << ", delay_ms=" << delay_ms << ", is_subscribe=" << std::boolalpha << is_subscribe_;
-
-            if (iteration == 1) {
-                VSOMEIP_INFO << "[TEST] STR simulation: iteration#" << std::dec << iteration
-                             << ", skip kill SIGUSR1, is_subscribe=" << std::boolalpha << is_subscribe_
-                             << ", is_running_=" << std::boolalpha << is_running_;
-            } else {
-                VSOMEIP_INFO << "[TEST] STR simulation: iteration#" << std::dec << iteration << ", send kill SIGUSR1 to PID: " << std::dec
-                             << daemon_pid__ << ", is_subscribe=" << std::boolalpha << is_subscribe_ << ", is_running_=" << std::boolalpha
-                             << is_running_;
-                kill(daemon_pid__, SIGUSR1);
-            }
+            VSOMEIP_INFO << "[TEST] STR simulation: iteration#" << std::dec << iteration << ", send kill SIGUSR1 to PID: " << std::dec
+                         << daemon_pid__ << ", is_subscribe=" << std::boolalpha << is_subscribe_ << ", is_running_=" << std::boolalpha
+                         << is_running_;
+            kill(daemon_pid__, SIGUSR1);
 
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
 
