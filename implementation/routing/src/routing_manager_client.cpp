@@ -1459,7 +1459,7 @@ bool routing_manager_client::is_local_client(client_t _client) const {
     return ep_mgr_->find_local_server_endpoint(_client) != nullptr;
 }
 
-void routing_manager_client::register_application(client_t _client) {
+void routing_manager_client::register_application(client_t _client, std::unique_lock<std::mutex>& receiver_lock_) {
     auto its_configuration = get_configuration();
     auto const its_routing_host_address = its_configuration->get_routing_host_address();
     // UDS is used only when local routing is configured, or when uds-preferred is on and the routing manager has the same IP.
@@ -1492,7 +1492,12 @@ void routing_manager_client::register_application(client_t _client) {
                               << ") could not send pending offers";
         }
         host_->on_state(state_type_e::ST_REGISTERED);
+        return;
     }
+    // This code path will only be reached if there was an error in the registration
+    VSOMEIP_ERROR << "Application/Client " << hex4(get_client()) << " (" << host_->get_name() << ") failed to register, will reconnect.";
+    receiver_lock_.unlock();
+    reconnect();
 }
 
 void routing_manager_client::send_pong() const {
@@ -1966,6 +1971,7 @@ void routing_manager_client::on_client_assign_ack(const client_t& _client, bool 
         VSOMEIP_ERROR_P << "(" << host_->get_name() << ":" << hex4(_client) << ") Invalid clientID";
         return;
     }
+
     // order matters:
     // 0. call host (while unlocked to avoid lock inversion)
     host_->set_client(_client);
@@ -2012,7 +2018,7 @@ void routing_manager_client::on_client_assign_ack(const client_t& _client, bool 
         if (is_started) {
             VSOMEIP_INFO_P << "Client 0x" << hex4(get_client()) << " (" << host_->get_name() << ") successfully connected to routing via "
                            << (_is_tcp ? "TCP" : "UDS") << " ~> registering...";
-            register_application(_client);
+            register_application(_client, its_lock);
         }
     }
 

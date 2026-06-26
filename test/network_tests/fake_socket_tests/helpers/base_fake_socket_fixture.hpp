@@ -251,7 +251,8 @@ struct base_fake_socket_fixture : ::testing::Test {
     /**
      * @see socket_manager::inject_command_tcp
      */
-    bool inject_command_tcp(std::string const& _client, std::string const& _server, std::vector<unsigned char>& _payload);
+    bool inject_command_tcp(std::string const& _client, std::string const& _server, std::vector<unsigned char>& _payload,
+                            socket_role _target_role = socket_role::server);
 
     /**
      * @see socket_manager::inject_message_tcp
