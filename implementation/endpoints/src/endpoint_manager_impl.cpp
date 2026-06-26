@@ -20,7 +20,6 @@
 #include "../include/boardnet_endpoint.hpp"
 #include "../include/virtual_server_endpoint_impl.hpp"
 #include "../include/endpoint_definition.hpp"
-#include "../../protocol/include/config_command.hpp"
 #include "../../protocol/include/logging.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../routing/include/routing_manager_impl.hpp"

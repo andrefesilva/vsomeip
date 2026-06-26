@@ -19,7 +19,6 @@
 #include "../../../implementation/protocol/include/protocol.hpp"
 #include "../../../implementation/protocol/include/command_types.hpp"
 #include "../../../implementation/protocol/include/serialize.hpp"
-#include "../../../implementation/protocol/include/offer_service_command.hpp"
 #include <boost/asio/local/stream_protocol.hpp>
 #include <boost/system/error_code.hpp>
 
