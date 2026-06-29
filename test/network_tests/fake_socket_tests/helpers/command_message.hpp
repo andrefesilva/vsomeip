@@ -51,7 +51,7 @@ private:
 
 struct command_message {
     vsomeip_v3::protocol::id_e id_{0};
-    uint16_t client_id_{0};
+    protocol::command_header header_;
     command_payload payload_;
     // the hard coded version is of little interest
 };

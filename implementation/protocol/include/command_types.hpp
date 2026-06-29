@@ -18,7 +18,6 @@
 #include <boost/asio/ip/address_v4.hpp>
 
 #include "protocol.hpp"
-#include "vsomeip/defines.hpp"
 
 #include <array>
 #include <compare>

@@ -692,7 +692,15 @@ void routing_manager_stub::inform_requesters(client_t _hoster, service_t _servic
     port_t its_port;
 
     for (auto its_client : service_requests_) {
-        if (its_client.second.count({_service, _instance}) > 0 || its_client.second.count({_service, ANY_INSTANCE}) > 0) {
+        auto const& service_map = its_client.second;
+        auto it = service_map.find({_service, _instance});
+        if (it == service_map.end()) {
+            it = service_map.find({_service, ANY_INSTANCE});
+            if (it == service_map.end()) {
+                continue;
+            }
+        }
+        if (_major == it->second.first || ANY_MAJOR == it->second.first) {
             if (its_client.first != VSOMEIP_ROUTING_CLIENT) {
                 protocol::routing_info_entry_data its_entry;
                 its_entry.type_ = _type;
@@ -952,7 +960,7 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
             if (const auto found_client = routing_info_.find(c); found_client != routing_info_.end()) {
                 if (request.instance_ == ANY_INSTANCE) {
                     for (const auto& [si, version] : found_client->second) {
-                        if (si.service == request.service_) {
+                        if (si.service == request.service_ && (version.first == request.major_ || request.major_ == ANY_MAJOR)) {
                             protocol::routing_info_entry_data its_entry;
                             its_entry.type_ = protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
                             its_entry.client_ = c;
@@ -966,7 +974,8 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
                     }
                 } else {
                     if (auto found_si = found_client->second.find({request.service_, request.instance_});
-                        found_si != found_client->second.end()) {
+                        found_si != found_client->second.end()
+                        && (found_si->second.first == request.major_ || request.major_ == ANY_MAJOR)) {
                         protocol::routing_info_entry_data its_entry;
                         its_entry.type_ = protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
                         its_entry.client_ = c;

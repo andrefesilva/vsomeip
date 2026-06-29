@@ -22,91 +22,53 @@ namespace vsomeip_v3::testing {
         TEST_LOG << "wire bytes were not long enough to contain the header";
         return 0;
     }
+    if (std::numeric_limits<uint32_t>::max() < _len) {
+        TEST_LOG << "wire bytes are too much to interpret";
+        return 0;
+    }
+    uint32_t size = static_cast<uint32_t>(_len);
 
-    auto handle_message = [&_out_message](uint8_t const* _begin, size_t _size) {
-        command_message out;
-        if (_size < protocol::COMMAND_POSITION_PAYLOAD) {
-            TEST_LOG << "wire bytes were not long enough to contain the header";
-            return false;
+    auto parsed_hdr_bytes = protocol::deserialize(_out_message.header_, _data, size);
+    if (parsed_hdr_bytes == 0) {
+        TEST_LOG << "ERROR message dump: " << utility::dump(_data, size);
+        return 0;
+    }
+    _out_message.id_ = _out_message.header_.id_;
+
+    if (size - parsed_hdr_bytes < _out_message.header_.length_) {
+        TEST_LOG << "ERROR length is not contained in the memory slice, message dump: " << utility::dump(_data, size);
+        return 0;
+    }
+    auto const deal_with_payload = [&](auto payload) -> uint32_t {
+        if (auto parsed = protocol::deserialize(payload, _data + parsed_hdr_bytes, _out_message.header_.length_); parsed != 0) {
+            _out_message.payload_ = command_payload(std::move(payload));
+            return parsed + parsed_hdr_bytes;
         }
-        // ROUTING_INFO uses the struct-based codec, so it is parsed with the free-function
-        // deserialize overloads.
-        auto const deal_with_routing_info = [&] {
-            protocol::routing_info_command_data its_command;
-            auto const its_size = static_cast<uint32_t>(_size);
-            uint32_t const its_header_size = protocol::deserialize(its_command.header_, _begin, its_size);
-            if (its_header_size == 0) {
-                return false;
-            }
-            if (its_command.header_.length_ > 0
-                && protocol::deserialize(its_command.payload_, _begin + its_header_size, its_size - its_header_size) == 0) {
-                return false;
-            }
-            out.id_ = its_command.header_.id_;
-            out.client_id_ = its_command.header_.client_;
-            out.payload_ = command_payload(std::move(its_command));
-            return true;
-        };
-
-        // understand how to parse the data
-        std::memcpy(&out.id_, &_begin[protocol::COMMAND_POSITION_ID], 1);
-
-        if (out.id_ == protocol::id_e::ROUTING_INFO_ID && deal_with_routing_info()) {
-            _out_message = std::move(out);
-        } else if (out.id_ == protocol::id_e::CONFIG_ID) {
-            protocol::command_header hdr{};
-            auto parsed_hdr = protocol::deserialize(hdr, _begin, static_cast<uint32_t>(_size));
-            if (parsed_hdr) {
-                out.client_id_ = hdr.client_;
-                // deserialize all key-value pairs for display
-                std::vector<std::pair<std::string, std::string>> entries;
-                protocol::deserialize(entries, _begin + parsed_hdr, hdr.length_);
-                out.payload_ = command_payload(std::move(entries));
-            }
-            _out_message = std::move(out);
-        } else {
-            // the data is not important enough to parse the command payload. Lets parse the client
-            // and copy the payload as is.
-            std::memcpy(&out.client_id_, &_begin[protocol::COMMAND_POSITION_CLIENT], 2);
-            uint32_t length;
-            std::memcpy(&length, &_begin[protocol::COMMAND_POSITION_SIZE], 4);
-            std::vector<unsigned char> payload;
-            payload.reserve(length);
-            std::copy(_begin + protocol::COMMAND_POSITION_PAYLOAD, _begin + _size, std::back_inserter(payload));
-            out.payload_ = command_payload(std::move(payload));
-            _out_message = std::move(out);
-        }
-        return true;
+        TEST_LOG << "ERROR payload could not be parsed for header: " << to_string(_out_message.header_)
+                 << ", message dump: " << utility::dump(_data, size);
+        return 0;
     };
-
-    uint32_t length = 0;
-    memcpy(&length, &_data[protocol::COMMAND_POSITION_SIZE], sizeof(length));
-    if (std::numeric_limits<uint32_t>::max() - protocol::COMMAND_HEADER_SIZE < length) {
-        TEST_LOG << "ERROR message length: " << length << " exceeded allowed message size";
-        return 0;
+    if (_out_message.header_.id_ == protocol::id_e::ROUTING_INFO_ID) {
+        return deal_with_payload(std::vector<protocol::routing_info_entry_data>{});
+    } else if (_out_message.header_.id_ == protocol::id_e::CONFIG_ID) {
+        return deal_with_payload(std::vector<std::pair<std::string, std::string>>{});
+    } else if (_out_message.header_.id_ == protocol::id_e::REQUEST_SERVICE_ID) {
+        return deal_with_payload(std::vector<protocol::service_data>{});
+    } else {
+        std::vector<unsigned char> payload;
+        payload.reserve(_out_message.header_.length_);
+        std::copy(_data + parsed_hdr_bytes, _data + parsed_hdr_bytes + _out_message.header_.length_, std::back_inserter(payload));
+        _out_message.payload_ = command_payload(std::move(payload));
+        return parsed_hdr_bytes + _out_message.header_.length_;
     }
-    auto const size = length + protocol::COMMAND_HEADER_SIZE;
-    if (size > _len) {
-        TEST_LOG << "ERROR remaining_bytes are insufficient";
-        return 0;
-    }
-    if (size <= std::numeric_limits<uint32_t>::max()) {
-        if (!handle_message(&_data[0], static_cast<uint32_t>(size))) {
-            TEST_LOG << "ERROR message could not be parsed";
-            return 0;
-        }
-    }
-
-    return size;
 }
+
 [[nodiscard]] size_t parse(const std::vector<unsigned char>& _message, command_message& _out_message) {
     return parse(_message.data(), _message.size(), _out_message);
 }
 
 std::ostream& operator<<(std::ostream& _out, command_message const& _m) {
-    _out << "{id: " << to_string(_m.id_);
-    _out << ", client_id: " << std::hex << std::setfill('0') << std::setw(4) << _m.client_id_;
-    _out << ", payload: [" << to_string(_m.payload_) << "]}";
+    _out << "{ header: " << to_string(_m.header_) << ", payload: " << to_string(_m.payload_) << "}";
     return _out;
 }
 }
