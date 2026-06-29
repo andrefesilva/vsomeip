@@ -646,12 +646,11 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                         return;
                     }
 
-                    if (current_message_size > VSOMEIP_RETURN_CODE_POS
-                        && (_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION
-                            || !utility::is_valid_message_type(tp::tp::tp_flag_unset(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS]))
-                            || !utility::is_valid_return_code(static_cast<return_code_e>(_buffer[i + VSOMEIP_RETURN_CODE_POS]))
-                            || (tp::tp::tp_flag_is_set(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS])
-                                && get_local_port() == configuration_->get_sd_port()))) {
+                    if (_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION
+                        || !utility::is_valid_message_type(tp::tp::tp_flag_unset(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS]))
+                        || !utility::is_valid_return_code(static_cast<return_code_e>(_buffer[i + VSOMEIP_RETURN_CODE_POS]))
+                        || (tp::tp::tp_flag_is_set(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS])
+                            && get_local_port() == configuration_->get_sd_port())) {
                         if (_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION) {
                             VSOMEIP_ERROR_P << instance_name_ << "Wrong protocol version: 0x"
                                             << hex2(_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS])
@@ -715,8 +714,7 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                                                  its_remote_port, _is_multicast);
                         }
                     } else {
-                        if (its_service != VSOMEIP_SD_SERVICE
-                            || (current_message_size > VSOMEIP_SOMEIP_HEADER_SIZE && current_message_size >= remaining_bytes)) {
+                        if (its_service != VSOMEIP_SD_SERVICE || (current_message_size >= remaining_bytes)) {
                             its_host->on_message(&_buffer[i], current_message_size, this, its_remote_address, its_remote_port,
                                                  _is_multicast);
                         } else {

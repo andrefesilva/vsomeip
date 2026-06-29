@@ -783,7 +783,7 @@ bool client_endpoint_impl<Protocol>::check_queue_limit(const uint8_t* _data, std
         method_t its_method(0);
         client_t its_client(0);
         session_t its_session(0);
-        if (_size >= VSOMEIP_SESSION_POS_MAX) {
+        if (_size >= VSOMEIP_FULL_HEADER_SIZE) {
             // this will yield wrong IDs for local communication as the commands
             // are prepended to the actual payload
             // it will print:
