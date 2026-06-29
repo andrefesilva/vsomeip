@@ -5,14 +5,18 @@
 
 #include "service_state.hpp"
 
+#include "../../../../implementation/utility/include/utility.hpp"
+
 namespace vsomeip_v3::testing {
 
-interface::interface(vsomeip::service_t service, std::vector<event_spec> events, std::vector<event_spec> fields,
-                     vsomeip::instance_t instance) : instance_{service, instance} {
-    for (auto const& e : events) {
+interface::interface(vsomeip::service_t _service, std::vector<event_spec> _events, std::vector<event_spec> _fields,
+                     vsomeip::instance_t _instance) : interface({_service, _instance}, std::move(_events), std::move(_fields)) { }
+
+interface::interface(service_instance _instance, std::vector<event_spec> _events, std::vector<event_spec> _fields) : instance_(_instance) {
+    for (auto const& e : _events) {
         events_.push_back({instance_, e.event_id_, e.eventgroup_id_, e.reliability_});
     }
-    for (auto const& f : fields) {
+    for (auto const& f : _fields) {
         fields_.push_back({instance_, f.event_id_, f.eventgroup_id_, f.reliability_});
     }
 }
@@ -61,7 +65,7 @@ static char const* to_string(vsomeip_v3::availability_state_e s) {
 }
 
 std::ostream& operator<<(std::ostream& o, service_instance const& s) {
-    return o << "Service: [" << std::hex << std::setfill('0') << std::setw(4) << s.service_ << "." << s.instance_ << "]";
+    return o << "[" << hex4(s.service_) << "." << hex4(s.instance_) << ":" << static_cast<int>(s.major_) << "." << s.minor_ << "]";
 }
 
 std::ostream& operator<<(std::ostream& o, service_availability const& s) {

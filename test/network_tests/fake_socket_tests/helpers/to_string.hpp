@@ -7,6 +7,7 @@
 
 #include "../../../../implementation/protocol/include/protocol.hpp"
 #include "../../../../implementation/protocol/include/command_types.hpp"
+#include "../../../../implementation/protocol/include/logging.hpp"
 #include "../../../../implementation/service_discovery/include/enumeration_types.hpp"
 #include "../../../../implementation/service_discovery/include/entry_impl.hpp"
 #include "../../../../implementation/utility/include/utility.hpp"
@@ -20,10 +21,11 @@
 namespace vsomeip_v3::testing {
 
 struct command_message;
-char const* to_string(vsomeip_v3::protocol::id_e _id);
+
 char const* to_string(vsomeip_v3::protocol::routing_info_entry_type_e e);
 char const* to_string(vsomeip_v3::sd::entry_type_e, ttl_t);
 std::string to_string(vsomeip_v3::protocol::service_data const& s);
+std::string to_string(vsomeip_v3::protocol::command_header const& e);
 std::string to_string(vsomeip_v3::protocol::routing_info_entry_data const& e);
 std::string to_string(vsomeip_v3::protocol::routing_info_command_data const& c);
 char const* to_string(vsomeip_v3::message_type_e const& m);
