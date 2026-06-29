@@ -23,8 +23,11 @@ struct service_instance {
     major_version_t major_{ANY_MAJOR};
     minor_version_t minor_{ANY_MINOR};
 
-    // Not including major/minor since availability handler only delivers service/instance.
-    [[nodiscard]] bool operator==(service_instance const& rhs) const { return service_ == rhs.service_ && instance_ == rhs.instance_; }
+    // Not including minor since minor descrimination is not planned to be supported
+    [[nodiscard]] bool operator==(service_instance const& rhs) const {
+        return service_ == rhs.service_ && instance_ == rhs.instance_
+                && (major_ == ANY_MAJOR || rhs.major_ == ANY_MAJOR || major_ == rhs.major_);
+    }
     [[nodiscard]] bool operator!=(service_instance const& rhs) const { return !(*this == rhs); }
 };
 
@@ -117,10 +120,11 @@ struct interface {
         vsomeip::reliability_type_e reliability_{vsomeip::reliability_type_e::RT_UNRELIABLE};
     };
 
-    explicit interface(vsomeip::service_t service,
-                       std::vector<event_spec> events = {event_spec{0x8001, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
-                       std::vector<event_spec> fields = {event_spec{0x8002, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
-                       vsomeip::instance_t instance = 0x1);
+    explicit interface(vsomeip::service_t _service,
+                       std::vector<event_spec> _events = {event_spec{0x8001, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+                       std::vector<event_spec> _fields = {event_spec{0x8002, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+                       vsomeip::instance_t _instance = 0x1);
+    explicit interface(service_instance _instance, std::vector<event_spec> _events, std::vector<event_spec> _fields);
 
     service_instance instance_;
     std::vector<event_ids> events_;

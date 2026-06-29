@@ -58,7 +58,7 @@ set (TEST_SUITES
     test_uds_communication
     test_vlan_toggle_registration
     test_hybrid_mode
-    test_broken_behavior
+    test_multiversion_support
 )
 
 foreach(TEST_SUITE ${TEST_SUITES})

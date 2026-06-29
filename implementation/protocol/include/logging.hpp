@@ -15,7 +15,5 @@ namespace vsomeip_v3::protocol {
 
 char const* to_string(id_e _id);
 std::ostream& operator<<(std::ostream& _out, id_e _id);
-
 }
-
 #endif

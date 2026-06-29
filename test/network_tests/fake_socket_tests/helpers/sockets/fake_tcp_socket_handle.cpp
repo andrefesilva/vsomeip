@@ -443,7 +443,7 @@ size_t fake_tcp_socket_handle::consume(std::vector<boost::asio::const_buffer> co
 
     while (input.size() > 0) {
         command_message message;
-        if (auto parsed_bytes = parse(input, message)) {
+        if (auto parsed_bytes = parse(input, message); parsed_bytes) {
             TEST_LOG << "[fake-socket] " << socket_id_ << " received command_message: " << message;
             bool block_message{false};
             if (!_force_reception && command_handler_) {

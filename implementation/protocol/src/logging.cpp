@@ -85,5 +85,4 @@ char const* to_string(id_e _id) {
 std::ostream& operator<<(std::ostream& _out, id_e _id) {
     return _out << to_string(_id);
 }
-
 }
