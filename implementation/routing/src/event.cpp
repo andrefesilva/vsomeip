@@ -739,6 +739,12 @@ void event::set_reliability(const reliability_type_e _reliability) {
     if (reliability_.load(std::memory_order_acquire) == _reliability) {
         return;
     }
+    // Unspecified by app: keep the current reliability state (vsomeip decides).
+    if (_reliability == reliability_type_e::RT_UNKNOWN) {
+        VSOMEIP_INFO_P << "Received unspecified reliability, keeping previous reliability state old="
+                       << static_cast<int>(reliability_.load(std::memory_order_acquire));
+        return;
+    }
     if (reliability_ != reliability_type_e::RT_UNKNOWN) {
         VSOMEIP_ERROR_P << "Trying to change reliability from non-default value. old="
                         << static_cast<int>(reliability_.load(std::memory_order_acquire)) << " new=" << static_cast<int>(_reliability);
