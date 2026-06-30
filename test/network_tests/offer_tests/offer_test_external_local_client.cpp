@@ -11,6 +11,7 @@
 #include "../someip_test_globals.hpp"
 #include "common/test_main.hpp"
 #include "common/timeout_scale.hpp"
+#include "common/utility.hpp"
 
 #include <condition_variable>
 #include <fstream>
@@ -50,7 +51,7 @@ TEST(OfferTestExternal, OfferTestExternalLocalClient) {
                                                        if (is_available) {
                                                            service_available = true;
                                                            std::filesystem::path filename =
-                                                                   std::filesystem::current_path() / "service_available.flag";
+                                                                   utility::get_test_shared_dir() / "service_available.flag";
                                                            std::ofstream file(filename);
                                                            ASSERT_TRUE(file) << "Failed to create service available file!";
                                                        } else {
@@ -65,7 +66,7 @@ TEST(OfferTestExternal, OfferTestExternalLocalClient) {
 
     // After the service becomes available, wait 3 seconds to subscribe to it
     // so that the other service provider has time to try to offer the service
-    std::filesystem::path service_available_filename = std::filesystem::current_path() / "service_available.flag";
+    std::filesystem::path service_available_filename = utility::get_test_shared_dir() / "service_available.flag";
     while (!std::filesystem::exists(service_available_filename)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }

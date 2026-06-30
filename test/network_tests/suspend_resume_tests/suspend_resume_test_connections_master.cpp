@@ -14,6 +14,8 @@
 #include <sstream>
 #include <thread>
 
+#include <boost/asio/ip/address.hpp>
+
 #include <gtest/gtest.h>
 
 #include <vsomeip/vsomeip.hpp>
@@ -25,14 +27,42 @@
 #include "common/test_main.hpp"
 #include "common/timeout_scale.hpp"
 
-// 169.254.87.2 → little-endian hex on x86: 0x0257FEA9
-constexpr auto BOARDNET_IP_HEX = "0257FEA9";
+// Convert dotted-decimal IP (e.g. "10.99.0.254") to the uppercase hex format
+// used in /proc/net/tcp and /proc/net/udp on little-endian (x86) systems.
+// The kernel prints the 32-bit address in host byte order as 8 hex digits.
+static std::string ip_to_proc_hex(const char* ip) {
+    auto address = boost::asio::ip::make_address_v4(ip).to_uint();
+    std::ostringstream oss;
+    oss << std::uppercase << std::hex << std::setfill('0') << std::setw(8) << address;
+    return oss.str();
+}
+
+static std::string get_boardnet_ip_hex() {
+    const char* ip = std::getenv("TEST_IP_MASTER");
+    if (!ip || !*ip)
+        ip = "169.254.87.2";
+    return ip_to_proc_hex(ip);
+}
+
+static void restore_network() {
+    const char* ip = std::getenv("TEST_IP_MASTER");
+    if (!ip || !*ip)
+        ip = "169.254.87.2";
+    std::string s{ip};
+    std::string net = s.substr(0, s.rfind('.')) + ".0";
+
+    std::ignore = system("ip link set eth0 up");
+    std::ignore = system(("ip addr add " + s + "/24 dev eth0 2>/dev/null").c_str());
+    std::ignore = system(("ip route add " + net + "/24 dev eth0 2>/dev/null").c_str());
+    std::ignore = system("ip route add 224.0.0.0/4 dev eth0 2>/dev/null");
+}
 
 // Returns the number of UDP sockets in /proc/net/udp whose local address
-// matches `BOARDNET_IP_HEX` (8 upper-case hex digits, little-endian, e.g. "0257FEA9"
-// for 169.254.87.2 on x86), ignoring the wildcard address "00000000".
+// matches the boardnet IP hex (8 upper-case hex digits, little-endian),
+// ignoring the wildcard address "00000000".
 // Returns -1 if /proc/net/udp cannot be opened.
 static int count_udp_sockets_on_ip() {
+    static const std::string boardnet_hex = get_boardnet_ip_hex();
     std::ifstream f("/proc/net/udp");
     if (!f.is_open())
         return -1;
@@ -45,13 +75,13 @@ static int count_udp_sockets_on_ip() {
         std::string sl, local;
         iss >> sl >> local;
         // local is "XXXXXXXX:PPPP"; ignore wildcard 00000000
-        if (local.size() >= 8 && local.substr(0, 8) == BOARDNET_IP_HEX)
+        if (local.size() >= 8 && local.substr(0, 8) == boardnet_hex)
             ++count;
     }
     return count;
 }
 
-// Polls /proc/net/udp until no sockets remain bound to `BOARDNET_IP_HEX`,
+// Polls /proc/net/udp until no sockets remain bound to the boardnet IP,
 // or until `timeout` elapses. Returns true when the count reaches 0.
 static bool wait_for_udp_sockets_closed(std::chrono::milliseconds timeout) {
     auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -65,13 +95,14 @@ static bool wait_for_udp_sockets_closed(std::chrono::milliseconds timeout) {
 }
 
 // Returns the number of TCP connections in /proc/net/tcp whose local address
-// matches `BOARDNET_IP_HEX` and whose state is ESTABLISHED (01) or CLOSE_WAIT (08),
+// matches the boardnet IP hex and whose state is ESTABLISHED (01) or CLOSE_WAIT (08),
 // ignoring privileged ports (< 1024) which belong to infrastructure (e.g. SSH).
 // vsomeip always binds reliable endpoints on unprivileged ports (>= 1024).
 // TIME_WAIT (06) is intentionally ignored — it is managed by the kernel and
 // means the socket was already properly closed by the application.
 // Returns -1 if /proc/net/tcp cannot be opened.
 static int count_tcp_active_connections_on_ip() {
+    static const std::string boardnet_hex = get_boardnet_ip_hex();
     std::ifstream f("/proc/net/tcp");
     if (!f.is_open())
         return -1;
@@ -83,13 +114,19 @@ static int count_tcp_active_connections_on_ip() {
         std::istringstream iss(line);
         std::string sl, local, remote, state;
         iss >> sl >> local >> remote >> state;
-        // local is "XXXXXXXX:PPPP"
-        if (local.size() < 13 || local.substr(0, 8) != BOARDNET_IP_HEX)
+        // local is "XXXXXXXX:PPPP", remote is "XXXXXXXX:PPPP"
+        if (local.size() < 13 || local.substr(0, 8) != boardnet_hex)
             continue;
         // Skip infrastructure ports (SSH=22, etc.) — vsomeip uses ports >= 1024
-        unsigned long port = std::stoul(local.substr(9, 4), nullptr, 16);
-        if (port < 1024)
+        unsigned long local_port = std::stoul(local.substr(9, 4), nullptr, 16);
+        if (local_port < 1024)
             continue;
+        // Also skip connections TO infrastructure services (e.g. SSH at remote:22)
+        if (remote.size() >= 13) {
+            unsigned long remote_port = std::stoul(remote.substr(9, 4), nullptr, 16);
+            if (remote_port < 1024)
+                continue;
+        }
         // state "01"=ESTABLISHED, "08"=CLOSE_WAIT
         if (state == "01" || state == "08")
             ++count;
@@ -98,7 +135,7 @@ static int count_tcp_active_connections_on_ip() {
 }
 
 // Polls /proc/net/tcp until no ESTABLISHED or CLOSE_WAIT connections remain
-// on `BOARDNET_IP_HEX`, or until `timeout` elapses. Returns true when the count reaches 0.
+// on the boardnet IP, or until `timeout` elapses. Returns true when the count reaches 0.
 static bool wait_for_tcp_connections_closed(std::chrono::milliseconds timeout) {
     auto deadline = std::chrono::steady_clock::now() + timeout;
     do {
@@ -212,8 +249,8 @@ private:
         app_->set_routing_state(vsomeip::routing_state_e::RS_SUSPENDED);
 
         EXPECT_TRUE(wait_for_udp_sockets_closed(std::chrono::milliseconds(100)))
-                << "[TEST] External UDP sockets on boardnet were not closed on RS_SUSPENDED"
-                << " (remaining=" << count_udp_sockets_on_ip() << ")";
+                << "[TEST] External UDP sockets on boardnet were not closed on RS_SUSPENDED" << " (remaining=" << count_udp_sockets_on_ip()
+                << ")";
 
         EXPECT_TRUE(wait_for_tcp_connections_closed(std::chrono::milliseconds(100)))
                 << "[TEST] External TCP connections on boardnet were not closed on RS_SUSPENDED"
@@ -229,10 +266,7 @@ private:
         VSOMEIP_DEBUG << "[TEST] STR simulation: simulate network on, is_subscribe=" << std::boolalpha << is_subscribe_
                       << ", is_running_=" << std::boolalpha << is_running_;
 
-        std::ignore = system("ip link set eth0 up");
-        std::ignore = system("ip addr add 169.254.87.2/24 dev eth0");
-        std::ignore = system("ip route add 169.254.87.0/24 src 169.254.87.2 dev eth0");
-        std::ignore = system("ip route add 224.0.0.0/4 dev eth0");
+        restore_network();
 
         VSOMEIP_INFO << "[TEST] STR simulation: Trigger RESUME (set_routing_state to RS_RESUMED), is_subscribe=" << std::boolalpha
                      << is_subscribe_ << ", is_running_=" << std::boolalpha << is_running_;

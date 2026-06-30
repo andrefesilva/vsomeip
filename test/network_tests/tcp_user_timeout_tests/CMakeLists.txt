@@ -33,5 +33,5 @@ targets_add_default_dependencies("${executables}")
 add_custom_test(
     NAME tcp_user_timeout_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/tcp_user_timeout_test_master_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )

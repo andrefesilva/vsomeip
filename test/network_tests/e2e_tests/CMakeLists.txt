@@ -32,7 +32,7 @@ targets_add_default_dependencies("${executables}")
 add_custom_test(
     NAME e2e_test_external
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/e2e_test_external_master_start.sh e2e_test_client_external.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 if(TEST_E2E_PROFILE_04)
@@ -65,7 +65,7 @@ if(TEST_E2E_PROFILE_04)
     add_custom_test(
         NAME e2e_profile_04_test_external
         COMMAND ${CMAKE_CURRENT_BINARY_DIR}/e2e_profile_04_test_external_master_start.sh e2e_profile_04_test_client_external.json
-        SEQUENTIAL
+        SLAVES 1
     )
 
 endif()
@@ -100,7 +100,7 @@ if(TEST_E2E_PROFILE_07)
     add_custom_test(
         NAME e2e_profile_07_test_external
         COMMAND ${CMAKE_CURRENT_BINARY_DIR}/e2e_profile_07_test_external_master_start.sh e2e_profile_07_test_client_external.json
-        SEQUENTIAL
+        SLAVES 1
     )
 
 endif()

@@ -2,48 +2,49 @@
 # shellcheck shell=bash
 
 # Detect build timeout
-function is-timed-out
-{
+function is-timed-out {
 	declare -gi stop_time
-	if [[ ! -v stop_time ]]
-	then
+	if [[ ! -v stop_time ]]; then
 		stop_time=$(date -d "$GLOBAL_TIMEOUT" +%s)
 		readonly stop_time
 	fi
 	(($(date +%s) >= stop_time))
 }
 
-# Run a command on the slave container
-function run-slave
-{
-	ssh -no StrictHostKeyChecking=no slave -- "${@@Q}"
+# Resolve all slave container IPs (cached after first call).
+function get-slave-ips {
+	if [[ ! -v _SLAVE_IPS ]]; then
+		mapfile -t _SLAVE_IPS < <(dig slave +short)
+		declare -ga _SLAVE_IPS
+	fi
+	printf '%s\n' "${_SLAVE_IPS[@]}"
 }
 
-# Run a command on both containers
-function run-both
-{
-	local -A commands=(
-		[master]=exec
-		[slave]=run-slave
-	)
-	local name
-	for name in master slave
-	do
-		("${commands[$name]}" "${@//@name@/"$name"}")
+# Run a command on all slave containers (in parallel, waits for all).
+# Supports @name@ substitution (replaced with slave_1, slave_2, ... per slave).
+function run-slave {
+	local -a ips pids
+	mapfile -t ips < <(get-slave-ips)
+	local i
+	for ((i = 0; i < ${#ips[@]}; i++)); do
+		local name="slave_$((i + 1))"
+		local -a substituted=("${@//@name@/$name}")
+		ssh -no StrictHostKeyChecking=no "${ips[$i]}" -- "${substituted[@]@Q}" &
+		pids+=($!)
 	done
+	local rc=0
+	for pid in "${pids[@]}"; do
+		wait "$pid" || rc=$?
+	done
+	return $rc
 }
 
 # Pretty-print a list of items
-function print-list
-{
-	echo "$1: $(($#-1))"
+function print-list {
+	echo "$1: $(($# - 1))"
 	shift
 	local elem
-	for elem
-	do
+	for elem; do
 		echo "- $elem"
 	done
 }
-
-# Add multicast route
-ip route add multicast 224.0.0.0/4 dev eth0

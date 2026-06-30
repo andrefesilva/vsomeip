@@ -36,29 +36,29 @@ targets_link_default_libraries("${executables}")
 add_custom_test(
     NAME malicious_data_test_events
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/malicious_data_test_master_starter.sh MALICIOUS_EVENTS
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME malicious_data_test_protocol_version
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/malicious_data_test_master_starter.sh PROTOCOL_VERSION
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME malicious_data_test_message_type
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/malicious_data_test_master_starter.sh MESSAGE_TYPE
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME malicious_data_test_return_code
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/malicious_data_test_master_starter.sh RETURN_CODE
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME malicious_data_test_wrong_header_fields_udp
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/malicious_data_test_master_starter.sh WRONG_HEADER_FIELDS_UDP
-    SEQUENTIAL
+    SLAVES 1
 )

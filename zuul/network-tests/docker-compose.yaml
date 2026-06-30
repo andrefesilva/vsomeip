@@ -1,4 +1,10 @@
-version: "3.7"
+volumes:
+  test-shared:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: mode=0755
 
 networks:
   ci-network-tests:
@@ -9,8 +15,6 @@ networks:
       config:
         - subnet: 169.254.87.0/24
           gateway: 169.254.87.254
-          aux_addresses:
-            slave_2nd: &slave-2nd 169.254.87.42
 
 x-common: &common
   image: noble:latest
@@ -22,6 +26,7 @@ x-common: &common
     context: ../..
     dockerfile: zuul/network-tests/Dockerfile
   cap_add:
+    - "IPC_LOCK"
     - "NET_ADMIN"
     - "PERFMON"
     - "SYS_ADMIN"
@@ -31,20 +36,23 @@ x-common: &common
     ENABLE_SANITIZERS: ${ENABLE_SANITIZERS-OFF}
     ENABLE_THREAD_SANITIZER: ${ENABLE_THREAD_SANITIZER-OFF}
     GLOBAL_TIMEOUT: 240 minutes
-    IP_SLAVE_2ND: *slave-2nd
     STRESS_LABELS: ${STRESS_LABELS-[]}
     TEST_TIMEOUT_SCALE: ${TEST_TIMEOUT_SCALE-1}
     VALGRIND_TYPE: ${VALGRIND_TYPE-}
   networks:
     - ci-network-tests
   security_opt:
+    - apparmor:unconfined
     - seccomp:unconfined
   ulimits:
     core: -1
+  tmpfs:
+    - /run/netns:exec,mode=0755
   volumes:
     - ${SOURCE_DIR:-../..}:/home/source
     - ${BUILD_DIR:-../../build}:/home/build
     - ${LOGS_DIR:-../../logs}:/home/logs
+    - test-shared:/home/test-shared
 
 services:
   master:

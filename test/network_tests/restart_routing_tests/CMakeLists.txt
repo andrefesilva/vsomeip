@@ -30,4 +30,5 @@ targets_link_default_libraries("${executables}")
 add_custom_test(
     NAME restart_routing_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/restart_routing_test_manager
+    SLAVES 1
 )

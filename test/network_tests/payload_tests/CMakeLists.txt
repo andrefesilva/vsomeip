@@ -62,11 +62,11 @@ add_custom_test(
 add_custom_test(
     NAME external_local_payload_test_client_external
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/external_local_payload_test_client_external_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME external_local_payload_test_client_local_and_external
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/external_local_payload_test_client_local_and_external_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )

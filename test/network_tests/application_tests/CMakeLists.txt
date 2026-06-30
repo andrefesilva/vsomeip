@@ -36,7 +36,7 @@ targets_link_default_libraries("${executable_targets}")
 add_custom_test(
     NAME application_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/application_test_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(

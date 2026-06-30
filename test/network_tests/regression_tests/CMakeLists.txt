@@ -47,11 +47,11 @@ targets_link_default_libraries("${executables}")
 add_custom_test(
     NAME climate_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/climate_test_master_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME invalid_event_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/invalid_event_test_master.sh
-    SEQUENTIAL
+    SLAVES 1
 )

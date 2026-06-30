@@ -50,7 +50,7 @@ if (TEST_SECURITY)
     add_custom_test(
         NAME lazy_load_test
         COMMAND ${CMAKE_CURRENT_BINARY_DIR}/lazy_load_test_start.sh
-        SEQUENTIAL
+        SLAVES 1
     )
 
 endif()
