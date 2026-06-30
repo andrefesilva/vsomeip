@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash -eu
 # Copyright (C) 2014-2026 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -8,7 +8,7 @@
 
 # relative directory, for lxc execution
 # example "test/network_tests/payload_tests" for a caller in this directory
-RELATIVE_DIR=$(realpath $0)                # has to be $0, not $BASH_SOURCE, because we need the caller script
+RELATIVE_DIR=$(realpath "$0")              # has to be $0, not $BASH_SOURCE, because we need the caller script
 RELATIVE_DIR="test/${RELATIVE_DIR#*/test}" # prefix removal
 RELATIVE_DIR=$(dirname "$RELATIVE_DIR")    # suffix removal
 
@@ -28,19 +28,19 @@ cleanup() {
 
     local sig="$1"
     # print nothing if cleanup is triggered by EXIT
-    if [ ! -z "$sig" ]; then
+    if [ -n "$sig" ]; then
         echo "Cleanup triggered by signal: $sig" >&2
     fi
 
     # cleanup temporary directory
-    if [ ! -z "$TEST_TMPDIR" ]; then
+    if [ -n "$TEST_TMPDIR" ]; then
         rm -rf "$TEST_TMPDIR"
     fi
 
     if [ -n "$pids" ]; then
         # test forgot to cleanup; this is an error
         echo "Processes '$pids' still running at exit, kiling"
-        kill -9 $pids
+        kill -9 "$pids"
         # force test failure
         exit 1
     fi
@@ -52,14 +52,14 @@ exec_slave_blocking() {
 
     # careful with environment variables, they are also passed (at least with `USE_LXC_TEST`)
     # must reset `VSOMEIP_BASE_PATH` and allow test to create another directory
-    if [ ! -z "$USE_LXC_TEST" ]; then
+    if [ -n "$USE_LXC_TEST" ]; then
         VSOMEIP_BASE_PATH="" \
-            ssh -tt -i $SANDBOX_ROOT_DIR/commonapi_main/lxc-config/.ssh/mgc_lxc/rsa_key_file.pub \
-            -o StrictHostKeyChecking=no root@$LXC_TEST_SLAVE_IP \
+            ssh -tt -i "$SANDBOX_ROOT_DIR/commonapi_main/lxc-config/.ssh/mgc_lxc/rsa_key_file.pub" \
+            -o StrictHostKeyChecking=no "root@$TEST_IP_SLAVE" \
             "bash -ci \"set -m; cd \\\$SANDBOX_TARGET_DIR/vsomeip_lib/${RELATIVE_DIR}; ${COM}\""
-    elif [ ! -z "$USE_DOCKER" ]; then
+    elif [ -n "$USE_DOCKER" ]; then
         VSOMEIP_BASE_PATH="" \
-            docker exec $DOCKER_IMAGE sh -c "cd $DOCKER_TESTS && ${COM}"
+            docker exec "$DOCKER_IMAGE" sh -c "cd $DOCKER_TESTS && ${COM}"
     else
         echo "No USE_LXC_TEST, no USE_DOCKER, cannot execute command on slave" >&2
         exit 127
@@ -72,15 +72,15 @@ exec_slave() {
 
     # careful with environment variables, they are also passed (at least with `USE_LXC_TEST`)
     # must reset `VSOMEIP_BASE_PATH` and allow test to create another directory
-    if [ ! -z "$USE_LXC_TEST" ]; then
+    if [ -n "$USE_LXC_TEST" ]; then
         VSOMEIP_BASE_PATH="" \
-            ssh -tt -i $SANDBOX_ROOT_DIR/commonapi_main/lxc-config/.ssh/mgc_lxc/rsa_key_file.pub \
-            -o StrictHostKeyChecking=no root@$LXC_TEST_SLAVE_IP \
+            ssh -tt -i "$SANDBOX_ROOT_DIR/commonapi_main/lxc-config/.ssh/mgc_lxc/rsa_key_file.pub" \
+            -o StrictHostKeyChecking=no "root@$TEST_IP_SLAVE" \
             "bash -ci \"set -m; cd \\\$SANDBOX_TARGET_DIR/vsomeip_lib/${RELATIVE_DIR}; ${COM}\"" &
         echo $!
-    elif [ ! -z "$USE_DOCKER" ]; then
+    elif [ -n "$USE_DOCKER" ]; then
         VSOMEIP_BASE_PATH="" \
-            docker exec $DOCKER_IMAGE sh -c "cd $DOCKER_TESTS && ${COM}" &
+            docker exec "$DOCKER_IMAGE" sh -c "cd $DOCKER_TESTS && ${COM}" &
         echo $!
     else
         echo "No USE_LXC_TEST, no USE_DOCKER, cannot execute command on slave" >&2

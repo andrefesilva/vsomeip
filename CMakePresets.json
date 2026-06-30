@@ -45,10 +45,6 @@
                     "type": "STRING",
                     "value": "--coverage -fprofile-update=atomic"
                 },
-                "TEST_IP_SLAVE_SECOND": {
-                    "type": "STRING",
-                    "value": "$penv{IP_SLAVE_2ND}"
-                },
                 "TEST_GID": {
                     "type": "STRING",
                     "value": "0"
@@ -93,8 +89,6 @@
             "displayName": "Network tests (CI)",
             "description": "Preset for network tests on CI",
             "environment": {
-                "LXC_TEST_MASTER_IP": "master",
-                "LXC_TEST_SLAVE_IP": "slave",
                 "TSAN_OPTIONS": "suppressions=${sourceDir}/test/tsan-suppressions.txt",
                 "USE_LXC_TEST": "1"
             },

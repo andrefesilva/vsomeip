@@ -47,11 +47,11 @@ targets_link_default_libraries("${executables}")
 add_custom_test(
     NAME suspend_resume_test_initial
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/suspend_resume_test_master_starter.sh SERVICE
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME suspend_resume_test_connections
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/suspend_resume_test_connections_master_starter.sh SERVICE
-    SEQUENTIAL
+    SLAVES 1
 )

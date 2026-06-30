@@ -14,16 +14,16 @@ fi
 FAIL=0
 
 # File to be created by the script when the socket queue is filled
-SOCKET_QUEUE_FILLED_FILE="$(pwd)/socket_queue_filled.flag"
+SOCKET_QUEUE_FILLED_FILE="${TEST_SHARED_DIR}/socket_queue_filled.flag"
 
 # File to be created by the client when its connection times out
-TIMEOUT_FILE="$(pwd)/connection_timeout.flag"
+TIMEOUT_FILE="${TEST_SHARED_DIR}/connection_timeout.flag"
 
 # File to be created by the client when it finishes its execution
-SHUTDOWN_FILE="$(pwd)/shutdown_test.flag"
+SHUTDOWN_FILE="${TEST_SHARED_DIR}/shutdown_test.flag"
 
 # Remove any existing file before checking
-rm -f *.flag
+rm -f "${TEST_SHARED_DIR}"/*
 
 # Start the service.
 export VSOMEIP_APPLICATION_NAME="service-app"
@@ -51,12 +51,11 @@ while true; do
     SEND_Q=$(netstat -tnp 2>/dev/null | awk -v la="127.0.0.1:31492" -v fa="127.0.0.2:31493" '$4 == la && $5 == fa { print $3 }')
 
     # When queue has some bytes in it, pause the other container
-    if ((SEND_Q > 1000))
-    then
-        echo "Send queue with more than 1000 bytes.";
-        break;
+    if ((SEND_Q > 1000)); then
+        echo "Send queue with more than 1000 bytes."
+        break
     else
-        sleep 0.01;
+        sleep 0.01
     fi
 done
 
@@ -68,8 +67,8 @@ echo "Suspending tcp communication."
 # Tc command to interrupt all communication to slave container
 tc qdisc add dev lo root handle 1: prio
 tc filter add dev lo parent 1: protocol all u32 \
-        match u32 0 0 \
-        action drop
+    match u32 0 0 \
+    action drop
 
 # When the timeout file is created, restore communication
 while true; do
@@ -77,16 +76,15 @@ while true; do
         echo "Server client connection timeout detected, resuming the sending of ACKs."
         break
     fi
-    sleep 0.3;
+    sleep 0.3
 done
 
 # Remove the tc command
 tc qdisc del dev lo root
 
 # Wait until all applications are finished
-for job in $(jobs -p)
-do
-    wait $job || ((FAIL+=1))
+for job in $(jobs -p); do
+    wait $job || ((FAIL += 1))
 done
 
 # Return the result of the test.

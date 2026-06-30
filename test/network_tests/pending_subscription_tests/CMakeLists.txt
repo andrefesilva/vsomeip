@@ -36,47 +36,47 @@ targets_link_default_libraries("${executables}")
 add_custom_test(
     NAME pending_subscription_test_subscribe
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh SUBSCRIBE
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME pending_subscription_test_alternating_subscribe_unsubscribe
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh SUBSCRIBE_UNSUBSCRIBE
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME pending_subscription_test_unsubscribe
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh UNSUBSCRIBE
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME pending_subscription_test_alternating_subscribe_unsubscribe_nack
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh SUBSCRIBE_UNSUBSCRIBE_NACK
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME pending_subscription_test_alternating_subscribe_unsubscribe_same_port
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh SUBSCRIBE_UNSUBSCRIBE_SAME_PORT
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME pending_subscription_test_subscribe_resubscribe_mixed
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh SUBSCRIBE_RESUBSCRIBE_MIXED
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME pending_subscription_test_subscribe_stopsubscribe_subscribe
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh SUBSCRIBE_STOPSUBSCRIBE_SUBSCRIBE
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME pending_subscription_test_send_request_to_sd_port
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/pending_subscription_test_master_starter.sh REQUEST_TO_SD
-    SEQUENTIAL
+    SLAVES 1
 )

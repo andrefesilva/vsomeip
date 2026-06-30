@@ -13,16 +13,16 @@ fi
 FAIL=0
 
 # File to signal when the client first subscribes to the service
-CLIENT_SUBSCRIBED_FILE="$(pwd)/client_subscribed.flag"
+CLIENT_SUBSCRIBED_FILE="${TEST_SHARED_DIR}/client_subscribed.flag"
 
 # File to signal when the service becomes unavailable
-SERVICE_UNAVAILABLE_FILE="$(pwd)/service_unavailable.flag"
+SERVICE_UNAVAILABLE_FILE="${TEST_SHARED_DIR}/service_unavailable.flag"
 
 # File to signal when the service can shutdown
-SHUTDOWN_FILE="$(pwd)/shutdown_test.flag"
+SHUTDOWN_FILE="${TEST_SHARED_DIR}/shutdown_test.flag"
 
 # Remove any existing file before checking
-rm -f *.flag
+rm -f "${TEST_SHARED_DIR}"/*
 
 # Start the client.
 export VSOMEIP_CONFIGURATION=connection_timeout_sub_ack_test_client.json
@@ -42,13 +42,13 @@ while true; do
         echo "Client subscribed to the service, breaking communication..."
         break
     fi
-    sleep 0.3;
+    sleep 0.3
 done
 
 tc qdisc add dev eth0 root handle 1: prio
 tc filter add dev eth0 parent 1: protocol all u32 \
-        match u32 0 0 \
-        action drop
+    match u32 0 0 \
+    action drop
 
 # After communication stops, wait until client receives the unavailability to restore communication
 while true; do
@@ -56,15 +56,14 @@ while true; do
         echo "Service became unavailable, restoring communication..."
         break
     fi
-    sleep 0.3;
+    sleep 0.3
 done
 
 tc qdisc del dev eth0 root
 
 # After the communication is restored, wait until all applications are finished
-for job in $(jobs -p)
-do
-    wait $job || ((FAIL+=1))
+for job in $(jobs -p); do
+    wait $job || ((FAIL += 1))
 done
 
 # Return the result of the test.

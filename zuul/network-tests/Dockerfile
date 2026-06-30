@@ -5,6 +5,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update;\
     apt-get install --no-install-recommends --yes\
         bind9-dnsutils\
+        bubblewrap \
         cmake\
         g++\
         gdb\
@@ -12,6 +13,7 @@ RUN apt-get update;\
         googletest\
         iptables\
         iproute2\
+        iputils-ping\
         jq\
         lcov\
         libboost-all-dev \

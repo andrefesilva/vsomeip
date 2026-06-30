@@ -74,10 +74,12 @@ This page will guide you to accomplish that goal.
     docker compose --project-directory zuul/network-tests build
     ```
 
-3. Start the containers (same as above, you must be inside the repo directory). This will build vsomeip-lib and then run the network-tests
+3. Start the containers (same as above, you must be inside the repo directory). This will build vsomeip-lib and then run
+   the network-tests. The optional `--scale slave=N` parameter will spool up `N` instances of the slave container,
+   allowing for the parallelization of test cases that require one.
 
     ```bash
-    docker compose --project-directory zuul/network-tests up
+    docker compose --project-directory zuul/network-tests up --scale slave=N
     ```
 
 ## FAQ

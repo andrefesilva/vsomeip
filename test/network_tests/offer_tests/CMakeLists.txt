@@ -92,19 +92,19 @@ add_custom_test(
 add_custom_test(
     NAME offer_test_external_local_offer
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/offer_test_external_local_offer_master_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME offer_test_external_remote_offer
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/offer_test_external_remote_offer_master_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME offer_test_big_sd_msg
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/offer_test_big_sd_msg_master_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -115,5 +115,5 @@ add_custom_test(
 add_custom_test(
     NAME stress_tcp_subscriptions
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/offer_test_stress_local_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )

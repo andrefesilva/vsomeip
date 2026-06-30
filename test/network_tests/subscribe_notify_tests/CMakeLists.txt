@@ -92,7 +92,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         UDP
         subscribe_notify_test_diff_client_ids_diff_ports_master_udp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -100,7 +100,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP
         subscribe_notify_test_diff_client_ids_diff_ports_master_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -108,7 +108,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP_AND_UDP
         subscribe_notify_test_diff_client_ids_diff_ports_master.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -116,7 +116,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         UDP
         subscribe_notify_test_diff_client_ids_same_ports_master_udp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -124,7 +124,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP
         subscribe_notify_test_diff_client_ids_same_ports_master_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -132,7 +132,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP_AND_UDP
         subscribe_notify_test_diff_client_ids_same_ports_master.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -140,7 +140,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP_AND_UDP
         subscribe_notify_test_diff_client_ids_partial_same_ports_master.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -149,7 +149,7 @@ add_custom_test(
         UDP
         subscribe_notify_test_diff_client_ids_diff_ports_same_service_id_master_udp.json
         SAME_SERVICE_ID
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -157,7 +157,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         UDP
         subscribe_notify_test_diff_client_ids_diff_ports_autoconfig_master.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 # Subscribe Notify Tests - Local Communication over TCP
@@ -167,7 +167,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         UDP
         subscribe_notify_test_diff_client_ids_diff_ports_master_udp_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -175,7 +175,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP
         subscribe_notify_test_diff_client_ids_diff_ports_master_tcp_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -183,7 +183,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP_AND_UDP
         subscribe_notify_test_diff_client_ids_diff_ports_master_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -191,7 +191,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         UDP
         subscribe_notify_test_diff_client_ids_same_ports_master_udp_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -199,7 +199,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP
         subscribe_notify_test_diff_client_ids_same_ports_master_tcp_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -207,7 +207,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP_AND_UDP
         subscribe_notify_test_diff_client_ids_same_ports_master_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -215,7 +215,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         TCP_AND_UDP
         subscribe_notify_test_diff_client_ids_partial_same_ports_master_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -224,7 +224,7 @@ add_custom_test(
         UDP
         subscribe_notify_test_diff_client_ids_diff_ports_same_service_id_master_udp_local_tcp.json
         SAME_SERVICE_ID
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -232,7 +232,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_master_starter.sh
         UDP
         subscribe_notify_test_diff_client_ids_diff_ports_autoconfig_master_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 # Subscribe Notify Tests - One Event Two Eventgroups
@@ -242,7 +242,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_one_event_two_eventgroups_master_starter.sh
         UDP
         subscribe_notify_test_one_event_two_eventgroups_master.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -250,7 +250,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_one_event_two_eventgroups_master_starter.sh
         TCP
         subscribe_notify_test_one_event_two_eventgroups_master.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -258,7 +258,7 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_one_event_two_eventgroups_master_starter.sh
         UDP
         subscribe_notify_test_one_event_two_eventgroups_master_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
@@ -266,5 +266,5 @@ add_custom_test(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/subscribe_notify_test_one_event_two_eventgroups_master_starter.sh
         TCP
         subscribe_notify_test_one_event_two_eventgroups_master_local_tcp.json
-    SEQUENTIAL
+    SLAVES 1
 )

@@ -19,6 +19,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
+#include <filesystem>
 #include <iostream>
 
 class utility {
@@ -28,6 +29,8 @@ public:
 
     static void read_data(const std::set<std::string>& _input, std::vector<vsomeip_v3::configuration_element>& _elements,
                           std::set<std::string>& _failed);
+
+    static std::filesystem::path get_test_shared_dir();
 
     static std::set<std::string> get_all_files_in_dir(const std::string& _dir_path, const std::vector<std::string>& _dir_skip_list);
 

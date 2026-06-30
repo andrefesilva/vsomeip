@@ -57,7 +57,7 @@ if(NOT TESTS_BAT)
     add_custom_test(
         NAME external_local_routing_test
         COMMAND ${CMAKE_CURRENT_BINARY_DIR}/external_local_routing_test_starter.sh
-        SEQUENTIAL
+        SLAVES 1
     )
 
 endif()

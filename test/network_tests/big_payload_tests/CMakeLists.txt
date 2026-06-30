@@ -82,65 +82,65 @@ add_custom_test(
 add_custom_test(
     NAME big_payload_test_local_tcp
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_local_tcp_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_local_tcp_random
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_local_tcp_starter.sh RANDOM
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_local_tcp_limited
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_local_tcp_starter.sh LIMITED
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_local_tcp_queue_limited
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_local_tcp_starter.sh QUEUELIMITEDGENERAL
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_external
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_external_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_external_random
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_external_starter.sh RANDOM
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_external_limited
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_external_starter.sh LIMITED
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_external_limited_general
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_external_starter.sh LIMITEDGENERAL
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_external_queue_limited_general
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_external_starter.sh QUEUELIMITEDGENERAL
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_external_queue_limited_specific
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_external_starter.sh QUEUELIMITEDSPECIFIC
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME big_payload_test_external_udp
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/big_payload_test_external_starter.sh UDP
-    SEQUENTIAL
+    SLAVES 1
 )

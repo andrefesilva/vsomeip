@@ -5,6 +5,7 @@
 
 #include "connection_timeout_sub_ack_test_globals.hpp"
 #include "common/timeout_scale.hpp"
+#include "common/utility.hpp"
 
 using namespace connection_timeout_sub_ack_test;
 
@@ -35,7 +36,7 @@ TEST(ConnectionTimeoutSubAckTest, ClientSubscribesToService) {
             SERVICE_ID, INSTANCE_ID,
             [&client_subscribed](vsomeip::service_t /* service */, vsomeip::instance_t /* instance */, bool is_available) {
                 if (!is_available && client_subscribed) {
-                    std::filesystem::path filename = std::filesystem::current_path() / "service_unavailable.flag";
+                    std::filesystem::path filename = utility::get_test_shared_dir() / "service_unavailable.flag";
                     std::ofstream file(filename);
                     ASSERT_TRUE(file) << "Failed to create service unavailable file!";
                 }
@@ -49,7 +50,7 @@ TEST(ConnectionTimeoutSubAckTest, ClientSubscribesToService) {
                     const vsomeip::service_t, vsomeip::instance_t, vsomeip::eventgroup_t, vsomeip::event_t, const uint16_t) {
                 if (client_subscribed == false) {
                     client_subscribed = true;
-                    std::filesystem::path filename = std::filesystem::current_path() / "client_subscribed.flag";
+                    std::filesystem::path filename = utility::get_test_shared_dir() / "client_subscribed.flag";
                     std::ofstream file(filename);
                     ASSERT_TRUE(file) << "Failed to create client subscribed file!";
                 } else {
@@ -79,7 +80,7 @@ TEST(ConnectionTimeoutSubAckTest, ClientSubscribesToService) {
     }
 
     // Once the test is done, create the file to signal it to the server
-    std::filesystem::path filename = std::filesystem::current_path() / "shutdown_test.flag";
+    std::filesystem::path filename = utility::get_test_shared_dir() / "shutdown_test.flag";
     std::ofstream file(filename);
     ASSERT_TRUE(file) << "Failed to create shutdown file!";
 }

@@ -33,5 +33,5 @@ targets_add_default_dependencies("${executables}")
 add_custom_test(
     NAME connection_timeout_sub_ack_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/connection_timeout_sub_ack_test_master_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )

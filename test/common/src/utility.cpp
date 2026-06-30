@@ -38,6 +38,18 @@ void utility::read_data(const std::set<std::string>& _input, std::vector<vsomeip
     }
 }
 
+std::filesystem::path utility::get_test_shared_dir() {
+    static std::filesystem::path test_shared_dir = [] {
+        if (auto* e = std::getenv("TEST_SHARED_DIR"); e != nullptr && e[0] != '\0') {
+            return std::filesystem::path{e};
+        } else {
+            // Default to current working directory
+            return std::filesystem::current_path();
+        }
+    }();
+    return test_shared_dir;
+}
+
 std::set<std::string> utility::get_all_files_in_dir(const std::string& _dir_path, const std::vector<std::string>& _dir_skip_list) {
 
     // Create a vector of string

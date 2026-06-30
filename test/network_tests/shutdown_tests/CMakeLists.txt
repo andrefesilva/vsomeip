@@ -48,7 +48,7 @@ targets_add_default_dependencies("${test_executables}")
 add_custom_test(
     NAME shutdown_test_client_send_local_tcp
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/shutdown_test_local_starter.sh TCP CLIENT
-    SEQUENTIAL
+    SLAVES 1
 )
 add_custom_test(
     NAME shutdown_test_client_send_local_uds
@@ -57,7 +57,7 @@ add_custom_test(
 add_custom_test(
     NAME shutdown_test_service_send_local_tcp
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/shutdown_test_local_starter.sh TCP SERVICE
-    SEQUENTIAL
+    SLAVES 1
 )
 add_custom_test(
     NAME shutdown_test_service_send_local_uds

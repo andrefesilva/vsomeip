@@ -5,6 +5,7 @@
 
 #include "connection_timeout_sub_ack_test_globals.hpp"
 #include "common/timeout_scale.hpp"
+#include "common/utility.hpp"
 
 using namespace connection_timeout_sub_ack_test;
 
@@ -51,7 +52,7 @@ TEST(ConnectionTimeoutSubAckTest, ServerOffersService) {
     application->notify(SERVICE_ID, INSTANCE_ID, EVENT_ID, vsomeip::runtime::get()->create_payload({0x01}));
 
     // Wait for the client to create the shutdown file
-    std::filesystem::path shutdown_filename = std::filesystem::current_path() / "shutdown_test.flag";
+    std::filesystem::path shutdown_filename = utility::get_test_shared_dir() / "shutdown_test.flag";
     while (!std::filesystem::exists(shutdown_filename)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
