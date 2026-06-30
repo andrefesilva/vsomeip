@@ -102,14 +102,14 @@ endfunction()
 # # Example
 #
 # add_custom_test(
-# NAME my_test_name
-# COMMAND ${CMAKE_CURRENT_BINARY_DIR}/my_test_starter.sh ARG1 ARG2...
-# ENVIRONMENT VSOMEIP_CONFIGURATION=my_test_config.json # Optional.
-# SEQUENTIAL # Optional
+#   NAME my_test_name
+#   COMMAND ${CMAKE_CURRENT_BINARY_DIR}/my_test_starter.sh ARG1 ARG2...
+#   SLAVES 1 # Number of slave containers needed (0 = none, default 0)
+#   ENVIRONMENT VSOMEIP_CONFIGURATION=my_test_config.json # Optional.
 # )
 function(add_custom_test)
-    set(options SEQUENTIAL)
-    set(oneValueArgs NAME TIMEOUT)
+    set(options)
+    set(oneValueArgs NAME TIMEOUT SLAVES)
     set(multiValueArgs COMMAND ENVIRONMENT)
     cmake_parse_arguments(MY_TEST
         "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN}
@@ -130,11 +130,12 @@ function(add_custom_test)
     # Add a custom test command.
     add_test(
         NAME ${MY_TEST_NAME}
-        COMMAND ${custom_test_entrypoint} ${MY_TEST_COMMAND}
+        COMMAND ${CMAKE_SOURCE_DIR}/test/network_tests/conf/run_isolated.sh ${custom_test_entrypoint} ${MY_TEST_COMMAND}
     )
 
-    if (MY_TEST_SEQUENTIAL)
-        set_tests_properties(${MY_TEST_NAME} PROPERTIES LABELS SEQUENTIAL)
+    # Tell CTest that this test needs slave containers, if applicable.
+    if(DEFINED MY_TEST_SLAVES AND MY_TEST_SLAVES GREATER 0)
+        set_tests_properties(${MY_TEST_NAME} PROPERTIES RESOURCE_GROUPS "${MY_TEST_SLAVES},slaves:1")
     endif()
 
     # Set a timeout for the test.
@@ -155,6 +156,8 @@ function(add_custom_test)
 
     # Always set some environment variables
     set_property(TEST ${MY_TEST_NAME} APPEND PROPERTY ENVIRONMENT
+        "CTEST_TEST_NAME=${MY_TEST_NAME}"
+        "TEST_SHARED_DIR=${TEST_SHARED_DIR}"
         "TEST_TIMEOUT_SCALE=${TIMEOUT_MULTIPLIER}"
     )
 

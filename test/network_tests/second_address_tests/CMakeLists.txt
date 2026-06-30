@@ -35,11 +35,11 @@ targets_link_default_libraries("${executables}")
 add_custom_test(
     NAME second_address_test_second_ip_address_service_udp
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/second_address_test_master_starter.sh SERVICE UDP
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME second_address_test_second_ip_address_client_udp
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/second_address_test_master_starter.sh CLIENT UDP
-    SEQUENTIAL
+    SLAVES 1
 )

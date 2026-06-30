@@ -8,6 +8,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <mutex>
 #include <thread>
@@ -23,6 +24,19 @@
 #include "common/test_main.hpp"
 
 pid_t daemon_pid__;
+
+static void restore_network() {
+    const char* ip = std::getenv("TEST_IP_MASTER");
+    if (!ip || !*ip)
+        ip = "169.254.87.2";
+    std::string s{ip};
+    std::string net = s.substr(0, s.rfind('.')) + ".0";
+
+    std::ignore = system("timeout 2s ip link set eth0 up");
+    std::ignore = system(("timeout 2s ip addr add " + s + "/24 dev eth0 2>/dev/null").c_str());
+    std::ignore = system(("timeout 2s ip route add " + net + "/24 dev eth0 2>/dev/null").c_str());
+    std::ignore = system("timeout 2s ip route add 224.0.0.0/4 dev eth0 2>/dev/null");
+}
 
 class suspend_resume_test_service {
 public:
@@ -133,10 +147,7 @@ private:
                           << ", simulate network on, is_subscribe=" << std::boolalpha << is_subscribe_ << ", is_running_=" << std::boolalpha
                           << is_running_;
 
-            std::ignore = system("timeout 2s ip link set eth0 up");
-            std::ignore = system("timeout 2s ip addr add 169.254.87.2/24 dev eth0");
-            std::ignore = system("timeout 2s ip route add 169.254.87.0/24 src 169.254.87.2 dev eth0");
-            std::ignore = system("timeout 2s ip route add 224.0.0.0/4 dev eth0");
+            restore_network();
 
             std::this_thread::sleep_for(std::chrono::milliseconds(1000 - delay_ms));
 

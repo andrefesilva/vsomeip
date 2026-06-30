@@ -35,4 +35,5 @@ targets_link_default_libraries("${executables}")
 add_custom_test(
     NAME availability_handler_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/availability_handler_test_manager
+    SLAVES 1
 )

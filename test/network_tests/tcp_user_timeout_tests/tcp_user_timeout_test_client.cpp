@@ -4,6 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "tcp_user_timeout_test_globals.hpp"
+#include "common/utility.hpp"
 
 using namespace tcp_user_timeout_test;
 
@@ -28,7 +29,7 @@ TEST(TcpUserTimeoutTest, ClientSubscribesToService) {
                 std::scoped_lock scoped_lock(client_register_mutex);
                 if (app_state == vsomeip_v3::state_type_e::ST_DEREGISTERED) {
                     // Once the deregister is detected, create the file to signal it to the script
-                    std::filesystem::path filename = std::filesystem::current_path() / "connection_timeout.flag";
+                    std::filesystem::path filename = utility::get_test_shared_dir() / "connection_timeout.flag";
                     std::ofstream file(filename);
                     ASSERT_TRUE(file) << "Failed to create timeout file";
                 }
@@ -67,7 +68,7 @@ TEST(TcpUserTimeoutTest, ClientSubscribesToService) {
     }
 
     // Once the test is done, create the file to signal it to the server
-    std::filesystem::path filename = std::filesystem::current_path() / "shutdown_test.flag";
+    std::filesystem::path filename = utility::get_test_shared_dir() / "shutdown_test.flag";
     std::ofstream file(filename);
     ASSERT_TRUE(file) << "Failed to create shutdown file!";
 }

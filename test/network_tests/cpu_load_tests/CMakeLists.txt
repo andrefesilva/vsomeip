@@ -37,12 +37,12 @@ targets_add_default_dependencies("${executables}")
 add_custom_test(
     NAME cpu_load_test
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/cpu_load_test_master_starter.sh
-    SEQUENTIAL
+    SLAVES 1
 )
 
 add_custom_test(
     NAME cpu_load_test_swap
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/cpu_load_test_swap_master_starter.sh
     TIMEOUT 3000
-    SEQUENTIAL
+    SLAVES 1
 )

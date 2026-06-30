@@ -44,13 +44,13 @@ if(TEST_SECURITY)
     add_custom_test(
         NAME security_test_external_allow
         COMMAND ${CMAKE_CURRENT_BINARY_DIR}/security_test_external_master_start.sh security_test_config_client_external_allow.json --allow
-        SEQUENTIAL
+        SLAVES 1
     )
 
     add_custom_test(
         NAME security_test_external_deny
         COMMAND ${CMAKE_CURRENT_BINARY_DIR}/security_test_external_master_start.sh security_test_config_client_external_deny.json --deny
-        SEQUENTIAL
+        SLAVES 1
     )
 
 endif()

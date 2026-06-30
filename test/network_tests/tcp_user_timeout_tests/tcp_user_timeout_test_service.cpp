@@ -5,6 +5,7 @@
 
 #include "tcp_user_timeout_test_globals.hpp"
 #include "common/timeout_scale.hpp"
+#include "common/utility.hpp"
 
 using namespace tcp_user_timeout_test;
 
@@ -58,7 +59,7 @@ TEST(TcpUserTimeoutTest, ServerOffersService) {
     }
 
     // While the socket queue is not filled, notify
-    std::filesystem::path socket_queue_filename = std::filesystem::current_path() / "socket_queue_filled.flag";
+    std::filesystem::path socket_queue_filename = utility::get_test_shared_dir() / "socket_queue_filled.flag";
     while (!std::filesystem::exists(socket_queue_filename)) {
         // Set payload and notify service/event
         payload_->set_data(its_data);
@@ -66,7 +67,7 @@ TEST(TcpUserTimeoutTest, ServerOffersService) {
     }
 
     // Wait for client to re-register before stopping app that is acting as host
-    std::filesystem::path shutdown_filename = std::filesystem::current_path() / "shutdown_test.flag";
+    std::filesystem::path shutdown_filename = utility::get_test_shared_dir() / "shutdown_test.flag";
     while (!std::filesystem::exists(shutdown_filename)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
