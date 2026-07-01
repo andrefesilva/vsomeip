@@ -9,6 +9,7 @@ set(TEST_SRCS
     ../main.cpp
     ut_routing_client_state_machine.cpp
     ut_local_service_table.cpp
+    ut_local_offering_table.cpp
 )
 
 add_executable(
