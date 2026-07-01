@@ -385,9 +385,9 @@ void routing_manager_impl::request_service(client_t _client, service_t _service,
                 ep_mgr_impl_->find_or_create_remote_client(_service, _instance);
             }
         } else {
-            VSOMEIP_ERROR_P << "Service property mismatch (" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":"
-                            << static_cast<std::uint32_t>(its_info->get_major()) << "." << its_info->get_minor()
-                            << "] passed: " << static_cast<std::uint32_t>(_major) << ":" << _minor;
+            VSOMEIP_WARNING_P << "Major version mismatch, ignoring request from client " << hex4(_client) << ": [" << hex4(_service) << "."
+                              << hex4(_instance) << "] offered " << static_cast<std::uint32_t>(its_info->get_major()) << "."
+                              << its_info->get_minor() << ", requested " << static_cast<std::uint32_t>(_major) << "." << _minor;
         }
     }
 }
