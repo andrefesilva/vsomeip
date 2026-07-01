@@ -67,7 +67,7 @@
             }
         ]
     },
-    "routing" : "client-sample",
+    "routing" : "routingmanagerd",
     "service-discovery" :
     {
         "enable" : "true",

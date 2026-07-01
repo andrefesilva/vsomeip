@@ -30,6 +30,10 @@ ALLOW_DENY=$2
 FAIL=0
 
 export VSOMEIP_CONFIGURATION=$1
+export VSOMEIP_APPLICATION_NAME=client-host
+routingmanagerd &
+PID_HOST=$!
+
 export VSOMEIP_APPLICATION_NAME=client-sample
 ./e2e_test_client --remote &
 PID_CLIENT=$!
@@ -39,5 +43,7 @@ PID_SERVICE=$!
 
 wait $PID_CLIENT || ((FAIL+=1))
 wait $PID_SERVICE || ((FAIL+=1))
+kill $PID_HOST
+wait $PID_HOST || ((FAIL+=1))
 
 exit $FAIL
