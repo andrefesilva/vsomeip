@@ -4,7 +4,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <iomanip>
-#include <sstream>
 #include <thread>
 
 #include <boost/asio/ip/multicast.hpp>
@@ -635,14 +634,18 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                 uint64_t read_message_size = utility::get_message_size(&_buffer[i], remaining_bytes);
                 if (read_message_size > max_message_size_) {
                     VSOMEIP_ERROR_P << instance_name_ << "Message size exceeds allowed maximum: " << read_message_size
-                                    << " local: " << get_address_port_local_unlocked(_is_multicast) << " remote: " << its_remote_address
-                                    << ":" << its_remote_port;
+                                    << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                        its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                        static_cast<uint32_t>(read_message_size), remaining_bytes, &_buffer[0], _bytes);
                     return;
                 }
                 auto current_message_size = static_cast<uint32_t>(read_message_size);
                 if (current_message_size >= VSOMEIP_FULL_HEADER_SIZE && current_message_size <= remaining_bytes) {
                     if (remaining_bytes - current_message_size > remaining_bytes) {
-                        VSOMEIP_ERROR_P << instance_name_ << "Buffer underflow!";
+                        VSOMEIP_ERROR_P << instance_name_ << "Buffer underflow!"
+                                        << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                            its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                            current_message_size, remaining_bytes, &_buffer[0], _bytes);
                         return;
                     }
 
@@ -654,24 +657,28 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                         if (_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION) {
                             VSOMEIP_ERROR_P << instance_name_ << "Wrong protocol version: 0x"
                                             << hex2(_buffer[i + VSOMEIP_PROTOCOL_VERSION_POS])
-                                            << " local: " << get_address_port_local_unlocked(_is_multicast)
-                                            << " remote: " << its_remote_address << ":" << its_remote_port;
+                                            << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                                its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                                current_message_size, remaining_bytes, &_buffer[0], _bytes);
                             // ensure to send back a message w/ wrong protocol version
                             its_host->on_message(&_buffer[i], VSOMEIP_SOMEIP_HEADER_SIZE + 8, this, its_remote_address, its_remote_port,
                                                  _is_multicast);
                         } else if (!utility::is_valid_message_type(tp::tp::tp_flag_unset(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS]))) {
                             VSOMEIP_ERROR_P << instance_name_ << "Invalid message type: 0x" << hex2(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS])
-                                            << " local: " << get_address_port_local_unlocked(_is_multicast)
-                                            << " remote: " << its_remote_address << ":" << its_remote_port;
+                                            << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                                its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                                current_message_size, remaining_bytes, &_buffer[0], _bytes);
                         } else if (!utility::is_valid_return_code(static_cast<return_code_e>(_buffer[i + VSOMEIP_RETURN_CODE_POS]))) {
                             VSOMEIP_ERROR_P << instance_name_ << "Invalid return code: 0x" << hex2(_buffer[i + VSOMEIP_RETURN_CODE_POS])
-                                            << " local: " << get_address_port_local_unlocked(_is_multicast)
-                                            << " remote: " << its_remote_address << ":" << its_remote_port;
+                                            << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                                its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                                current_message_size, remaining_bytes, &_buffer[0], _bytes);
                         } else if (tp::tp::tp_flag_is_set(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS])
                                    && get_local_port() == configuration_->get_sd_port()) {
-                            VSOMEIP_WARNING_P << instance_name_
-                                              << "Not a SD message, local: " << get_address_port_local_unlocked(_is_multicast)
-                                              << " remote: " << its_remote_address << ":" << its_remote_port;
+                            VSOMEIP_WARNING_P << instance_name_ << "Not a SD message"
+                                              << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                                  its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                                  current_message_size, remaining_bytes, &_buffer[0], _bytes);
                         } else {
                             // Nothing to do, else clang-tidy complains
                         }
@@ -719,21 +726,26 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                                                  _is_multicast);
                         } else {
                             // ignore messages for service discovery with shorter SomeIP length
-                            VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP SD message with too short length field local: "
-                                            << get_address_port_local_unlocked(_is_multicast) << " remote: " << its_remote_address << ":"
-                                            << its_remote_port;
+                            VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP SD message with too short length field"
+                                            << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                                its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                                current_message_size, remaining_bytes, &_buffer[0], _bytes);
                         }
                     }
                     i += current_message_size;
                 } else {
-                    VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP message with bad length field local: "
-                                    << get_address_port_local_unlocked(_is_multicast) << " remote: " << its_remote_address << ":"
-                                    << its_remote_port;
+                    VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP message with bad length field"
+                                    << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                        its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
+                                                        current_message_size, remaining_bytes, &_buffer[0], _bytes);
                     if (remaining_bytes > VSOMEIP_SERVICE_POS_MAX) {
                         service_t its_service = bithelper::read_uint16_be(&_buffer[i + VSOMEIP_SERVICE_POS_MIN]);
                         if (its_service != VSOMEIP_SD_SERVICE) {
                             if (read_message_size == 0) {
-                                VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP message with SomeIP message length 0!";
+                                VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP message with SomeIP message length 0!"
+                                                << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
+                                                                    its_remote_address.to_string() + ":" + std::to_string(its_remote_port),
+                                                                    i, current_message_size, remaining_bytes, &_buffer[0], _bytes);
 
                             } else {
                                 auto its_endpoint_host = endpoint_host_.lock();
