@@ -47,8 +47,8 @@ public:
 
     VSOMEIP_EXPORT bool is_local() const;
 
-    VSOMEIP_EXPORT bool is_in_preparation() const;
-    VSOMEIP_EXPORT void set_is_in_preparation(bool _in_preparation);
+    VSOMEIP_EXPORT bool is_ready_to_offer() const;
+    VSOMEIP_EXPORT void set_endpoint_requirements(bool _needs_reliable, bool _needs_unreliable);
 
     VSOMEIP_EXPORT bool is_in_mainphase() const;
     VSOMEIP_EXPORT void set_is_in_mainphase(bool _in_mainphase);
@@ -71,7 +71,8 @@ private:
 
     std::set<client_t> requesters_;
 
-    std::atomic_bool is_in_preparation_;
+    std::atomic_bool needs_reliable_;
+    std::atomic_bool needs_unreliable_;
     std::atomic_bool is_in_mainphase_;
 };
 
