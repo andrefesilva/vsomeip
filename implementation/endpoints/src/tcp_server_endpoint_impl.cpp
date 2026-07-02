@@ -661,7 +661,9 @@ void tcp_server_endpoint_impl::connection::receive_cbk(boost::system::error_code
                 uint64_t read_message_size = utility::get_message_size(&recv_buffer_[its_iteration_gap], recv_buffer_size_);
                 if (read_message_size > max_message_size_) {
                     VSOMEIP_ERROR_P << instance_name_ << "Message size exceeds allowed maximum: " << read_message_size
-                                    << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
+                                    << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                        static_cast<uint32_t>(read_message_size), recv_buffer_size_,
+                                                        &recv_buffer_[its_iteration_gap], recv_buffer_size_);
                     its_lock.unlock();
                     wait_until_sent(boost::asio::error::operation_aborted);
                     return;
@@ -766,8 +768,9 @@ void tcp_server_endpoint_impl::connection::receive_cbk(boost::system::error_code
                         if (recv_buffer_[its_iteration_gap + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION) {
                             VSOMEIP_ERROR_P << instance_name_ << "Wrong protocol version: 0x"
                                             << hex2(recv_buffer_[its_iteration_gap + VSOMEIP_PROTOCOL_VERSION_POS])
-                                            << " local: " << get_address_port_local() << " remote: " << get_address_port_remote()
-                                            << ". Closing connection due to missing/broken data TCP stream.";
+                                            << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                                current_message_size, recv_buffer_size_, &recv_buffer_[its_iteration_gap],
+                                                                recv_buffer_size_);
 
                             // ensure to send back a error message w/ wrong protocol version
                             its_lock.unlock();
@@ -778,14 +781,16 @@ void tcp_server_endpoint_impl::connection::receive_cbk(boost::system::error_code
                                            static_cast<message_type_e>(recv_buffer_[its_iteration_gap + VSOMEIP_MESSAGE_TYPE_POS]))) {
                             VSOMEIP_ERROR_P << instance_name_ << "Invalid message type: 0x"
                                             << hex2(recv_buffer_[its_iteration_gap + VSOMEIP_MESSAGE_TYPE_POS])
-                                            << " local: " << get_address_port_local() << " remote: " << get_address_port_remote()
-                                            << ". Closing connection due to missing/broken data TCP stream.";
+                                            << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                                current_message_size, recv_buffer_size_, &recv_buffer_[its_iteration_gap],
+                                                                recv_buffer_size_);
                         } else if (!utility::is_valid_return_code(
                                            static_cast<return_code_e>(recv_buffer_[its_iteration_gap + VSOMEIP_RETURN_CODE_POS]))) {
                             VSOMEIP_ERROR_P << instance_name_ << "Invalid return code: 0x"
                                             << hex2(recv_buffer_[its_iteration_gap + VSOMEIP_RETURN_CODE_POS])
-                                            << " local: " << get_address_port_local() << " remote: " << get_address_port_remote()
-                                            << ". Closing connection due to missing/broken data TCP stream.";
+                                            << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                                current_message_size, recv_buffer_size_, &recv_buffer_[its_iteration_gap],
+                                                                recv_buffer_size_);
                         }
 
                         its_lock.unlock();

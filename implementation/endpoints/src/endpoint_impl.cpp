@@ -11,9 +11,12 @@
 #include <vsomeip/defines.hpp>
 #include <vsomeip/internal/logger.hpp>
 
+#include <sstream>
+
 #include "../include/boardnet_endpoint_host.hpp"
 #include "../../routing/include/routing_host.hpp"
 #include "../include/endpoint_impl.hpp"
+#include "../../utility/include/utility.hpp"
 
 namespace vsomeip_v3 {
 
@@ -73,6 +76,14 @@ instance_t endpoint_impl<Protocol>::get_instance(service_t _service) {
         its_instance = its_host->find_instance(_service, this);
 
     return its_instance;
+}
+
+std::string make_buffer_dump(const std::string& _local, const std::string& _remote, std::size_t _offset, uint32_t _current_message_size,
+                             std::size_t _remaining_bytes, const byte_t* _pdu, std::size_t _pdu_size) {
+    std::ostringstream oss;
+    oss << " local: " << _local << " remote: " << _remote << " offset: " << _offset << " current_message_size: " << _current_message_size
+        << " remaining_bytes: " << _remaining_bytes << " pdu: " << utility::dump(_pdu, _pdu_size);
+    return oss.str();
 }
 
 // Instantiate template

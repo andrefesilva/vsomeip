@@ -21,6 +21,9 @@ namespace vsomeip_v3 {
 class boardnet_endpoint_host;
 class boardnet_routing_host;
 
+std::string make_buffer_dump(const std::string& _local, const std::string& _remote, std::size_t _offset, uint32_t _current_message_size,
+                             std::size_t _remaining_bytes, const byte_t* _pdu, std::size_t _pdu_size);
+
 template<typename Protocol>
 class endpoint_impl : public boardnet_endpoint {
 public:
