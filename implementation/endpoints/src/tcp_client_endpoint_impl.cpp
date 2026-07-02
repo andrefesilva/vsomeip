@@ -442,8 +442,10 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             do {
                 uint64_t read_message_size = utility::get_message_size(&(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
                 if (read_message_size > max_message_size_) {
-                    VSOMEIP_ERROR << "Message size exceeds allowed maximum: " << read_message_size << " local: " << get_address_port_local()
-                                  << " remote: " << get_address_port_remote();
+                    VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << read_message_size
+                                    << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                        static_cast<uint32_t>(read_message_size), _recv_buffer_size,
+                                                        &(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
                     its_lock.unlock();
                     wait_until_sent(boost::asio::error::operation_aborted);
                     return;
@@ -509,7 +511,9 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
                             invalid_parameter_detected = true;
                             VSOMEIP_ERROR_P << "Wrong protocol version: 0x"
                                             << hex2((*recv_buffer_)[its_iteration_gap + VSOMEIP_PROTOCOL_VERSION_POS])
-                                            << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
+                                            << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                                current_message_size, _recv_buffer_size,
+                                                                &(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
                             // ensure to send back a message w/ wrong protocol version
                             its_lock.unlock();
                             its_host->on_message(&(*_recv_buffer)[its_iteration_gap], VSOMEIP_SOMEIP_HEADER_SIZE + 8, this, remote_address_,
@@ -520,13 +524,17 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
                             invalid_parameter_detected = true;
                             VSOMEIP_ERROR_P << "Invalid message type: 0x"
                                             << hex2((*recv_buffer_)[its_iteration_gap + VSOMEIP_MESSAGE_TYPE_POS])
-                                            << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
+                                            << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                                current_message_size, _recv_buffer_size,
+                                                                &(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
                         } else if (!utility::is_valid_return_code(
                                            static_cast<return_code_e>((*recv_buffer_)[its_iteration_gap + VSOMEIP_RETURN_CODE_POS]))) {
                             invalid_parameter_detected = true;
                             VSOMEIP_ERROR_P << "Invalid return code: 0x"
                                             << hex2((*recv_buffer_)[its_iteration_gap + VSOMEIP_RETURN_CODE_POS])
-                                            << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
+                                            << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
+                                                                current_message_size, _recv_buffer_size,
+                                                                &(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
                         }
 
                         if (invalid_parameter_detected) {

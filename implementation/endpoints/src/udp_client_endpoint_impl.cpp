@@ -5,7 +5,6 @@
 
 #include <boost/asio/error.hpp>
 #include <iomanip>
-#include <sstream>
 #include <thread>
 
 #include <boost/asio/bind_executor.hpp>
@@ -275,26 +274,27 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
         if (_bytes > VSOMEIP_MAX_UDP_MESSAGE_SIZE) {
             VSOMEIP_ERROR_P << "Received a packet that is bigger than VSOMEIP_MAX_UDP_MESSAGE_SIZE (" << VSOMEIP_MAX_UDP_MESSAGE_SIZE
                             << ") bytes with " << _bytes << " bytes in " << local_ << ", " << socket_.get() << " from " << remote_
-                            << ". Message will be dropped";
+                            << ". Message will be dropped"
+                            << " pdu: " << utility::dump(&(*_recv_buffer)[0], _bytes);
             receive(std::move(_recv_buffer));
             return;
         } else if (_bytes < VSOMEIP_FULL_HEADER_SIZE) {
             VSOMEIP_ERROR_P << "ucei::" << __func__
                             << ": Dropping packet that is smaller than VSOMEIP_FULL_HEADER_SIZE (16). size=" << _bytes
-                            << " remote=" << remote_;
+                            << " remote=" << remote_ << " pdu: " << utility::dump(&(*_recv_buffer)[0], _bytes);
             receive(std::move(_recv_buffer));
             return;
-        } else {
-            // Size is within boundaries.
         }
 
         std::size_t remaining_bytes = _bytes;
         std::size_t i = 0;
+
         do {
             uint64_t read_message_size = utility::get_message_size(&(*_recv_buffer)[i], remaining_bytes);
             if (read_message_size > max_message_size_) {
-                VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << read_message_size << " local: " << get_address_port_local()
-                                << " remote: " << get_address_port_remote();
+                VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << read_message_size
+                                << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i,
+                                                    static_cast<uint32_t>(read_message_size), remaining_bytes, &(*_recv_buffer)[0], _bytes);
                 receive(std::move(_recv_buffer));
                 return;
             }
@@ -302,7 +302,9 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             uint32_t current_message_size = static_cast<uint32_t>(read_message_size);
             if (current_message_size > VSOMEIP_SOMEIP_HEADER_SIZE && current_message_size <= remaining_bytes) {
                 if (remaining_bytes - current_message_size > remaining_bytes) {
-                    VSOMEIP_ERROR_P << "Buffer underflow in udp client endpoint ~> abort!";
+                    VSOMEIP_ERROR_P << "Buffer underflow in udp client endpoint ~> abort!"
+                                    << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i, current_message_size,
+                                                        remaining_bytes, &(*_recv_buffer)[0], _bytes);
                     receive(std::move(_recv_buffer));
                     return;
                 } else if (current_message_size > VSOMEIP_RETURN_CODE_POS
@@ -312,16 +314,19 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
                                        static_cast<return_code_e>((*_recv_buffer)[i + VSOMEIP_RETURN_CODE_POS])))) {
                     if ((*_recv_buffer)[i + VSOMEIP_PROTOCOL_VERSION_POS] != VSOMEIP_PROTOCOL_VERSION) {
                         VSOMEIP_ERROR_P << "Wrong protocol version: 0x" << hex2((*_recv_buffer)[i + VSOMEIP_PROTOCOL_VERSION_POS])
-                                        << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
+                                        << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i, current_message_size,
+                                                            remaining_bytes, &(*_recv_buffer)[0], _bytes);
                         // ensure to send back a message w/ wrong protocol version
                         its_host->on_message(&(*_recv_buffer)[i], VSOMEIP_SOMEIP_HEADER_SIZE + 8, this, remote_address_, remote_port_,
                                              false);
                     } else if (!utility::is_valid_message_type(tp::tp::tp_flag_unset((*_recv_buffer)[i + VSOMEIP_MESSAGE_TYPE_POS]))) {
                         VSOMEIP_ERROR_P << "Invalid message type: 0x" << hex2((*_recv_buffer)[i + VSOMEIP_MESSAGE_TYPE_POS])
-                                        << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
+                                        << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i, current_message_size,
+                                                            remaining_bytes, &(*_recv_buffer)[0], _bytes);
                     } else if (!utility::is_valid_return_code(static_cast<return_code_e>((*_recv_buffer)[i + VSOMEIP_RETURN_CODE_POS]))) {
                         VSOMEIP_ERROR_P << "Invalid return code: 0x" << hex2((*_recv_buffer)[i + VSOMEIP_RETURN_CODE_POS])
-                                        << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
+                                        << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i, current_message_size,
+                                                            remaining_bytes, &(*_recv_buffer)[0], _bytes);
                     }
 
                     receive(std::move(_recv_buffer));
@@ -338,8 +343,9 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
                 }
                 remaining_bytes -= current_message_size;
             } else {
-                VSOMEIP_ERROR_P << "Received a unreliable SomeIP message with bad length field. Message size: " << current_message_size
-                                << " Bytes. From: " << remote_.address() << ":" << remote_.port() << ". Dropping message.";
+                VSOMEIP_ERROR_P << "Received a unreliable SomeIP message with bad length field."
+                                << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i, current_message_size,
+                                                    remaining_bytes, &(*_recv_buffer)[0], _bytes);
                 remaining_bytes = 0;
             }
             i += current_message_size;
