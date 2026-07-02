@@ -659,6 +659,19 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
         }
         if (is_request) {
             its_target = ep_mgr_impl_->find_or_create_remote_client(its_service, _instance, _reliable);
+            if (!its_target) {
+                // The remote endpoint for the requested reliability does not exist (yet). This
+                // happens transiently while a service is announced through one transport before
+                // the other endpoint is up, or permanently when a remote ECU offers its endpoints
+                // incrementally. As the service is available, the other endpoint is reachable, so
+                // fall back to it on a best-effort basis instead of dropping the message.
+                if (auto its_fallback = ep_mgr_impl_->find_or_create_remote_client(its_service, _instance, !_reliable)) {
+                    VSOMEIP_WARNING << "Routing info for requested reliability not found, sending via the available endpoint ("
+                                    << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(_instance) << "." << hex4(its_method)
+                                    << "] reliable=" << std::boolalpha << _reliable;
+                    its_target = its_fallback;
+                }
+            }
             if (its_target) {
                 is_sent = its_target->send(_data, _size);
                 if (is_sent) {
@@ -1515,6 +1528,7 @@ void routing_manager_impl::init_service_info(service_t _service, instance_t _ins
         if (_is_local_service) {
             const bool is_someip = configuration_->is_someip(_service, _instance);
             uint16_t its_reliable_port = configuration_->get_reliable_port(_service, _instance);
+            uint16_t its_unreliable_port = configuration_->get_unreliable_port(_service, _instance);
             bool _is_found(false);
             if (ILLEGAL_PORT != its_reliable_port) {
                 auto its_reliable_endpoint =
@@ -1523,7 +1537,6 @@ void routing_manager_impl::init_service_info(service_t _service, instance_t _ins
                     its_info->set_endpoint(its_reliable_endpoint, true);
                 }
             }
-            uint16_t its_unreliable_port = configuration_->get_unreliable_port(_service, _instance);
             if (ILLEGAL_PORT != its_unreliable_port) {
                 auto its_unreliable_endpoint =
                         ep_mgr_impl_->find_or_create_server_endpoint(its_unreliable_port, false, is_someip, _service, _instance, _is_found);
@@ -1535,7 +1548,7 @@ void routing_manager_impl::init_service_info(service_t _service, instance_t _ins
             if (ILLEGAL_PORT == its_reliable_port && ILLEGAL_PORT == its_unreliable_port) {
                 VSOMEIP_INFO << "Port configuration missing for [" << hex4(_service) << "." << hex4(_instance) << "]. Service is internal.";
             }
-            its_info->set_is_in_preparation(false);
+            its_info->set_endpoint_requirements(ILLEGAL_PORT != its_reliable_port, ILLEGAL_PORT != its_unreliable_port);
         }
     } else {
         VSOMEIP_ERROR << "Missing vsomeip configuration.";

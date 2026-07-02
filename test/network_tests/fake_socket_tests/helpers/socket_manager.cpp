@@ -239,6 +239,12 @@ void socket_manager::remove_acceptor(fd_t _fd, uds_endpoint _ep) {
     if (auto const it = ep_to_acceptor_states_.find(_ep); it != ep_to_acceptor_states_.end()) {
         return false;
     }
+    // Allow a test to keep a specific reliable (TCP) server endpoint (identified by its local
+    // port) from binding, e.g. the reliable endpoint of a UDP+TCP service, without disturbing
+    // UDP or the SD multicast.
+    if (fail_on_tcp_port_bind_.count(_ep.port()) != 0) {
+        return false;
+    }
     ep_to_acceptor_states_[_ep] = _state;
     return true;
 }
@@ -285,7 +291,12 @@ void socket_manager::remove_acceptor(fd_t _fd, uds_endpoint _ep) {
             // Multicast udp endpoint
             binded_multicast_endpoints_[_handle->get_app_name()].insert({_ep, _fd});
         } else {
-            // Unicast udp endpoint
+            // Unicast udp endpoint — allow a test to keep a specific server endpoint
+            // (identified by its local port) from binding, e.g. the unreliable endpoint of a
+            // UDP+TCP service, without disturbing TCP or the SD multicast.
+            if (fail_on_udp_port_bind_.count(_ep.port()) != 0) {
+                return false;
+            }
             endpoint_udp_to_fd_[_ep] = _fd;
             if (auto const it = udp_sending_delay_.find(_ep); it != udp_sending_delay_.end()) {
                 pending_delay = it->second;
@@ -478,6 +489,22 @@ void socket_manager::fail_on_uds_bind(std::string const& _app, bool fail) {
         fail_on_uds_bind_.insert(_app);
     } else {
         fail_on_uds_bind_.erase(_app);
+    }
+}
+void socket_manager::fail_on_udp_port_bind(port_t _port, bool fail) {
+    auto lock = std::unique_lock(mtx_);
+    if (fail) {
+        fail_on_udp_port_bind_.insert(_port);
+    } else {
+        fail_on_udp_port_bind_.erase(_port);
+    }
+}
+void socket_manager::fail_on_tcp_port_bind(port_t _port, bool fail) {
+    auto lock = std::unique_lock(mtx_);
+    if (fail) {
+        fail_on_tcp_port_bind_.insert(_port);
+    } else {
+        fail_on_tcp_port_bind_.erase(_port);
     }
 }
 

@@ -10,7 +10,7 @@ namespace vsomeip_v3 {
 serviceinfo::serviceinfo(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, ttl_t _ttl,
                          bool _is_local) :
     service_(_service), instance_(_instance), major_(_major), minor_(_minor), is_local_(_is_local), ttl_(0), reliable_(nullptr),
-    unreliable_(nullptr), is_in_preparation_(true), is_in_mainphase_(false) {
+    unreliable_(nullptr), needs_reliable_(false), needs_unreliable_(false), is_in_mainphase_(false) {
 
     std::chrono::seconds ttl = static_cast<std::chrono::seconds>(_ttl);
     ttl_ = std::chrono::duration_cast<std::chrono::milliseconds>(ttl);
@@ -19,6 +19,7 @@ serviceinfo::serviceinfo(service_t _service, instance_t _instance, major_version
 serviceinfo::serviceinfo(const serviceinfo& _other) :
     service_(_other.service_), instance_(_other.instance_), major_(_other.major_), minor_(_other.minor_), is_local_(_other.is_local_),
     ttl_(_other.ttl_), reliable_(_other.reliable_), unreliable_(_other.unreliable_), requesters_(_other.requesters_),
+    needs_reliable_(_other.needs_reliable_.load()), needs_unreliable_(_other.needs_unreliable_.load()),
     is_in_mainphase_(_other.is_in_mainphase_.load()) { }
 
 serviceinfo::~serviceinfo() { }
@@ -101,12 +102,22 @@ bool serviceinfo::is_local() const {
     return is_local_;
 }
 
-bool serviceinfo::is_in_preparation() const {
-    return is_in_preparation_;
+bool serviceinfo::is_ready_to_offer() const {
+    const bool needs_reliable = needs_reliable_;
+    const bool needs_unreliable = needs_unreliable_;
+    // Always return false for internal service
+    if (!needs_reliable && !needs_unreliable) {
+        return false;
+    }
+    std::scoped_lock its_lock(mutex_);
+    const bool has_reliable = reliable_ != nullptr;
+    const bool has_unreliable = unreliable_ != nullptr;
+    return (!needs_reliable || has_reliable) && (!needs_unreliable || has_unreliable);
 }
 
-void serviceinfo::set_is_in_preparation(bool _in_preparation) {
-    is_in_preparation_ = _in_preparation;
+void serviceinfo::set_endpoint_requirements(bool _needs_reliable, bool _needs_unreliable) {
+    needs_reliable_ = _needs_reliable;
+    needs_unreliable_ = _needs_unreliable;
 }
 
 bool serviceinfo::is_in_mainphase() const {

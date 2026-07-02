@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 
@@ -2672,5 +2673,231 @@ TEST_F(test_someip_record, record_notification_on_tcp_boardnet_connection) {
     record_gate->someip_record_.clear();
     EXPECT_FALSE(record_gate->someip_record_.wait_for_any(tcp_notification, std::chrono::milliseconds(100)))
             << "Record should be empty after clear";
+}
+
+const interface udp_tcp_service{
+        0x3355,
+        /*events*/ {{0x8001, 0x1, vsomeip::reliability_type_e::RT_RELIABLE}},
+        /*fields*/ {{0x8002, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+};
+
+const interface tcp_only_service{
+        0x3366,
+        /*events*/ {{0x8001, 0x1, vsomeip::reliability_type_e::RT_RELIABLE}},
+        /*fields*/ {{0x8002, 0x1, vsomeip::reliability_type_e::RT_RELIABLE}},
+};
+
+const interface udp_only_service{
+        0x3377,
+        /*events*/ {{0x8001, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+        /*fields*/ {{0x8002, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+};
+
+constexpr vsomeip::method_t TEST_METHOD = 0x0421;
+const std::vector<unsigned char> TEST_REQUEST_PAYLOAD{0x42};
+
+struct offer_endpoint_readiness : public base_fake_socket_fixture {
+    ecu_config provider_config_{boardnet::ecu_two_config};
+    ecu_setup provider_ecu_{"ecu_two", provider_config_.add_interface({udp_tcp_service, tcp_only_service, udp_only_service}, 30510),
+                            *socket_manager_};
+    ecu_setup consumer_ecu_{"ecu_one", boardnet::ecu_one_config, *socket_manager_};
+
+    app* provider_{nullptr};
+    app* consumer_{nullptr};
+
+    [[nodiscard]] port_t provider_udp_port(service_instance _si) const {
+        for (auto const& svc : provider_config_.services_) {
+            if (svc.si_ == _si && svc.unreliable_port_) {
+                return svc.unreliable_port_.value();
+            }
+        }
+        throw std::logic_error{"service has no configured unreliable port"};
+    }
+
+    [[nodiscard]] port_t provider_tcp_port(service_instance _si) const {
+        for (auto const& svc : provider_config_.services_) {
+            if (svc.si_ == _si && svc.reliable_port_) {
+                return svc.reliable_port_->port_;
+            }
+        }
+        throw std::logic_error{"service has no configured reliable port"};
+    }
+};
+
+// Server side: the UDP+TCP service must not be announced while its UDP endpoint is down.
+TEST_F(offer_endpoint_readiness, udp_tcp_service_is_not_offered_until_both_endpoints_are_up) {
+    provider_ecu_.add_guest({"provider", std::nullopt});
+    consumer_ecu_.add_guest({"consumer", std::nullopt});
+
+    provider_ecu_.prepare();
+    consumer_ecu_.prepare();
+
+    provider_ecu_.start_apps();
+    consumer_ecu_.start_apps();
+
+    provider_ = provider_ecu_.apps_["provider"];
+    consumer_ = consumer_ecu_.apps_["consumer"];
+    ASSERT_NE(provider_, nullptr);
+    ASSERT_NE(consumer_, nullptr);
+
+    // Keep the provider's unreliable (UDP) server endpoint from binding so that, when offered,
+    // only the reliable (TCP) endpoint is up. TCP and the SD multicast are unaffected.
+    fail_on_udp_port_bind(provider_udp_port(udp_tcp_service.instance_), true);
+
+    consumer_->request_service(udp_tcp_service.instance_);
+    consumer_->subscribe(udp_tcp_service);
+
+    provider_->offer(udp_tcp_service);
+
+    // The offer is withheld while the UDP endpoint is missing, so the consumer must
+    // NOT become available; without it the consumer would wrongly become available from a TCP-only
+    // offer.
+    EXPECT_FALSE(consumer_->availability_record_.wait_for_last(service_availability::available(udp_tcp_service.instance_),
+                                                               std::chrono::seconds(1)))
+            << "Consumer became available from an incomplete (TCP-only) offer while the UDP endpoint was down";
+
+    // Bring the UDP endpoint up and re-offer; the full offer must now flow.
+    fail_on_udp_port_bind(provider_udp_port(udp_tcp_service.instance_), false);
+    provider_->stop_offer(udp_tcp_service.instance_);
+    provider_->offer(udp_tcp_service);
+    provider_->send_event(udp_tcp_service.fields_[0], {0x42});
+
+    EXPECT_TRUE(consumer_->availability_record_.wait_for_last(service_availability::available(udp_tcp_service.instance_),
+                                                              std::chrono::seconds(8)))
+            << "Consumer did not become available after both endpoints were up";
+
+    // The unreliable field is delivered over UDP, proving the service was only announced once the
+    // UDP endpoint was really there.
+    message_checker udp_event{std::nullopt, udp_tcp_service.instance_, udp_tcp_service.fields_[0].event_id_,
+                              vsomeip::message_type_e::MT_NOTIFICATION, std::vector<unsigned char>{0x42}};
+    EXPECT_TRUE(consumer_->message_record_.wait_for_any(udp_event, std::chrono::seconds(8)))
+            << "Consumer did not receive the unreliable field over UDP after recovery";
+}
+
+// Server side: the UDP+TCP service must not be announced while its TCP endpoint is down.
+TEST_F(offer_endpoint_readiness, udp_tcp_service_is_not_offered_until_tcp_endpoint_is_up) {
+    provider_ecu_.add_guest({"provider", std::nullopt});
+    consumer_ecu_.add_guest({"consumer", std::nullopt});
+
+    provider_ecu_.prepare();
+    consumer_ecu_.prepare();
+
+    provider_ecu_.start_apps();
+    consumer_ecu_.start_apps();
+
+    provider_ = provider_ecu_.apps_["provider"];
+    consumer_ = consumer_ecu_.apps_["consumer"];
+    ASSERT_NE(provider_, nullptr);
+    ASSERT_NE(consumer_, nullptr);
+
+    // Keep the provider's reliable (TCP) server endpoint from binding so that, when offered,
+    // only the unreliable (UDP) endpoint is up. UDP and the SD multicast are unaffected.
+    fail_on_tcp_port_bind(provider_tcp_port(udp_tcp_service.instance_), true);
+
+    consumer_->request_service(udp_tcp_service.instance_);
+    consumer_->subscribe(udp_tcp_service);
+
+    provider_->offer(udp_tcp_service);
+
+    // The offer is withheld while the TCP endpoint is missing, so the consumer must
+    // NOT become available; without it the consumer would wrongly become available from a UDP-only
+    // offer.
+    EXPECT_FALSE(consumer_->availability_record_.wait_for_last(service_availability::available(udp_tcp_service.instance_),
+                                                               std::chrono::seconds(1)))
+            << "Consumer became available from an incomplete (UDP-only) offer while the TCP endpoint was down";
+
+    // Bring the TCP endpoint up and re-offer; the full offer must now flow.
+    fail_on_tcp_port_bind(provider_tcp_port(udp_tcp_service.instance_), false);
+    provider_->stop_offer(udp_tcp_service.instance_);
+    provider_->offer(udp_tcp_service);
+
+    EXPECT_TRUE(consumer_->availability_record_.wait_for_last(service_availability::available(udp_tcp_service.instance_),
+                                                              std::chrono::seconds(8)))
+            << "Consumer did not become available after both endpoints were up";
+
+    // A plain event (unlike a field) is not cached for initial delivery, so wait until the reliable
+    // (TCP) subscription is acknowledged before notifying, ensuring the live subscriber is in place.
+    ASSERT_TRUE(consumer_->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(udp_tcp_service.events_[0]),
+                                                             std::chrono::seconds(8)))
+            << "Consumer did not subscribe to the reliable event over TCP after recovery";
+
+    provider_->send_event(udp_tcp_service.events_[0], {0x42});
+
+    // The reliable event is delivered over TCP, proving the service was only announced once the
+    // TCP endpoint was really there.
+    message_checker tcp_event{std::nullopt, udp_tcp_service.instance_, udp_tcp_service.events_[0].event_id_,
+                              vsomeip::message_type_e::MT_NOTIFICATION, std::vector<unsigned char>{0x42}};
+    EXPECT_TRUE(consumer_->message_record_.wait_for_any(tcp_event, std::chrono::seconds(8)))
+            << "Consumer did not receive the reliable event over TCP after recovery";
+}
+
+// Available via TCP only, app sends an unreliable (UDP) request -> the UDP remote client is null -> fall back to the TCP endpoint.
+TEST_F(offer_endpoint_readiness, unreliable_request_is_delivered_when_only_tcp_is_up) {
+    provider_ecu_.add_guest({"provider", std::nullopt});
+    consumer_ecu_.add_guest({"consumer", std::nullopt});
+
+    provider_ecu_.prepare();
+    consumer_ecu_.prepare();
+
+    provider_ecu_.start_apps();
+    consumer_ecu_.start_apps();
+
+    provider_ = provider_ecu_.apps_["provider"];
+    consumer_ = consumer_ecu_.apps_["consumer"];
+    ASSERT_NE(provider_, nullptr);
+    ASSERT_NE(consumer_, nullptr);
+
+    provider_->offer(tcp_only_service);
+
+    consumer_->request_service(tcp_only_service.instance_);
+    ASSERT_TRUE(consumer_->availability_record_.wait_for_last(service_availability::available(tcp_only_service.instance_),
+                                                              std::chrono::seconds(5)))
+            << "Consumer never saw the service become available";
+
+    request const its_request{tcp_only_service.instance_, TEST_METHOD, vsomeip::message_type_e::MT_REQUEST_NO_RETURN, false,
+                              TEST_REQUEST_PAYLOAD};
+    consumer_->send_request(its_request);
+
+    message_checker const expected{std::nullopt, tcp_only_service.instance_, TEST_METHOD, vsomeip::message_type_e::MT_REQUEST_NO_RETURN,
+                                   TEST_REQUEST_PAYLOAD};
+    EXPECT_TRUE(provider_->message_record_.wait_for_any(expected, std::chrono::seconds(5)))
+            << "Provider never received the request — it was dropped because the requested reliability had no remote endpoint "
+               "while the service was available on the other transport.\nRecord: "
+            << provider_->message_record_.to_string();
+}
+
+// Available via UDP only, app sends a reliable (TCP) request -> the TCP remote client is null -> fall back to the UDP endpoint.
+TEST_F(offer_endpoint_readiness, reliable_request_is_delivered_when_only_udp_is_up) {
+    provider_ecu_.add_guest({"provider", std::nullopt});
+    consumer_ecu_.add_guest({"consumer", std::nullopt});
+
+    provider_ecu_.prepare();
+    consumer_ecu_.prepare();
+
+    provider_ecu_.start_apps();
+    consumer_ecu_.start_apps();
+
+    provider_ = provider_ecu_.apps_["provider"];
+    consumer_ = consumer_ecu_.apps_["consumer"];
+    ASSERT_NE(provider_, nullptr);
+    ASSERT_NE(consumer_, nullptr);
+
+    provider_->offer(udp_only_service);
+
+    consumer_->request_service(udp_only_service.instance_);
+    ASSERT_TRUE(consumer_->availability_record_.wait_for_last(service_availability::available(udp_only_service.instance_),
+                                                              std::chrono::seconds(5)))
+            << "Consumer never saw the service become available";
+
+    request const its_request{udp_only_service.instance_, TEST_METHOD, vsomeip::message_type_e::MT_REQUEST_NO_RETURN, true,
+                              TEST_REQUEST_PAYLOAD};
+    consumer_->send_request(its_request);
+
+    message_checker const expected{std::nullopt, udp_only_service.instance_, TEST_METHOD, vsomeip::message_type_e::MT_REQUEST_NO_RETURN,
+                                   TEST_REQUEST_PAYLOAD};
+    EXPECT_TRUE(provider_->message_record_.wait_for_any(expected, std::chrono::seconds(5)))
+            << "Provider never received the request — it was dropped because the requested reliability had no remote endpoint "
+               "while the service was available on the other transport.\nRecord: "
+            << provider_->message_record_.to_string();
 }
 }

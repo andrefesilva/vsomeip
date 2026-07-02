@@ -71,6 +71,25 @@ public:
     void fail_on_uds_bind(std::string const& _app, bool fail);
 
     /**
+     * Makes unicast UDP socket binds to the given local port fail (returns an error) while
+     * set. Unlike fail_on_bind (which is keyed by app and also blocks TCP and the SD
+     * multicast), this is scoped to a single port so a test can keep exactly one server
+     * endpoint (e.g. the unreliable one of a UDP+TCP service) from coming up while the
+     * reliable endpoint and Service Discovery stay fully functional. Toggling it off lets a
+     * subsequent bind on that port succeed, modelling the endpoint finally becoming ready.
+     */
+    void fail_on_udp_port_bind(port_t _port, bool fail);
+
+    /**
+     * Like fail_on_udp_port_bind, but for the reliable (TCP) server endpoint. Makes the TCP
+     * acceptor bind to the given local port fail while set, so a test can keep exactly the
+     * reliable endpoint of a UDP+TCP service from coming up while the unreliable endpoint and
+     * Service Discovery stay fully functional. Toggling it off lets a subsequent bind on that
+     * port succeed, modelling the endpoint finally becoming ready.
+     */
+    void fail_on_tcp_port_bind(port_t _port, bool fail);
+
+    /**
      * Waits until either the timeout expires, or the application associated
      * with this name called async_accept on some fake_acceptor.
      * Useful to await the start of the routing application.
@@ -476,6 +495,8 @@ private:
     std::set<boost::asio::ip::address> ignored_networks_;
     std::set<std::string> fail_on_bind_;
     std::set<std::string> fail_on_uds_bind_;
+    std::set<port_t> fail_on_udp_port_bind_;
+    std::set<port_t> fail_on_tcp_port_bind_;
     std::set<std::string> ignore_broken_pipe_;
     std::set<std::string> ignore_all_multicast_joins_;
 };

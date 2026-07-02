@@ -52,22 +52,15 @@ public:
         VSOMEIP_INFO << "[TEST] Process: suspend/resume, is_available=" << std::boolalpha << is_available_
                      << ", is_registered_=" << std::boolalpha << is_registered_;
 
-        // A supposed bug in the routing manager can lead to an OfferService being sent before the UDP endpoint is ready,
-        // leading to the UDP trigger being sent too early and thus lost. Resend the trigger until the expected
-        // unavailability is observed.
-        // TODO(NTWALL-1214): Remove workaround once routingmanager is fixed and retries are no longer needed!
+        // A service offered with both UDP and TCP only becomes available once both endpoints
+        // are up, so the suspend trigger can be sent a single time once availability fires.
         std::chrono::steady_clock::time_point unavailable_time;
         {
             VSOMEIP_DEBUG << "[TEST] Process: waiting availability=false event, is_available=" << std::boolalpha << is_available_.load();
-            const auto deadline = std::chrono::steady_clock::now() + common::scaled_timeout(std::chrono::seconds(20));
-            bool became_unavailable = false;
-            while (!became_unavailable && std::chrono::steady_clock::now() < deadline) {
-                send_suspend();
-                std::unique_lock its_lock(availability_mutex_);
-                became_unavailable = availability_cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::milliseconds(500)),
-                                                               [this]() { return !is_available_.load(); });
-            }
-            ASSERT_TRUE(became_unavailable);
+            send_suspend();
+            std::unique_lock its_lock(availability_mutex_);
+            ASSERT_TRUE(availability_cv_.wait_for(its_lock, common::scaled_timeout(std::chrono::seconds(20)),
+                                                  [this]() { return !is_available_.load(); }));
             unavailable_time = std::chrono::steady_clock::now();
             VSOMEIP_INFO << "[TEST] Process: received availability=false";
         }
