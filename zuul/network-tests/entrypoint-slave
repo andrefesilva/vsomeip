@@ -2,5 +2,10 @@
 
 source "${BASH_SOURCE[0]%/*}"/shlib/common.shlib
 
+# Reserve the fixed SOME/IP test ports to avoid the kernel using them for ephemeral ports
+source "${BASH_SOURCE[0]%/*}/../../test/network_tests/conf/reserved_test_ports.sh"
+sysctl -wq "net.ipv4.ip_local_reserved_ports=${RESERVED_TEST_PORTS}" 2>/dev/null ||
+    echo "WARNING: Could not reserve test ports on slave" >&2
+
 mkdir -p /run/sshd
 exec /sbin/sshd -D
