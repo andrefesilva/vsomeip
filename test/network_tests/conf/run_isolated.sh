@@ -193,6 +193,11 @@ for attempt in 1 2 3 4 5; do
 done
 rm -f /tmp/netns_add_err_$$
 
+# Reserve the fixed SOME/IP test ports to avoid the kernel using them for ephemeral ports
+source "${BASH_SOURCE[0]%/*}/reserved_test_ports.sh"
+ip netns exec "$NS_NAME" sysctl -wq "net.ipv4.ip_local_reserved_ports=${RESERVED_TEST_PORTS}" 2>/dev/null ||
+    echo "WARNING: Could not reserve test ports (${RESERVED_TEST_PORTS}) in netns $NS_NAME" >&2
+
 if ((NUM_SLAVES == 0)); then
     # --- No slaves: just isolated namespace with loopback ---------------------
     ip netns exec "$NS_NAME" ip link set lo up
