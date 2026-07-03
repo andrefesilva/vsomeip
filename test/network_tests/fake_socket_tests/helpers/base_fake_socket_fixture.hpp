@@ -318,6 +318,18 @@ struct base_fake_socket_fixture : ::testing::Test {
                                 boost::asio::ip::udp::endpoint const& _dst);
 
 protected:
+    /**
+     * Stress-test helper: drop the current socket_manager and install a brand-new one into the
+     * fake_socket_factory. This lets a test loop rebuild the whole scenario from scratch on every
+     * iteration (re-creating same-named / same-address ECUs) without the previous iteration's
+     * connection/acceptor state leaking in and breaking the new connections.
+     *
+     * All apps created for the previous iteration (e.g. the apps owned by an ecu_setup) must
+     * already be destroyed - and therefore their io-contexts stopped and threads joined - before
+     * calling this, otherwise they would still be using the manager that is about to be replaced.
+     */
+    void reset_socket_manager();
+
     std::shared_ptr<socket_manager> socket_manager_{std::make_shared<socket_manager>()};
 
 private:

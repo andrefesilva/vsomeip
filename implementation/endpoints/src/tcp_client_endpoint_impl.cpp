@@ -758,9 +758,7 @@ void tcp_client_endpoint_impl::send_cbk(boost::system::error_code const& _error,
             if (state_ == cei_state_e::CONNECTING) {
                 VSOMEIP_WARNING_P << "Already restarting" << get_remote_information();
             } else {
-                if (std::shared_ptr<boardnet_endpoint_host> its_host = endpoint_host_.lock(); its_host) {
-                    its_host->on_disconnect(shared_from_this());
-                }
+                notify_disconnect();
                 restart(true);
             }
             service_t its_service(0);
@@ -800,8 +798,7 @@ void tcp_client_endpoint_impl::wait_until_sent(const boost::system::error_code& 
         if (!_error)
             VSOMEIP_WARNING_P << "Maximum wait time for send operation exceeded for tce.";
 
-        std::shared_ptr<boardnet_endpoint_host> its_ep_host = endpoint_host_.lock();
-        its_ep_host->on_disconnect(shared_from_this());
+        notify_disconnect();
         restart(true);
     } else {
         std::chrono::milliseconds its_timeout(VSOMEIP_MAX_TCP_SENT_WAIT_TIME);
