@@ -157,6 +157,34 @@ private:
     static std::map<std::string, data_t>& get_utility_data();
 };
 
+inline const char* to_string(message_type_e _type) {
+    switch (_type) {
+    case message_type_e::MT_REQUEST:
+        return "REQUEST";
+    case message_type_e::MT_REQUEST_NO_RETURN:
+        return "REQUEST_NO_RETURN";
+    case message_type_e::MT_NOTIFICATION:
+        return "NOTIFICATION";
+    case message_type_e::MT_REQUEST_ACK:
+        return "REQUEST_ACK";
+    case message_type_e::MT_REQUEST_NO_RETURN_ACK:
+        return "REQUEST_NO_RETURN_ACK";
+    case message_type_e::MT_NOTIFICATION_ACK:
+        return "NOTIFICATION_ACK";
+    case message_type_e::MT_RESPONSE:
+        return "RESPONSE";
+    case message_type_e::MT_ERROR:
+        return "ERROR";
+    case message_type_e::MT_RESPONSE_ACK:
+        return "RESPONSE_ACK";
+    case message_type_e::MT_ERROR_ACK:
+        return "ERROR_ACK";
+    case message_type_e::MT_UNKNOWN:
+        return "UNKNOWN";
+    }
+    return "INVALID";
+}
+
 inline utility::Hex hex2(uint8_t _v) {
     return utility::Hex(_v, 2);
 }
