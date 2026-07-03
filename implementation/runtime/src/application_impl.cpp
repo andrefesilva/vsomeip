@@ -40,7 +40,6 @@
 #include "../../routing/include/routing_manager_client.hpp"
 #include "../../security/include/security.hpp"
 #include "../../tracing/include/connector_impl.hpp"
-#include "../../utility/include/utility.hpp"
 #include "../../thread_manager/include/thread_manager.hpp"
 
 #define VSOMEIP_LOG_PREFIX "app"
@@ -1521,8 +1520,8 @@ void application_impl::invoke_handler(std::unique_lock<std::mutex>& _lock, std::
         try {
             _handler->handler_();
         } catch (const std::exception& e) {
-            VSOMEIP_ERROR_P << "Caught exception: " << e.what();
-            print_blocking_call(its_sync_handler);
+            VSOMEIP_ERROR_P << "Handler exception in application(" << get_name() << "," << hex4(get_client()) << "), handler:" << _handler
+                            << ", exception:" << e.what();
         }
         _lock.lock();
     }
