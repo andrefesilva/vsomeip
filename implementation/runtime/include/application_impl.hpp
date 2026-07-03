@@ -28,6 +28,7 @@
 #include "internal.hpp"
 #include "../../routing/include/routing_manager_host.hpp"
 #include "../../utility/include/service_instance_map.hpp"
+#include "../../utility/include/utility.hpp"
 
 namespace vsomeip_v3 {
 
@@ -224,7 +225,41 @@ private:
         eventgroup_t eventgroup_id_;
         client_t client_id_;
         handler_type_e handler_type_;
+
+        friend std::ostream& operator<<(std::ostream& o, const std::shared_ptr<sync_handler>& _handler) {
+            if (!_handler) {
+                return o << "(null sync_handler)";
+            }
+            switch (_handler->handler_type_) {
+            case application_impl::handler_type_e::AVAILABILITY:
+                return o << "AVAILABILITY: [" << hex4(_handler->service_id_) << "." << hex4(_handler->instance_id_) << "]";
+            case application_impl::handler_type_e::MESSAGE:
+                return o << "MESSAGE: [" << hex4(_handler->service_id_) << "." << hex4(_handler->instance_id_) << "."
+                         << hex4(_handler->method_id_) << ":" << hex4(_handler->session_id_) << "]";
+            case application_impl::handler_type_e::STATE:
+                return o << "STATE";
+            case application_impl::handler_type_e::SUBSCRIPTION:
+                if (_handler->client_id_ != ANY_CLIENT) {
+                    return o << "SUBSCRIPTION: [" << hex4(_handler->service_id_) << "." << hex4(_handler->instance_id_) << "."
+                             << hex4(_handler->eventgroup_id_) << ":" << hex4(_handler->client_id_) << "]";
+                } else {
+                    return o << "SUBSCRIPTION STATE: [" << hex4(_handler->service_id_) << "." << hex4(_handler->instance_id_) << "."
+                             << hex4(_handler->eventgroup_id_) << ":" << hex4(_handler->method_id_) << "]";
+                }
+            case application_impl::handler_type_e::OFFERED_SERVICES_INFO:
+                return o << "OFFERED_SERVICES_INFO";
+            case application_impl::handler_type_e::WATCHDOG:
+                return o << "WATCHDOG";
+            case application_impl::handler_type_e::UNKNOWN:
+            default:
+                return o << "UNKNOWN";
+            }
+        }
     };
+
+    // Grant the sync_handler stream operator (a non-member friend of sync_handler)
+    // access to the private handler_type_e enum declared above.
+    friend std::ostream& operator<<(std::ostream& o, const std::shared_ptr<sync_handler>& _handler);
 
     //
     // Methods
