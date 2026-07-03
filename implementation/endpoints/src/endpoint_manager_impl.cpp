@@ -899,7 +899,7 @@ void endpoint_manager_impl::on_connect(std::shared_ptr<boardnet_endpoint> _endpo
 }
 
 void endpoint_manager_impl::on_disconnect(std::shared_ptr<boardnet_endpoint> _endpoint) {
-    // Is called when endpoint->connect fails!
+    // Called when a remote connection is lost (connect failure, or send/sent-wait failure).
     std::vector<serviceinfo> services_to_report_;
 
     {

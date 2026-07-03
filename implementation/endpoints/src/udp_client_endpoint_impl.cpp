@@ -359,8 +359,7 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             VSOMEIP_WARNING_P << "local: " << get_address_port_local() << " remote: " << get_address_port_remote()
                               << " error: " << _error.message();
             close_socket(false, true);
-            std::shared_ptr<boardnet_endpoint_host> its_ep_host = endpoint_host_.lock();
-            its_ep_host->on_disconnect(shared_from_this());
+            notify_disconnect();
         } else {
             receive(std::move(_recv_buffer));
         }
@@ -485,9 +484,7 @@ void udp_client_endpoint_impl::send_cbk(boost::system::error_code const& _error,
             VSOMEIP_WARNING_P << "Endpoint is already restarting:" << get_remote_information();
         } else {
             close_socket(false, true);
-            if (std::shared_ptr<boardnet_endpoint_host> its_host = endpoint_host_.lock(); its_host) {
-                its_host->on_disconnect(shared_from_this());
-            }
+            notify_disconnect();
         }
         service_t its_service(0);
         method_t its_method(0);

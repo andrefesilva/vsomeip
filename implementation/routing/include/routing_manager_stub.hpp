@@ -37,6 +37,7 @@ class configuration;
 class routing_manager_stub_host;
 class local_server;
 class local_endpoint;
+class boardnet_endpoint;
 
 struct debounce_filter_impl_t;
 struct policy;
@@ -56,6 +57,15 @@ public:
     virtual void on_message(const byte_t* _data, length_t _length, const local_client_data& _peer_data) override;
 
     void on_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
+    // Body of on_offer_service; expects routing_info_mutex_ to be held by the caller.
+    void on_offer_service_unlocked(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                   minor_version_t _minor);
+    // Atomically (under routing_info_mutex_) offer the service only if the endpoint is still established and the
+    // service is not already present. Returns true if the offer was performed. Folding the establishment check into
+    // the same critical section as the insertion prevents a spurious re-offer from overtaking the stop-offer of a
+    // concurrent disconnect. Returns false (no offer) if the endpoint is no longer established or already present.
+    bool offer_service_if_established(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                      minor_version_t _minor, const std::shared_ptr<boardnet_endpoint>& _endpoint);
     void on_stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
 
     void on_stop_offer_service_unlocked(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
@@ -65,6 +75,9 @@ public:
 
     bool contained_in_routing_info(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                    minor_version_t _minor) const;
+    // Same as contained_in_routing_info but expects routing_info_mutex_ to be held by the caller.
+    bool contained_in_routing_info_unlocked(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                            minor_version_t _minor) const;
 
     bool send_ping(client_t _client);
     bool is_registered(client_t _client) const;

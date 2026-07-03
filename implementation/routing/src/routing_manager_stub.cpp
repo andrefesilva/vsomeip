@@ -24,6 +24,7 @@
 #include "../include/remote_subscription.hpp"
 #include "../../configuration/include/configuration.hpp"
 #include "../../endpoints/include/endpoint_manager_impl.hpp"
+#include "../../endpoints/include/boardnet_endpoint.hpp"
 #include "../../endpoints/include/abstract_socket_factory.hpp"
 #include "../../endpoints/include/local_endpoint.hpp"
 #include "../../endpoints/include/local_server.hpp"
@@ -595,16 +596,32 @@ void routing_manager_stub::init_routing_endpoint() {
 }
 void routing_manager_stub::on_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                             minor_version_t _minor) {
+    std::scoped_lock its_guard{routing_info_mutex_};
+    on_offer_service_unlocked(_client, _service, _instance, _major, _minor);
+}
+
+void routing_manager_stub::on_offer_service_unlocked(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                     minor_version_t _minor) {
 
     VSOMEIP_INFO << "ON_OFFER_SERVICE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":"
                  << static_cast<int>(_major) << "." << _minor << "]";
 
-    std::scoped_lock its_guard{routing_info_mutex_};
     routing_info_[_client][{_service, _instance}] = std::make_pair(_major, _minor);
     if (configuration_->is_security_enabled()) {
         distribute_credentials(_client, _service, _instance);
     }
     inform_requesters(_client, _service, _instance, _major, _minor, protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE);
+}
+
+bool routing_manager_stub::offer_service_if_established(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                        minor_version_t _minor, const std::shared_ptr<boardnet_endpoint>& _endpoint) {
+    std::scoped_lock its_guard{routing_info_mutex_};
+    if (!_endpoint || !_endpoint->is_established() || contained_in_routing_info_unlocked(_client, _service, _instance, _major, _minor)) {
+        return false;
+    }
+
+    on_offer_service_unlocked(_client, _service, _instance, _major, _minor);
+    return true;
 }
 
 void routing_manager_stub::on_stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
@@ -751,7 +768,11 @@ void routing_manager_stub::send_subscribe_ack(client_t _client, service_t _servi
 bool routing_manager_stub::contained_in_routing_info(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                                      minor_version_t _minor) const {
     std::scoped_lock its_guard{routing_info_mutex_};
+    return contained_in_routing_info_unlocked(_client, _service, _instance, _major, _minor);
+}
 
+bool routing_manager_stub::contained_in_routing_info_unlocked(client_t _client, service_t _service, instance_t _instance,
+                                                              major_version_t _major, minor_version_t _minor) const {
     if (auto found_client = routing_info_.find(_client); found_client != routing_info_.end()) {
         if (auto found_si = found_client->second.find({_service, _instance}); found_si != found_client->second.end()) {
             if (found_si->second.first == _major && found_si->second.second == _minor) {

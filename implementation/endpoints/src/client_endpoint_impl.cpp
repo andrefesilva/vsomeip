@@ -104,6 +104,17 @@ void client_endpoint_impl<Protocol>::set_established(bool _established) {
 }
 
 template<typename Protocol>
+void client_endpoint_impl<Protocol>::notify_disconnect() {
+    // Mark the endpoint as no longer established before notifying the host to prevent that a concurrent
+    // routing_manager_impl::add_routing_info() observe a stale is_established()==true
+    // and re-offer a service that on_disconnect is about to report as gone.
+    set_established(false);
+    if (std::shared_ptr<boardnet_endpoint_host> its_host = this->endpoint_host_.lock(); its_host) {
+        its_host->on_disconnect(this->shared_from_this());
+    }
+}
+
+template<typename Protocol>
 void client_endpoint_impl<Protocol>::set_connected(bool _connected) {
 
     if (_connected) {
@@ -395,7 +406,7 @@ void client_endpoint_impl<Protocol>::connect_cbk(boost::system::error_code const
 
             close_socket(true, true);
 
-            its_host->on_disconnect(this->shared_from_this());
+            notify_disconnect();
 
             if (get_max_allowed_reconnects() == MAX_RECONNECTS_UNLIMITED || get_max_allowed_reconnects() >= ++reconnect_counter_) {
                 is_sending_ = false;
