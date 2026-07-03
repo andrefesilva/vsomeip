@@ -150,7 +150,7 @@ TEST_F(usei_fixture, corrupted_data) {
     bool received{false};
     std::condition_variable event;
 
-    EXPECT_CALL(*endpoint_, on_error).Times(AtLeast(MESSAGE_SENT_COUNT / 40));
+    EXPECT_CALL(*endpoint_, on_error).Times(0);
     EXPECT_CALL(*routing_, on_message).WillRepeatedly([&](const vsomeip_v3::byte_t* data, vsomeip_v3::length_t len, auto...) {
         if (len == 16 && data[0] == 0x1A && data[1] == 0x1B && data[2] == 0x1C && data[3] == 0x1D) {
             std::unique_lock lock(sync);

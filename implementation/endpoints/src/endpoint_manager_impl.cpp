@@ -948,17 +948,6 @@ bool endpoint_manager_impl::on_bind_error(std::shared_ptr<boardnet_endpoint> _en
     return false;
 }
 
-void endpoint_manager_impl::on_error(const byte_t* _data, length_t _length, boardnet_endpoint* const _receiver,
-                                     const boost::asio::ip::address& _remote_address, std::uint16_t _remote_port) {
-    instance_t its_instance = 0;
-    if (_length >= VSOMEIP_SERVICE_POS_MAX) {
-        service_t its_service = bithelper::read_uint16_be(&_data[VSOMEIP_SERVICE_POS_MIN]);
-        its_instance = find_instance(its_service, _receiver);
-    }
-    router_->send_error(return_code_e::E_MALFORMED_MESSAGE, _data, _length, its_instance, _receiver->is_reliable(), _receiver,
-                        _remote_address, _remote_port);
-}
-
 void endpoint_manager_impl::get_used_client_ports(const boost::asio::ip::address& _remote_address, port_t _remote_port,
                                                   std::map<bool, std::set<port_t>>& _used_ports) {
     auto find_address = used_client_ports_.find(_remote_address);

@@ -681,16 +681,6 @@ void tcp_server_endpoint_impl::connection::receive_cbk(boost::system::error_code
                                 VSOMEIP_ERROR_P << instance_name_ << "Detected Magic Cookie within message data. Resyncing."
                                                 << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
 
-                                if (!is_magic_cookie(its_iteration_gap)) {
-                                    auto its_endpoint_host = its_server->endpoint_host_.lock();
-                                    if (its_endpoint_host) {
-                                        its_lock.unlock();
-                                        its_endpoint_host->on_error(&recv_buffer_[its_iteration_gap],
-                                                                    static_cast<length_t>(recv_buffer_size_), its_server.get(),
-                                                                    remote_address_, remote_port_);
-                                        its_lock.lock();
-                                    }
-                                }
                                 current_message_size = its_offset;
                                 needs_forwarding = false;
                             }
@@ -734,27 +724,9 @@ void tcp_server_endpoint_impl::connection::receive_cbk(boost::system::error_code
                         VSOMEIP_ERROR_P << instance_name_ << "Detected Magic Cookie within message data. Resyncing."
                                         << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
 
-                        if (!is_magic_cookie(its_iteration_gap)) {
-                            auto its_endpoint_host = its_server->endpoint_host_.lock();
-                            if (its_endpoint_host) {
-                                its_lock.unlock();
-                                its_endpoint_host->on_error(&recv_buffer_[its_iteration_gap], static_cast<length_t>(recv_buffer_size_),
-                                                            its_server.get(), remote_address_, remote_port_);
-                                its_lock.lock();
-                            }
-                        }
                         recv_buffer_size_ -= its_offset;
                         its_iteration_gap += its_offset;
                         has_full_message = true; // trigger next loop
-                        if (!is_magic_cookie(its_iteration_gap)) {
-                            auto its_endpoint_host = its_server->endpoint_host_.lock();
-                            if (its_endpoint_host) {
-                                its_lock.unlock();
-                                its_endpoint_host->on_error(&recv_buffer_[its_iteration_gap], static_cast<length_t>(recv_buffer_size_),
-                                                            its_server.get(), remote_address_, remote_port_);
-                                its_lock.lock();
-                            }
-                        }
                     }
                 }
 
