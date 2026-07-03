@@ -318,7 +318,7 @@ TEST_F(test_receive_buffer, given_message_exceeds_max_length_when_parsing_then_e
     // Create a buffer with limited max message size
     local_receive_buffer limited_buf{256, 0}; // max 256 bytes
 
-    auto msg = craft_message_of_size(512); //
+    auto msg = craft_message_of_size(8192); //
     size_t missing_bytes{0};
     ASSERT_TRUE(add_message(limited_buf, &msg[0], msg.size(), missing_bytes));
     ASSERT_NE(0, missing_bytes);

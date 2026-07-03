@@ -269,6 +269,8 @@ private:
     std::string status() const;
     std::string status_unlock() const;
 
+    void partial_message_timeout();
+
 private:
     // this flag indicates whether sending is already allowed, after
     // starting already connected. Before le::start() had been called,
@@ -304,6 +306,7 @@ private:
     std::shared_ptr<timer> connect_debounce_;
     std::shared_ptr<timer> connecting_timebox_;
     std::shared_ptr<timer> assignment_timebox_;
+    std::shared_ptr<timer> partial_message_timebox_;
 
     mutable std::mutex mutex_;
 };

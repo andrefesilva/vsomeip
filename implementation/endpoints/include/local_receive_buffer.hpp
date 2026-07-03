@@ -47,6 +47,7 @@ struct next_message_result {
     void clear();
 
     bool error_{false}; ///< True if message parsing failed (invalid length)
+    bool incomplete_read_{false}; ///< True if the buffer does not contain the full message
     uint8_t const* message_data_{nullptr}; ///< Pointer to message data (valid until next buffer operation)
     uint32_t message_size_{0}; ///< Size of the message in bytes
 };
@@ -210,6 +211,11 @@ public:
      */
     [[nodiscard]] bool bump_end(size_t _new_bytes);
 
+    /**
+     * Logs an error message containing the full buffer content
+     **/
+    void print_dump();
+
     friend std::ostream& operator<<(std::ostream& _out, local_receive_buffer const& _buffer);
 
 private:
@@ -246,7 +252,7 @@ private:
      */
     [[nodiscard]] bool add_capacity(size_t _capacity);
 
-    static constexpr uint32_t initial_buffer_size_{128}; ///< Initial and minimum buffer size
+    static constexpr uint32_t initial_buffer_size_{4096}; ///< Initial and minimum buffer size
     uint32_t const max_message_length_{0}; ///< Maximum allowed message size (0 = unlimited)
     uint32_t const buffer_shrink_threshold_{0}; ///< Number of small messages before shrink (0 = no shrink)
     uint32_t shrink_ct_{0}; ///< Counter for small messages (reset on large message)

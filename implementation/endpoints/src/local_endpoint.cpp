@@ -281,6 +281,9 @@ void local_endpoint::stop_internal(std::unique_lock<std::mutex>& lock, bool _due
     if (connecting_timebox_) {
         connecting_timebox_->stop();
     }
+    if (partial_message_timebox_) {
+        partial_message_timebox_->stop();
+    }
 
     uint32_t retry_count(0);
     while (true) {
@@ -508,6 +511,25 @@ void local_endpoint::send_cbk(boost::system::error_code const& _ec, [[maybe_unus
         VSOMEIP_ERROR_P << "Received parsing error, socket > " << status_unlock();
         return false;
     }
+    if (result.incomplete_read_) {
+        if (!partial_message_timebox_) {
+            partial_message_timebox_ = timer::create(io_, std::chrono::seconds(5), [weak_self = weak_from_this()] {
+                if (auto self = weak_self.lock(); self) {
+                    self->partial_message_timeout();
+                }
+                return false;
+            });
+        }
+        VSOMEIP_INFO_P << "Partial message received. Starting sanity timer: " << status_unlock();
+        partial_message_timebox_->start(); // also restarts an already running timer
+    } else {
+        if (partial_message_timebox_) {
+            if (partial_message_timebox_->is_running()) {
+                VSOMEIP_INFO_P << "Stopping sanity timer: " << status_unlock();
+            }
+            partial_message_timebox_->stop();
+        }
+    }
     receive_buffer_->shift_front();
     receive_unlock();
     return true;
@@ -653,6 +675,13 @@ client_t local_endpoint::connected_client() const {
 
 std::string local_endpoint::name() const {
     return socket_->to_string();
+}
+
+void local_endpoint::partial_message_timeout() {
+    std::unique_lock lock{mutex_};
+    VSOMEIP_ERROR_P << status_unlock();
+    receive_buffer_->print_dump();
+    escalate_internal(lock);
 }
 
 template bool local_endpoint::send<protocol::subscribe_command_data>(protocol::subscribe_command_data const&,
