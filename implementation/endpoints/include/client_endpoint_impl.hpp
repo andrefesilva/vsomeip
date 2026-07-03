@@ -98,6 +98,7 @@ protected:
                                                     std::chrono::nanoseconds* _maximum_retention) const = 0;
     void close_socket(bool _recreate_socket, bool _due_to_error);
     void close_socket_unlocked(bool _recreate_socket);
+    void notify_disconnect();
     void start_connect_timer();
     void start_connecting_timer();
     bool check_message_size(uint32_t _size) const;

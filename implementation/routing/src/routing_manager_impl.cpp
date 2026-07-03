@@ -1663,10 +1663,9 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
         if (has_requester_unlocked(_service, _instance, _major, _minor)) {
             auto ep = its_info->get_endpoint(true);
             if (ep) {
-                if (ep->is_established()
-                    && !stub_->contained_in_routing_info(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(),
-                                                         its_info->get_minor())) {
-                    stub_->on_offer_service(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(), its_info->get_minor());
+                // Check establishment and offer atomically to avoid a spurious re-offer racing a concurrent disconnect.
+                if (stub_->offer_service_if_established(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(),
+                                                        its_info->get_minor(), ep)) {
                     if (discovery_) {
                         discovery_->on_endpoint_connected(_service, _instance, ep);
                     }
@@ -1710,8 +1709,9 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
                                                      its_info->get_minor())) {
                 auto ep = its_info->get_endpoint(false);
                 if (ep) {
-                    if (ep->is_established()) {
-                        stub_->on_offer_service(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(), its_info->get_minor());
+                    // Check establishment and offer atomically to avoid a spurious re-offer racing a concurrent disconnect.
+                    if (stub_->offer_service_if_established(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(),
+                                                            its_info->get_minor(), ep)) {
                         if (discovery_) {
                             discovery_->on_endpoint_connected(_service, _instance, ep);
                         }

@@ -35,6 +35,11 @@ base_fake_socket_fixture::~base_fake_socket_fixture() {
     factory_->set_manager(nullptr);
 }
 
+void base_fake_socket_fixture::reset_socket_manager() {
+    socket_manager_ = std::make_shared<socket_manager>();
+    factory_->set_manager(socket_manager_);
+}
+
 void base_fake_socket_fixture::use_configuration(std::string const& file_name) {
     ::setenv("VSOMEIP_CONFIGURATION", file_name.c_str(), 1);
 }

@@ -54,6 +54,7 @@ set (TEST_SUITES
     test_event_subscription_callback
     test_protocol_messages
     test_boardnet
+    test_interface_manipulation_recreate
     test_debounce
     test_uds_communication
     test_vlan_toggle_registration
