@@ -10,33 +10,6 @@
 #include <iomanip>
 
 namespace vsomeip_v3::testing {
-char const* to_string(vsomeip_v3::message_type_e const& m) {
-    switch (m) {
-    case message_type_e::MT_REQUEST:
-        return "MT_REQUEST";
-    case message_type_e::MT_REQUEST_NO_RETURN:
-        return "MT_REQUEST_NO_RETURN";
-    case message_type_e::MT_NOTIFICATION:
-        return "MT_NOTIFICATION";
-    case message_type_e::MT_REQUEST_ACK:
-        return "MT_REQUEST_ACK";
-    case message_type_e::MT_REQUEST_NO_RETURN_ACK:
-        return "MT_REQUEST_NO_RETURN_ACK";
-    case message_type_e::MT_NOTIFICATION_ACK:
-        return "MT_NOTIFICATION_ACK";
-    case message_type_e::MT_RESPONSE:
-        return "MT_RESPONSE";
-    case message_type_e::MT_ERROR:
-        return "MT_ERROR";
-    case message_type_e::MT_RESPONSE_ACK:
-        return "MT_RESPONSE_ACK";
-    case message_type_e::MT_ERROR_ACK:
-        return "MT_ERROR_ACK";
-    case message_type_e::MT_UNKNOWN:
-        return "MT_UNKNOWN";
-    }
-    return "INVALID";
-}
 char const* to_string(vsomeip_v3::return_code_e const& e) {
     switch (e) {
     case return_code_e::E_OK:
