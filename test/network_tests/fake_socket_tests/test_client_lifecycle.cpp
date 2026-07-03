@@ -632,6 +632,21 @@ TEST_F(test_client_lifecycle, test_subscription_for_ghost_service) {
     ASSERT_TRUE(wait_for_command(client_name_, server_name_, protocol::id_e::SUBSCRIBE_NACK_ID, socket_role::client));
 }
 
+TEST_F(test_client_lifecycle, test_partial_read_leads_to_connection_drop) {
+    start_apps();
+    ASSERT_TRUE(subscribe_to_event());
+    auto subscription_payload = construct_basic_raw_command(protocol::id_e::SUBSCRIBE_ID, // command
+                                                            static_cast<uint16_t>(0), // version
+                                                            static_cast<client_t>(0x3490), // client id
+                                                            static_cast<uint32_t>(20), // size
+                                                            static_cast<service_t>(0xAAAA), // service
+                                                            static_cast<instance_t>(0x00)
+                                                            // to not finish the message
+    );
+    inject_command_tcp(client_name_, server_name_, subscription_payload);
+    EXPECT_TRUE(wait_for_connection_drop(client_name_, server_name_, std::chrono::seconds(6)));
+}
+
 TEST_F(test_client_lifecycle, availability_callback_is_only_called_once_on_stop) {
     /**
      * Regression test for the following scenario:

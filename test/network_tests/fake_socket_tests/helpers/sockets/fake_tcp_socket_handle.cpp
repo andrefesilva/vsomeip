@@ -464,6 +464,8 @@ size_t fake_tcp_socket_handle::consume(std::vector<boost::asio::const_buffer> co
             input.shrink_to_fit();
         } else {
             TEST_LOG << "[fake-socket] Error: unable to parse input. Size of the input: " << input.size();
+            std::copy(input.begin(), input.end(), std::back_inserter(raw_message));
+            input.clear();
             break;
         }
     }
