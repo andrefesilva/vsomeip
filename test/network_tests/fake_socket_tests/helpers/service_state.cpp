@@ -21,35 +21,6 @@ interface::interface(service_instance _instance, std::vector<event_spec> _events
     }
 }
 
-static char const* to_string(vsomeip_v3::message_type_e m) {
-    switch (m) {
-    case vsomeip_v3::message_type_e::MT_REQUEST:
-        return "MT_REQUEST";
-    case vsomeip_v3::message_type_e::MT_REQUEST_NO_RETURN:
-        return "MT_REQUEST_NO_RETURN";
-    case vsomeip_v3::message_type_e::MT_NOTIFICATION:
-        return "MT_NOTIFICATION";
-    case vsomeip_v3::message_type_e::MT_REQUEST_ACK:
-        return "MT_REQUEST_ACK";
-    case vsomeip_v3::message_type_e::MT_REQUEST_NO_RETURN_ACK:
-        return "MT_REQUEST_NO_RETURN_ACK";
-    case vsomeip_v3::message_type_e::MT_NOTIFICATION_ACK:
-        return "MT_NOTIFICATION_ACK";
-    case vsomeip_v3::message_type_e::MT_RESPONSE:
-        return "MT_RESPONSE";
-    case vsomeip_v3::message_type_e::MT_ERROR:
-        return "MT_ERROR";
-    case vsomeip_v3::message_type_e::MT_RESPONSE_ACK:
-        return "MT_RESPONSE_ACK";
-    case vsomeip_v3::message_type_e::MT_ERROR_ACK:
-        return "MT_ERROR_ACK";
-    case vsomeip_v3::message_type_e::MT_UNKNOWN:
-        return "MT_UNKNOWN";
-    default:
-        return "MT_UNKNOWN";
-    }
-}
-
 static char const* to_string(vsomeip_v3::availability_state_e s) {
     switch (s) {
     case vsomeip_v3::availability_state_e::AS_UNAVAILABLE:

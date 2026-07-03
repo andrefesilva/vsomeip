@@ -682,8 +682,11 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
                 }
             } else {
                 const session_t its_session = bithelper::read_uint16_be(&_data[VSOMEIP_SESSION_POS_MIN]);
-                VSOMEIP_ERROR << "Routing info for remote service could not be found! (" << hex4(its_client) << "): [" << hex4(its_service)
-                              << "." << hex4(_instance) << "." << hex4(its_method) << "] " << hex4(its_session);
+                const auto its_type = static_cast<message_type_e>(_data[VSOMEIP_MESSAGE_TYPE_POS]);
+                VSOMEIP_WARNING_P << "Routing error. Endpoint for remote service (" << hex4(its_client) << "): [" << hex4(its_service)
+                                  << "." << hex4(_instance) << "." << hex4(its_method) << "] sessionid= " << hex4(its_session)
+                                  << " type=" << to_string(its_type)
+                                  << (is_suspended() ? " could not be found! (we are suspended)" : " could not be found! suspended: false");
             }
         } else {
             std::shared_ptr<serviceinfo> its_info(find_service(its_service, _instance));
@@ -774,9 +777,10 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
                         }
                     } else {
                         const session_t its_session = bithelper::read_uint16_be(&_data[VSOMEIP_SESSION_POS_MIN]);
-                        VSOMEIP_ERROR_P << "Routing error. Endpoint for service (" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                        << hex4(_instance) << "." << hex4(its_method) << "] " << hex4(its_session)
-                                        << " could not be found!";
+                        const auto its_type = static_cast<message_type_e>(_data[VSOMEIP_MESSAGE_TYPE_POS]);
+                        VSOMEIP_WARNING_P << "Routing error. Endpoint for service (" << hex4(its_client) << "): [" << hex4(its_service)
+                                          << "." << hex4(_instance) << "." << hex4(its_method) << "] sessionid=" << hex4(its_session)
+                                          << " type=" << to_string(its_type) << " could not be found!";
                     }
                 }
             } else {
