@@ -23,6 +23,7 @@ void next_message_result::set_message(uint8_t const* _data, uint32_t _size) {
     message_data_ = _data;
     message_size_ = _size;
     error_ = false;
+    incomplete_read_ = false;
 }
 void next_message_result::set_error() {
     error_ = true;
@@ -31,6 +32,7 @@ void next_message_result::set_error() {
 
 void next_message_result::clear() {
     error_ = false;
+    // do not reset incomplete_read_
     message_data_ = nullptr;
 }
 
@@ -43,11 +45,7 @@ bool local_receive_buffer::next_message(next_message_result& _result) {
         memcpy(&length, &mem_[start_] + protocol::COMMAND_POSITION_SIZE, sizeof(length));
         if (length > max_message_length_) {
             VSOMEIP_ERROR_P << "Message length: " << length << " exceeded allowed max message size";
-            VSOMEIP_ERROR_P << "Message: " << utility::dump(&mem_[start_], bytes);
-            if (start_ > 0) {
-                auto const previous = start_ > 512 ? start_ - 512 : 0;
-                VSOMEIP_ERROR_P << "Previous Message: " << utility::dump(&mem_[previous], start_ - previous);
-            }
+            print_dump();
 
             _result.set_error();
             return false;
@@ -61,6 +59,7 @@ bool local_receive_buffer::next_message(next_message_result& _result) {
                     return false;
                 }
             }
+            _result.incomplete_read_ = true;
             _result.clear();
             return false;
         }
@@ -72,7 +71,7 @@ bool local_receive_buffer::next_message(next_message_result& _result) {
             // so reset the counter. Small messages increment it, and when the threshold
             // is reached, we shrink back to the initial size (happens in the next call
             // when buffer is empty).
-            if (size > mem_.capacity() / 2) {
+            if (mem_.capacity() == initial_buffer_size_ || size > mem_.capacity() / 2) {
                 shrink_ct_ = 0; // Large message - don't shrink yet
             } else {
                 shrink_ct_++; // Small message - increment shrink counter
@@ -80,6 +79,7 @@ bool local_receive_buffer::next_message(next_message_result& _result) {
             return true;
         }
         VSOMEIP_ERROR_P << "Message size: " << size << " exceeded numerical limits";
+        print_dump();
         _result.set_error();
         return false;
     }
@@ -127,6 +127,14 @@ void local_receive_buffer::shrink() {
     mem_.resize(new_capa);
 
     return true;
+}
+
+void local_receive_buffer::print_dump() {
+    VSOMEIP_ERROR_P << "Message: " << utility::dump(&mem_[start_], end_ - start_);
+    if (start_ > 0) {
+        auto const previous = start_ > 512 ? start_ - 512 : 0;
+        VSOMEIP_ERROR_P << "Previous Message: " << utility::dump(&mem_[previous], start_ - previous);
+    }
 }
 
 [[nodiscard]] bool local_receive_buffer::bump_end(size_t _new_bytes) {
