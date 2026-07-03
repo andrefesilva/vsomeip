@@ -738,24 +738,6 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                                     << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
                                                         its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
                                                         current_message_size, remaining_bytes, &_buffer[0], _bytes);
-                    if (remaining_bytes > VSOMEIP_SERVICE_POS_MAX) {
-                        service_t its_service = bithelper::read_uint16_be(&_buffer[i + VSOMEIP_SERVICE_POS_MIN]);
-                        if (its_service != VSOMEIP_SD_SERVICE) {
-                            if (read_message_size == 0) {
-                                VSOMEIP_ERROR_P << instance_name_ << "Unreliable SomeIP message with SomeIP message length 0!"
-                                                << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
-                                                                    its_remote_address.to_string() + ":" + std::to_string(its_remote_port),
-                                                                    i, current_message_size, remaining_bytes, &_buffer[0], _bytes);
-
-                            } else {
-                                auto its_endpoint_host = endpoint_host_.lock();
-                                if (its_endpoint_host) {
-                                    its_endpoint_host->on_error(&_buffer[i], static_cast<uint32_t>(remaining_bytes), this,
-                                                                its_remote_address, its_remote_port);
-                                }
-                            }
-                        }
-                    }
                     remaining_bytes = 0;
                 }
             } while (remaining_bytes > 0);

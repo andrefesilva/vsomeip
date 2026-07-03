@@ -202,7 +202,7 @@ public:
         its_routing->send(0x1343, its_good_payload_data, sizeof(its_good_payload_data), vsomeip_test::TEST_SERVICE_INSTANCE_ID, true);
         wait_and_reset_timer();
 
-        ASSERT_TRUE(condition_.wait_for(its_lock, 5s, [this] { return received_responses_ == 8 && received_errors_ == 7; }));
+        ASSERT_TRUE(condition_.wait_for(its_lock, 5s, [this] { return received_responses_ == 8 && received_errors_ == 0; }));
 
         stop();
     }
