@@ -32,8 +32,6 @@ public:
     virtual void on_disconnect(std::shared_ptr<boardnet_endpoint> _endpoint) = 0;
     virtual bool on_bind_error(std::shared_ptr<boardnet_endpoint> _endpoint, const boost::asio::ip::address& _remote_address,
                                uint16_t _remote_port, uint16_t& _local_port) = 0;
-    virtual void on_error(const byte_t* _data, length_t _length, boardnet_endpoint* const _receiver,
-                          const boost::asio::ip::address& _remote_address, std::uint16_t _remote_port) = 0;
     virtual client_t get_client() const = 0;
     virtual std::string get_client_host() const = 0;
     virtual instance_t find_instance(service_t _service, boardnet_endpoint* const _endpoint) const = 0;
