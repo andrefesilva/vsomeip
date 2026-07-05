@@ -166,8 +166,6 @@ private:
 
     client_t get_client_by_address(const boost::asio::ip::address& _address, port_t _port) const;
 
-    [[nodiscard]] bool is_local_client(client_t _client) const;
-
     void register_application(client_t _client, std::unique_lock<std::mutex>& receiver_lock_);
 
     void reconnect();
@@ -264,7 +262,7 @@ private:
 
     client_t find_local_client(service_t _service, instance_t _instance) const;
     bool send_event(client_t _client, std::shared_ptr<message> _message, bool _force) override;
-    void remove_eventgroup_info(service_t _service, instance_t _instance, eventgroup_t _eventgroup, bool _is_provided);
+    void remove_consumer_eventgroup_info(service_t _service, instance_t _instance, eventgroup_t _eventgroup);
     /**
      * @brief insert subscription into events/eventgroups
      *
@@ -309,10 +307,12 @@ private:
 
     // Eventgroups
     using eventgroups_t = service_instance_map<std::unordered_map<eventgroup_t, std::shared_ptr<eventgroupinfo>>>;
-    std::shared_ptr<eventgroupinfo> find_eventgroup(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
-                                                    bool _is_provided) const;
-    std::shared_ptr<eventgroupinfo> find_eventgroup(const eventgroups_t& _eventgroups, service_t _service, instance_t _instance,
-                                                    eventgroup_t _eventgroup, std::scoped_lock<std::mutex> const&) const;
+    std::shared_ptr<eventgroupinfo> find_consumer_eventgroup(service_t _service, instance_t _instance, eventgroup_t _eventgroup) const;
+    std::shared_ptr<eventgroupinfo> find_consumer_eventgroup(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
+                                                             std::scoped_lock<std::mutex> const&) const;
+
+    std::set<std::shared_ptr<event>> find_provided_events_by_group(service_t _service, instance_t _instance, eventgroup_t _group,
+                                                                   std::scoped_lock<std::mutex> const& _provider_lock) const;
 
     void finish_shutdown();
 
@@ -368,7 +368,6 @@ private:
     // Set of services provided by this client
     services_t provided_services_;
     service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> provided_events_;
-    eventgroups_t provided_eventgroups_;
     service_instance_map<std::map<eventgroup_t, uint32_t>> remote_subscriber_count_;
     std::set<protocol::service> pending_offers_;
     // lc_count is bumped on every rmc::stop and on any reconnect invocation,

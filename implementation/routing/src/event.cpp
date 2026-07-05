@@ -119,6 +119,12 @@ bool event::is_set() const {
     return is_set_;
 }
 
+bool event::is_part_of(eventgroup_t _group) const {
+
+    std::scoped_lock its_lock(eventgroups_mutex_);
+    return eventgroups_.count(_group) != 0;
+}
+
 std::shared_ptr<payload> event::get_payload() const {
 
     std::scoped_lock its_lock(mutex_);

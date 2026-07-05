@@ -72,6 +72,8 @@ public:
 
     bool is_set() const;
 
+    [[nodiscard]] bool is_part_of(eventgroup_t _group) const;
+
     // SIP_RPC_357
     void set_update_cycle(std::chrono::milliseconds& _cycle);
     void set_change_resets_cycle(bool _change_resets_cycle);
