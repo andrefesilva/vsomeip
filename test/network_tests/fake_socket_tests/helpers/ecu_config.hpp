@@ -40,6 +40,7 @@ struct service_config {
     std::optional<reliable_port_config> reliable_port_;
     std::vector<event_config> events_;
     std::vector<eventgroup_config> event_groups_;
+    std::optional<someip_tp> tp_;
 };
 
 struct local_tcp_config {

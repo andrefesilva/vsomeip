@@ -12,12 +12,16 @@ namespace vsomeip_v3::testing {
 interface::interface(vsomeip::service_t _service, std::vector<event_spec> _events, std::vector<event_spec> _fields,
                      vsomeip::instance_t _instance) : interface({_service, _instance}, std::move(_events), std::move(_fields)) { }
 
-interface::interface(service_instance _instance, std::vector<event_spec> _events, std::vector<event_spec> _fields) : instance_(_instance) {
+interface::interface(service_instance _instance, std::vector<event_spec> _events, std::vector<event_spec> _fields,
+                     std::optional<someip_tp> tp) : instance_(_instance) {
     for (auto const& e : _events) {
         events_.push_back({instance_, e.event_id_, e.eventgroup_id_, e.reliability_});
     }
     for (auto const& f : _fields) {
         fields_.push_back({instance_, f.event_id_, f.eventgroup_id_, f.reliability_});
+    }
+    if (tp) {
+        tp_ = *tp;
     }
 }
 

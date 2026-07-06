@@ -13,7 +13,9 @@
 #include "to_string.hpp"
 #include "message_common.hpp"
 
+#include <cstdint>
 #include <iomanip>
+#include <optional>
 #include <ostream>
 
 namespace vsomeip_v3::testing {
@@ -104,5 +106,67 @@ std::vector<unsigned char> construct_someip_raw_message(Ts&&... payload) {
          }
      }()));
     return message;
+}
+
+/// SOME/IP-TP flag OR'd into the message type byte to mark a segmented (transport protocol) message.
+static constexpr std::uint8_t SOMEIP_TP_FLAG = 0x20;
+
+/// Bytes added after the 16-byte SOME/IP header for the TP offset/flags field.
+static constexpr std::uint32_t SOMEIP_TP_HEADER_SIZE = 4;
+
+/**
+ * @brief Parameters describing a single SOME/IP-TP segment.
+ *
+ * Defaults describe a well-formed notification segment; override individual members to craft
+ * malformed or edge-case segments (wrong offset, missing flags, spoofed length, ...) for tests.
+ */
+struct someip_tp_segment {
+    service_t service_{};
+    method_t method_{};
+    client_t client_{};
+    session_t session_{};
+    std::uint8_t protocol_version_{VSOMEIP_PROTOCOL_VERSION};
+    std::uint8_t interface_version_{0xFF};
+    message_type_e message_type_{message_type_e::MT_REQUEST};
+    return_code_e return_code_{return_code_e::E_OK};
+
+    /// Byte offset of this segment within the reassembled payload. Per SOME/IP-TP this must be a
+    /// multiple of 16: the lower 4 bits of the wire field carry the reserved bits and the flag.
+    std::uint32_t offset_{0};
+
+    /// More-segments flag, set for every segment except the last one.
+    bool more_segments_{false};
+
+    /// This segment's slice of the overall payload.
+    std::vector<unsigned char> payload_{};
+
+    /// When set, overrides the computed SOME/IP length field (useful for length-spoofing tests).
+    std::optional<std::uint32_t> length_override_{};
+};
+
+/**
+ * @brief Constructs a single raw SOME/IP-TP segment: 16-byte SOME/IP header + 4-byte TP header + payload.
+ *
+ * Builds on construct_someip_raw_message. By default the length field is computed from the segment
+ * payload and the TP flag is set on the message type; both can be overridden via someip_tp_segment
+ * to produce intentionally malformed segments.
+ *
+ * @param _segment The segment description.
+ * @return std::vector<unsigned char> The constructed raw segment.
+ */
+inline std::vector<unsigned char> construct_someip_tp_segment(someip_tp_segment _segment) {
+    uint8_t msg_type = static_cast<std::uint8_t>(_segment.message_type_) | SOMEIP_TP_FLAG;
+
+    // Length covers everything after the length field: the remaining 8 header bytes (client, session,
+    // versions, message type, return code), the 4-byte TP header and the segment payload.
+    auto length = _segment.length_override_.value_or(static_cast<std::uint32_t>((VSOMEIP_FULL_HEADER_SIZE - VSOMEIP_SOMEIP_HEADER_SIZE)
+                                                                                + SOMEIP_TP_HEADER_SIZE + _segment.payload_.size()));
+
+    auto tp_header = static_cast<std::uint32_t>((_segment.offset_ & 0xFFFFFFF0) | (_segment.more_segments_ ? 0x1u : 0x0u));
+
+    return construct_someip_raw_message(static_cast<std::uint16_t>(_segment.service_), static_cast<std::uint16_t>(_segment.method_), length,
+                                        static_cast<std::uint16_t>(_segment.client_), static_cast<std::uint16_t>(_segment.session_),
+                                        _segment.protocol_version_, _segment.interface_version_, msg_type,
+                                        static_cast<std::uint8_t>(_segment.return_code_), tp_header, _segment.payload_);
 }
 }

@@ -14,6 +14,7 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <optional>
 
 namespace vsomeip_v3::testing {
 
@@ -113,6 +114,17 @@ struct service_state {
     [[nodiscard]] bool operator!=(service_state const& rhs) const { return !(*this == rhs); }
 };
 
+struct someip_tp {
+    struct tp_spec {
+        vsomeip::method_t method_{};
+        uint32_t max_segment_length_{};
+        uint32_t separation_time_{};
+    };
+
+    tp_spec client_;
+    tp_spec server_;
+};
+
 struct interface {
     struct event_spec {
         vsomeip::event_t event_id_{};
@@ -124,11 +136,13 @@ struct interface {
                        std::vector<event_spec> _events = {event_spec{0x8001, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
                        std::vector<event_spec> _fields = {event_spec{0x8002, 0x1, vsomeip::reliability_type_e::RT_UNRELIABLE}},
                        vsomeip::instance_t _instance = 0x1);
-    explicit interface(service_instance _instance, std::vector<event_spec> _events, std::vector<event_spec> _fields);
+    explicit interface(service_instance _instance, std::vector<event_spec> _events, std::vector<event_spec> _fields,
+                       std::optional<someip_tp> tp = std::nullopt);
 
     service_instance instance_;
     std::vector<event_ids> events_;
     std::vector<event_ids> fields_;
+    std::optional<someip_tp> tp_;
 };
 
 std::ostream& operator<<(std::ostream& o, service_instance const& s);
