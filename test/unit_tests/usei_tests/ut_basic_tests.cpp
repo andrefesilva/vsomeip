@@ -20,6 +20,7 @@
 #include <common/utility.hpp>
 
 #include "mocked_vsomeip_dependencies.hpp"
+#include "common/timeout_scale.hpp"
 
 struct usei_fixture : public ::testing::Test {
     std::shared_ptr<boost::asio::io_context> context_;
@@ -173,7 +174,8 @@ TEST_F(usei_fixture, corrupted_data) {
     send(unicast_parameters_, end_message);
 
     std::unique_lock lock(sync);
-    EXPECT_EQ(event.wait_for(lock, 5s, [&] { return received; }), true);
+    // note the `MESSAGE_SENT_COUNT` above, usei might need to process quite a few messages
+    EXPECT_EQ(event.wait_for(lock, common::scaled_timeout(std::chrono::seconds(5)), [&] { return received; }), true);
 
     server_->stop(false);
 }
