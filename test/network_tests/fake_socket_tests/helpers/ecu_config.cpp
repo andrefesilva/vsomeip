@@ -58,6 +58,10 @@ ecu_config& ecu_config::add_interface(std::vector<interface> offered, vsomeip::p
             svc.event_groups_.push_back({egid, event_ids});
         }
 
+        if (iface.tp_ && needs_unreliable) {
+            svc.tp_ = iface.tp_;
+        }
+
         services_.push_back(std::move(svc));
     }
 
@@ -120,6 +124,20 @@ void to_json(std::ostringstream& o, const service_config& svc) {
     if (!svc.event_groups_.empty()) {
         o << R"(, "eventgroups" : )";
         write_array(o, svc.event_groups_);
+    }
+
+    if (svc.tp_) {
+        o << R"(, "someip-tp" : {)";
+        o << R"( "client-to-service" : [)" << R"({)";
+        o << R"( "method" : ")" << svc.tp_->client_.method_ << "\",";
+        o << R"( "max-segment-length" : ")" << svc.tp_->client_.max_segment_length_ << "\",";
+        o << R"( "separation-time" : ")" << svc.tp_->client_.separation_time_ << "\"";
+        o << R"(})" << R"( ],)";
+        o << R"( "service-to-client" : [)" << R"({)";
+        o << R"( "method" : ")" << svc.tp_->server_.method_ << "\",";
+        o << R"( "max-segment-length" : ")" << svc.tp_->server_.max_segment_length_ << "\",";
+        o << R"( "separation-time" : ")" << svc.tp_->server_.separation_time_ << "\"";
+        o << "}]" << "}";
     }
     o << " }";
 }
