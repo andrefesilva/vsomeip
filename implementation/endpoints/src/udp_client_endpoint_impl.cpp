@@ -290,16 +290,15 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
         std::size_t i = 0;
 
         do {
-            uint64_t read_message_size = utility::get_message_size(&(*_recv_buffer)[i], remaining_bytes);
-            if (read_message_size > max_message_size_) {
-                VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << read_message_size
-                                << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i,
-                                                    static_cast<uint32_t>(read_message_size), remaining_bytes, &(*_recv_buffer)[0], _bytes);
+            uint32_t current_message_size = utility::get_message_size(&(*_recv_buffer)[i], remaining_bytes);
+            if (current_message_size > max_message_size_) {
+                VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << current_message_size
+                                << make_buffer_dump(get_address_port_local(), get_address_port_remote(), i, current_message_size,
+                                                    remaining_bytes, &(*_recv_buffer)[0], _bytes);
                 receive(std::move(_recv_buffer));
                 return;
             }
 
-            uint32_t current_message_size = static_cast<uint32_t>(read_message_size);
             if (current_message_size > VSOMEIP_SOMEIP_HEADER_SIZE && current_message_size <= remaining_bytes) {
                 if (remaining_bytes - current_message_size > remaining_bytes) {
                     VSOMEIP_ERROR_P << "Buffer underflow in udp client endpoint ~> abort!"

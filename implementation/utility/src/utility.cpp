@@ -4,8 +4,10 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <iomanip>
+#include <limits>
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <iostream>
 #include <tchar.h>
 #include <intrin.h>
@@ -73,10 +75,15 @@ utility::data_t::data_t() :
 {
 }
 
-uint64_t utility::get_message_size(const byte_t* _data, size_t _size) {
-    uint64_t its_size(0);
+uint32_t utility::get_message_size(const byte_t* _data, size_t _size) {
+    uint32_t its_size(0);
     if (VSOMEIP_SOMEIP_HEADER_SIZE <= _size) {
-        its_size = VSOMEIP_SOMEIP_HEADER_SIZE + bithelper::read_uint32_be(&_data[4]);
+        its_size = bithelper::read_uint32_be(&_data[4]);
+        if (its_size > (std::numeric_limits<uint32_t>::max() - VSOMEIP_SOMEIP_HEADER_SIZE)) {
+            its_size = std::numeric_limits<uint32_t>::max();
+        } else {
+            its_size += VSOMEIP_SOMEIP_HEADER_SIZE;
+        }
     }
     return its_size;
 }

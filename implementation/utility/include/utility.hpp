@@ -66,14 +66,7 @@ public:
 
     static inline bool is_notification(message_type_e _type) { return (_type == message_type_e::MT_NOTIFICATION); }
 
-    static uint64_t get_message_size(const byte_t* _data, size_t _size);
-    static inline uint64_t get_message_size(std::vector<byte_t>& _data) {
-        if (_data.size() > 0) {
-            return get_message_size(&_data[0], _data.size());
-        }
-        return 0;
-    }
-
+    static uint32_t get_message_size(const byte_t* _data, size_t _size);
     static uint32_t get_payload_size(const byte_t* _data, uint32_t _size);
 
     static bool is_routing_manager(const std::string& _network);
