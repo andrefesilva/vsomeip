@@ -631,15 +631,14 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
             const boost::asio::ip::address its_remote_address(_remote.address());
             const uint16_t its_remote_port(_remote.port());
             do {
-                uint64_t read_message_size = utility::get_message_size(&_buffer[i], remaining_bytes);
-                if (read_message_size > max_message_size_) {
-                    VSOMEIP_ERROR_P << instance_name_ << "Message size exceeds allowed maximum: " << read_message_size
+                uint32_t current_message_size = utility::get_message_size(&_buffer[i], remaining_bytes);
+                if (current_message_size > max_message_size_) {
+                    VSOMEIP_ERROR_P << instance_name_ << "Message size exceeds allowed maximum: " << current_message_size
                                     << make_buffer_dump(get_address_port_local_unlocked(_is_multicast),
                                                         its_remote_address.to_string() + ":" + std::to_string(its_remote_port), i,
-                                                        static_cast<uint32_t>(read_message_size), remaining_bytes, &_buffer[0], _bytes);
+                                                        current_message_size, remaining_bytes, &_buffer[0], _bytes);
                     return;
                 }
-                auto current_message_size = static_cast<uint32_t>(read_message_size);
                 if (current_message_size >= VSOMEIP_FULL_HEADER_SIZE && current_message_size <= remaining_bytes) {
                     if (remaining_bytes - current_message_size > remaining_bytes) {
                         VSOMEIP_ERROR_P << instance_name_ << "Buffer underflow!"

@@ -440,17 +440,16 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             size_t its_iteration_gap = 0;
             bool has_full_message(false);
             do {
-                uint64_t read_message_size = utility::get_message_size(&(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
-                if (read_message_size > max_message_size_) {
-                    VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << read_message_size
+                uint32_t current_message_size = utility::get_message_size(&(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
+                if (current_message_size > max_message_size_) {
+                    VSOMEIP_ERROR_P << "Message size exceeds allowed maximum: " << current_message_size
                                     << make_buffer_dump(get_address_port_local(), get_address_port_remote(), its_iteration_gap,
-                                                        static_cast<uint32_t>(read_message_size), _recv_buffer_size,
-                                                        &(*_recv_buffer)[its_iteration_gap], _recv_buffer_size);
+                                                        current_message_size, _recv_buffer_size, &(*_recv_buffer)[its_iteration_gap],
+                                                        _recv_buffer_size);
                     its_lock.unlock();
                     wait_until_sent(boost::asio::error::operation_aborted);
                     return;
                 }
-                uint32_t current_message_size = static_cast<uint32_t>(read_message_size);
                 has_full_message = (current_message_size > VSOMEIP_RETURN_CODE_POS && current_message_size <= _recv_buffer_size);
                 if (has_full_message) {
                     bool needs_forwarding(true);
