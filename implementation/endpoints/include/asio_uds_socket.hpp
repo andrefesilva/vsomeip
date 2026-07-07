@@ -8,6 +8,7 @@
 #if defined(__linux__) || defined(__QNX__)
 #include "uds_socket.hpp"
 
+#include <memory>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -15,18 +16,18 @@ namespace vsomeip_v3 {
 
 class asio_uds_socket final : public uds_socket {
 public:
-    explicit asio_uds_socket(boost::asio::io_context& _io) : socket_(_io) { }
+    explicit asio_uds_socket(boost::asio::io_context& _io) : socket_(std::make_shared<boost::asio::local::stream_protocol::socket>(_io)) { }
 
 private:
-    [[nodiscard]] bool is_open() const override { return socket_.is_open(); }
-    [[nodiscard]] int native_handle() override { return socket_.native_handle(); }
-    void open(endpoint::protocol_type _pt, boost::system::error_code& _ec) override { socket_.open(_pt, _ec); }
+    [[nodiscard]] bool is_open() const override { return socket_->is_open(); }
+    [[nodiscard]] int native_handle() override { return socket_->native_handle(); }
+    void open(endpoint::protocol_type _pt, boost::system::error_code& _ec) override { socket_->open(_pt, _ec); }
 
-    void close(boost::system::error_code& _ec) override { socket_.close(_ec); }
-    void cancel(boost::system::error_code& _ec) override { socket_.cancel(_ec); }
+    void close(boost::system::error_code& _ec) override { socket_->close(_ec); }
+    void cancel(boost::system::error_code& _ec) override { socket_->cancel(_ec); }
 
     [[nodiscard]] bool get_peer_credentials(vsomeip_sec_client_t& _client) override {
-        int handle = socket_.native_handle();
+        int handle = socket_->native_handle();
         ucred out;
         if (socklen_t len = sizeof(ucred); -1 == ::getsockopt(handle, SOL_SOCKET, SO_PEERCRED, &out, &len)) {
             return false;
@@ -36,17 +37,22 @@ private:
         _client.port = VSOMEIP_SEC_PORT_UNUSED;
         return true;
     }
-    void set_reuse_address(boost::system::error_code& _ec) { socket_.set_option(boost::asio::socket_base::reuse_address(true), _ec); }
-    void async_connect(endpoint const& _ep, connect_handler _handler) override { socket_.async_connect(_ep, std::move(_handler)); }
+    void set_reuse_address(boost::system::error_code& _ec) { socket_->set_option(boost::asio::socket_base::reuse_address(true), _ec); }
+    void async_connect(endpoint const& _ep, connect_handler _handler) override {
+        auto socket = socket_;
+        socket->async_connect(_ep, [f = std::move(_handler), socket](auto const& _ec) { f(_ec); });
+    }
     void async_receive(boost::asio::mutable_buffer _buffer, rw_handler _handler) override {
-        socket_.async_receive(_buffer, std::move(_handler));
+        auto socket = socket_;
+        socket->async_receive(_buffer, [f = std::move(_handler), socket](auto const& _ec, size_t _bytes) { f(_ec, _bytes); });
     }
     void async_write(boost::asio::const_buffer const& _buffer, rw_handler _handler) {
-        boost::asio::async_write(socket_, _buffer, std::move(_handler));
+        auto socket = socket_;
+        boost::asio::async_write(*socket, _buffer, [f = std::move(_handler), socket](auto const& _ec, size_t _bytes) { f(_ec, _bytes); });
     }
     // needs to access the socket member to create a meaningful new connection
     friend class asio_uds_acceptor;
-    boost::asio::local::stream_protocol::socket socket_;
+    std::shared_ptr<boost::asio::local::stream_protocol::socket> socket_;
 };
 }
 
