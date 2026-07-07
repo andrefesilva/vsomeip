@@ -376,8 +376,13 @@ void routing_manager_impl::request_service(client_t _client, service_t _service,
     } else {
         if (_major == its_info->get_major() || DEFAULT_MAJOR == its_info->get_major() || ANY_MAJOR == _major) {
             its_info->add_client(_client);
+            // Record the request in requested_services_ unconditionally, even for a service that
+            // is currently offered locally. Otherwise, if the local provider later stops offering
+            // and a remote provider takes over (local->remote migration), the fresh remote
+            // serviceinfo is seeded only from requested_services_ and this client would be lost,
+            // causing its responses to be dropped.
+            add_requested_service(_client, _service, _instance, _major, _minor);
             if (!its_info->is_local()) {
-                add_requested_service(_client, _service, _instance, _major, _minor);
                 if (discovery_) {
                     // Non local service instance ~> tell SD to find it!
                     discovery_->request_service(_service, _instance, _major, _minor, DEFAULT_TTL);
@@ -612,6 +617,17 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
     } else if (!is_notification) {
         its_local_target = find_routing_endpoint(its_client);
         its_target_client = its_client;
+        if (its_local_target
+            && (utility::is_response(_data[VSOMEIP_MESSAGE_TYPE_POS]) || utility::is_error(_data[VSOMEIP_MESSAGE_TYPE_POS]))) {
+            if (std::shared_ptr<serviceinfo> its_info = find_service(its_service, _instance);
+                (!its_info || !its_info->is_local()) && !is_requester(its_client, its_service, _instance)) {
+                const session_t its_session = bithelper::read_uint16_be(&_data[VSOMEIP_SESSION_POS_MIN]);
+                VSOMEIP_WARNING_P << "Dropping response/error for client (" << hex4(its_client)
+                                  << ") that is not/no longer is a requester of service: [" << hex4(its_service) << "." << hex4(_instance)
+                                  << "." << hex4(its_method) << "] " << hex4(its_session);
+                return false;
+            }
+        }
     } else if (is_notification && _client && !is_service_discovery) { // Selective notifications!
         its_local_target = find_routing_endpoint(_client);
         its_target_client = _client;
@@ -760,9 +776,9 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
                         // We received a response/error but neither the hosting application
                         // nor another local client could be found --> drop
                         const session_t its_session = bithelper::read_uint16_be(&_data[VSOMEIP_SESSION_POS_MIN]);
-                        VSOMEIP_ERROR_P << ": Received response/error for unknown client (" << hex4(its_client) << "): ["
-                                        << hex4(its_service) << "." << hex4(_instance) << "." << hex4(its_method) << "] "
-                                        << hex4(its_session);
+                        VSOMEIP_WARNING_P << ": Received response/error for unknown client (" << hex4(its_client) << "): ["
+                                          << hex4(its_service) << "." << hex4(_instance) << "." << hex4(its_method) << "] "
+                                          << hex4(its_session);
                         return false;
                     }
                     its_target =
@@ -3044,7 +3060,6 @@ std::vector<protocol::service> routing_manager_impl::get_requested_services(clie
             }
             if (requested) {
                 its_requests.emplace_back(service, instance, its_major, its_minor);
-                break;
             }
         }
     }
@@ -3090,6 +3105,32 @@ std::set<client_t> routing_manager_impl::get_requesters_unlocked(service_t _serv
     }
 
     return its_requesters;
+}
+
+bool routing_manager_impl::is_requester(client_t _client, service_t _service, instance_t _instance) {
+    std::scoped_lock its_lock{requested_services_mutex_};
+
+    // Check BOTH the concrete and the wildcard (ANY_SERVICE/ANY_INSTANCE) nodes so wildcard requesters aren't missed.
+    for (const service_t its_service_key : {_service, ANY_SERVICE}) {
+        const auto found_service = requested_services_.find(its_service_key);
+        if (found_service == requested_services_.end()) {
+            continue;
+        }
+        for (const instance_t its_instance_key : {_instance, ANY_INSTANCE}) {
+            const auto found_instance = found_service->second.find(its_instance_key);
+            if (found_instance == found_service->second.end()) {
+                continue;
+            }
+            for (const auto& [major, minors_map] : found_instance->second) {
+                for (const auto& [minor, clients] : minors_map) {
+                    if (clients.find(_client) != clients.end()) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
 }
 
 bool routing_manager_impl::has_requester(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor) {

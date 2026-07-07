@@ -305,6 +305,8 @@ private:
     bool has_requester(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
     bool has_requester_unlocked(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
 
+    bool is_requester(client_t _client, service_t _service, instance_t _instance);
+
     void call_sd_endpoint_connected(const boost::system::error_code& _error, service_t _service, instance_t _instance,
                                     const std::shared_ptr<boardnet_endpoint>& _endpoint, std::shared_ptr<boost::asio::steady_timer> _timer);
 
