@@ -2062,6 +2062,11 @@ void configuration_impl::load_eventgroup(std::shared_ptr<service>& _service, con
                         : static_cast<uint8_t>(its_threshold);
             } else if (its_key == "events") {
                 for (auto k = j->second.begin(); k != j->second.end(); ++k) {
+                    // Reset the shared converter: after the first extraction it is
+                    // left in EOF/fail state, which would silently drop all
+                    // subsequent events of this eventgroup.
+                    its_converter.str("");
+                    its_converter.clear();
                     std::string its_value_inner(k->second.data());
                     event_t its_event_id(0);
                     if (its_value_inner.size() > 1 && its_value_inner[0] == '0' && its_value_inner[1] == 'x') {
