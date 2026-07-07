@@ -11,6 +11,7 @@
 #include <string_view>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <vector>
 #include <sstream>
@@ -26,8 +27,6 @@
 #include <vsomeip/enumeration_types.hpp>
 #include <vsomeip/message.hpp>
 #include <vsomeip/vsomeip_sec.h>
-
-#include "criticalsection.hpp"
 
 namespace vsomeip_v3 {
 
