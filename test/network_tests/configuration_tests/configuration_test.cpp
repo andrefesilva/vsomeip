@@ -818,6 +818,45 @@ TEST(configuration_test, version_and_status) {
     EXPECT_EQ(conf->get_version_log_interval("app2", false), VSOMEIP_DEFAULT_LOG_NETWORK);
 }
 
+TEST(configuration_test, eventgroup_multiple_events) {
+    /// Regression test for a shared std::stringstream being left in EOF/fail
+    /// state while parsing an eventgroup's "events" array, which silently
+    /// dropped every event but the first (regression from commit 61f9a7a60).
+    ///
+    /// The events below are only declared via the eventgroup (no service-level
+    /// "events" array), so they are created on the fly with RT_UNRELIABLE.
+    /// A dropped event is never created and get_event_reliability() returns
+    /// RT_UNKNOWN for it.
+
+    write_config("eventgroup_multiple_events.json", R"(
+{
+    "services":
+    [
+        {
+            "service": "0x1234",
+            "instance": "0x0001",
+            "unreliable": "40000",
+            "eventgroups":
+            [
+                {
+                    "eventgroup": "0x0001",
+                    "events": [ "0x8001", "0x8002", "0x8003" ]
+                }
+            ]
+        }
+    ]
+}
+    )");
+
+    std::shared_ptr<vsomeip::configuration> conf = load_config("eventgroup_multiple_events", "eventgroup_multiple_events.json");
+    ASSERT_TRUE(conf);
+
+    // All three events of the eventgroup must have been parsed and registered.
+    EXPECT_EQ(conf->get_event_reliability(0x1234, 0x0001, 0x8001), vsomeip::reliability_type_e::RT_UNRELIABLE);
+    EXPECT_EQ(conf->get_event_reliability(0x1234, 0x0001, 0x8002), vsomeip::reliability_type_e::RT_UNRELIABLE);
+    EXPECT_EQ(conf->get_event_reliability(0x1234, 0x0001, 0x8003), vsomeip::reliability_type_e::RT_UNRELIABLE);
+}
+
 int main(int argc, char** argv) {
     return test_main(argc, argv);
 }
