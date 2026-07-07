@@ -1445,6 +1445,25 @@ struct test_someip_gate : public base_fake_socket_fixture {
     service_instance const si_{udp_svc_.instance_};
     // router_two's UDP unicast endpoint for udp_svc_ (port 30503).
     boost::asio::ip::udp::endpoint const svc_ep_{boardnet::ecu_two_config.unicast_ip_, 30503};
+
+    // Shared bring-up: remote provider (0x0555) auto-answering si_, ecu_one's router and a "keeper"
+    // holding a concrete request. Guests + prepare() must precede this.
+    void bring_up_provider_and_keeper(request const& _req, std::vector<unsigned char> const& _rsp_payload) {
+        // Provider side up first: offer the remote UDP service and auto-answer requests.
+        ecu_two_.start_apps();
+        auto* server = ecu_two_.apps_[ecu_two_server_name_];
+        ASSERT_NE(server, nullptr);
+        server->offer(si_);
+        server->answer_request(_req, [_rsp_payload] { return _rsp_payload; });
+
+        // Consumer routing manager up, then the keeper (keeps the remote service referenced).
+        ecu_one_.start_router();
+        auto* keeper = ecu_one_.start_one("keeper");
+        ASSERT_NE(keeper, nullptr);
+        ASSERT_TRUE(keeper->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        keeper->request_service(si_);
+        ASSERT_TRUE(keeper->availability_record_.wait_for_last(service_availability::available(si_)));
+    }
 };
 
 TEST_F(test_someip_gate, blocks_notification) {
@@ -1677,6 +1696,138 @@ TEST_F(test_someip_gate, blocks_request_then_response) {
     // Release the response gate — the response is now forwarded to the client.
     response_gate->block(false);
     EXPECT_TRUE(router_one->message_record_.wait_for(rsp_checker));
+}
+
+// A response/error addressed to a departed consumer whose client id was recycled to a different
+// application must NOT be delivered to the new owner of the id (which never requested the service)
+// — the routing manager must drop it.
+TEST_F(test_someip_gate, orphan_response_after_client_id_reuse_is_dropped) {
+    ecu_one_.add_guest({"keeper", std::nullopt});
+    ecu_one_.add_guest({"client_a", std::nullopt});
+    ecu_one_.add_guest({"client_b", std::nullopt});
+    ecu_two_.add_guest({ecu_two_server_name_, 0x0555});
+
+    ecu_one_.prepare();
+    ecu_two_.prepare();
+
+    std::vector<unsigned char> const rsp_payload{0x42};
+    request const req{si_, method_, vsomeip::message_type_e::MT_REQUEST, false /* UDP */, {0x01}};
+    ASSERT_NO_FATAL_FAILURE(bring_up_provider_and_keeper(req, rsp_payload));
+
+    // Client A (the original requester) takes the next free id.
+    auto* client_a = ecu_one_.start_one("client_a");
+    ASSERT_NE(client_a, nullptr);
+    ASSERT_TRUE(client_a->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    vsomeip::client_t const reused_id = client_a->get_client_id();
+    ASSERT_TRUE(reused_id != 0x0000 && reused_id != 0xFFFF) << "client A did not get a valid client id";
+
+    client_a->request_service(si_);
+    ASSERT_TRUE(client_a->availability_record_.wait_for_last(service_availability::available(si_)));
+
+    // Hold the RESPONSE at the provider's egress so it cannot reach the consumer yet.
+    auto response_gate = someip_gate::create();
+    ASSERT_TRUE(setup_data_pipe(svc_ep_, router_two_name_, socket_role::server, response_gate->get_data_pipe()));
+    response_gate->block_at({.service_ = si_.service_, .method_ = method_, .type_ = vsomeip::message_type_e::MT_RESPONSE});
+
+    client_a->send_request(req);
+    ASSERT_TRUE(response_gate->wait_for_blocked()) << "response was not held at the provider egress";
+
+    // Client A leaves; wait until its routing connection is fully torn down so the routing
+    // manager releases the client id before B claims it.
+    ecu_one_.stop_one("client_a");
+    ASSERT_TRUE(wait_for_connection_drop("client_a", ecu_one_.router_name_));
+
+    // Client B joins and takes over the very same client id — but never requests the service.
+    auto* client_b = ecu_one_.start_one("client_b");
+    ASSERT_NE(client_b, nullptr);
+    ASSERT_TRUE(client_b->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    ASSERT_EQ(client_b->get_client_id(), reused_id) << "client B did not reuse client A's id";
+
+    // Release the held response: it now reaches the consumer routing manager, addressed to the
+    // reused id. Because B never requested this remote service, the RM must drop it.
+    response_gate->block(false);
+
+    message_checker const rsp_checker{std::nullopt, si_, method_, vsomeip::message_type_e::MT_RESPONSE, rsp_payload};
+    EXPECT_FALSE(client_b->message_record_.wait_for(rsp_checker, std::chrono::milliseconds(500)))
+            << "client B received an orphaned response for a service it never requested (client-id reuse cross-talk)";
+}
+
+// A consumer requests a remote service, sends a request, then releases the service before the response arrives. The routing manager must
+// drop the now-orphaned response instead of delivering it to the (still-alive) consumer.
+TEST_F(test_someip_gate, orphan_response_after_release_service_is_dropped) {
+    ecu_one_.add_guest({"keeper", std::nullopt});
+    ecu_one_.add_guest({"consumer", std::nullopt});
+    ecu_two_.add_guest({ecu_two_server_name_, 0x0555});
+
+    ecu_one_.prepare();
+    ecu_two_.prepare();
+
+    std::vector<unsigned char> const rsp_payload{0x24};
+    request const req{si_, method_, vsomeip::message_type_e::MT_REQUEST, false /* UDP */, {0x01}};
+    ASSERT_NO_FATAL_FAILURE(bring_up_provider_and_keeper(req, rsp_payload));
+
+    auto* consumer = ecu_one_.start_one("consumer");
+    ASSERT_NE(consumer, nullptr);
+    ASSERT_TRUE(consumer->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+    consumer->request_service(si_);
+    ASSERT_TRUE(consumer->availability_record_.wait_for_last(service_availability::available(si_)));
+
+    // Hold the RESPONSE at the provider's egress.
+    auto response_gate = someip_gate::create();
+    ASSERT_TRUE(setup_data_pipe(svc_ep_, router_two_name_, socket_role::server, response_gate->get_data_pipe()));
+    response_gate->block_at({.service_ = si_.service_, .method_ = method_, .type_ = vsomeip::message_type_e::MT_RESPONSE});
+
+    consumer->send_request(req);
+    ASSERT_TRUE(response_gate->wait_for_blocked()) << "response was not held at the provider egress";
+
+    // The consumer releases the service while the response is still in flight. Wait until the
+    // RELEASE_SERVICE command has reached the routing manager so is_requester() reflects it
+    // (the held response still has to traverse the boardnet, so it arrives strictly later).
+    consumer->release_service(si_);
+    ASSERT_TRUE(wait_for_command("consumer", ecu_one_.router_name_, protocol::id_e::RELEASE_SERVICE_ID, socket_role::server));
+
+    // Release the held response; the RM must drop it — the consumer is no longer a requester.
+    response_gate->block(false);
+
+    message_checker const rsp_checker{std::nullopt, si_, method_, vsomeip::message_type_e::MT_RESPONSE, rsp_payload};
+    EXPECT_FALSE(consumer->message_record_.wait_for(rsp_checker, std::chrono::milliseconds(500)))
+            << "consumer received a response for a service it had already released";
+}
+
+// A client that requested the service under ANY_INSTANCE must still receive responses for a concrete
+// instance, even while another client (the keeper) holds a concrete (service, instance) request at
+// the same time. The concrete request materializes a concrete requested_services_ node next to the
+// ANY_INSTANCE node; is_requester() must union both. A fallback-only lookup would see only the
+// concrete node, treat the wildcard requester as a non-requester, and wrongly drop its response.
+TEST_F(test_someip_gate, wildcard_requester_still_receives_response) {
+    ecu_one_.add_guest({"keeper", std::nullopt});
+    // Name sorts before the "router_*" auxiliary contexts so the fake-socket io_context
+    // assignment does not race with the keeper's remote connection bring-up.
+    ecu_one_.add_guest({"any_consumer", std::nullopt});
+    ecu_two_.add_guest({ecu_two_server_name_, 0x0555});
+
+    ecu_one_.prepare();
+    ecu_two_.prepare();
+
+    std::vector<unsigned char> const rsp_payload{0x37};
+    request const req{si_, method_, vsomeip::message_type_e::MT_REQUEST, false /* UDP */, {0x01}};
+    // The keeper holds a CONCRETE (service, instance) request to si_ — the coexistence trigger.
+    ASSERT_NO_FATAL_FAILURE(bring_up_provider_and_keeper(req, rsp_payload));
+
+    // A second consumer requests the same service, but under ANY_INSTANCE.
+    auto* consumer = ecu_one_.start_one("any_consumer");
+    ASSERT_NE(consumer, nullptr);
+    ASSERT_TRUE(consumer->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    consumer->request_service(service_instance{si_.service_, vsomeip::ANY_INSTANCE});
+    // The concrete instance is reported available to the ANY_INSTANCE requester as well.
+    ASSERT_TRUE(consumer->availability_record_.wait_for_last(service_availability::available(si_)));
+
+    // The wildcard consumer issues a request to the concrete instance; its response must be
+    // delivered (not dropped as an orphan), because it is a legitimate requester via ANY_INSTANCE.
+    consumer->send_request(req);
+    message_checker const rsp_checker{std::nullopt, si_, method_, vsomeip::message_type_e::MT_RESPONSE, rsp_payload};
+    EXPECT_TRUE(consumer->message_record_.wait_for(rsp_checker)) << "wildcard (ANY_INSTANCE) requester did not receive its response";
 }
 
 ecu_config configure_initial_delay(ecu_config cfg, std::uint32_t min, std::uint32_t max) {
