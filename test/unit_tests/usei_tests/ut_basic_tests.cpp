@@ -335,7 +335,12 @@ TEST_F(usei_multi_fixture, multicast_ordering_rejoin) {
 
     // hell of a hack, but need to stop the unicast socket, otherwise messages go to it and not the multicast socket
     // (note the `__wrap_setsockopt` code..)
-    server_->unicast_socket_.reset();
+    // reset under `sync_`: with the shared-socket change, the pending async_receive_from outlives this reset and its
+    // handler reads `unicast_socket_` under `sync_` on the io thread
+    {
+        std::scoped_lock its_lock(server_->sync_);
+        server_->unicast_socket_.reset();
+    }
 
     std::condition_variable cv;
     std::vector<std::vector<uint8_t>> received;
