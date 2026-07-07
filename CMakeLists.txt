@@ -165,8 +165,8 @@ if (NOT MSVC)
             set(TEST_ENTRYPOINT ${TEST_ENTRYPOINT} --leak-check=yes --suppressions=${VALGRIND_SUPPRESS_FILE} --log-file=${VALGRIND_LOGS_DIR}/test_name.%p.out)
         endif ()
     endif ()
+    message (STATUS "Using ENABLE_SANITIZERS=${ENABLE_SANITIZERS}, ENABLE_THREAD_SANITIZER=${ENABLE_THREAD_SANITIZER}, VALGRIND_TYPE=${VALGRIND_TYPE}")
 endif (NOT MSVC)
-
 # Compatibility
 if (ENABLE_COMPAT)
     message(FATAL "ENABLE_COMPAT is no longer supported, please remove this option")
