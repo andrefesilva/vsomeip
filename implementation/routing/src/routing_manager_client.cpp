@@ -1337,8 +1337,10 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
                     VSOMEIP_INFO_P << "Old client 0x" << hex4(old_client) << " removed due to new client 0x" << hex4(its_client) << " @ "
                                    << its_address.to_string() + ":" << its_port;
 
-                    // trigger error handler to ensure offered services by the old client are re-requested
-                    cleanup_client(old_client, true);
+                    // Clean up both of its roles. The consumer cleanup additionally
+                    // ensures the services it offered to us are re-requested.
+                    cleanup_client(old_client, true, connection_role_e::provider);
+                    cleanup_client(old_client, true, connection_role_e::consumer);
                 }
             }
 
@@ -1860,11 +1862,12 @@ void routing_manager_client::request_debounce_timeout_cbk(boost::system::error_c
     request_debounce_timer_running_ = false;
 }
 
-void routing_manager_client::register_client_error_handler(client_t _client, const std::shared_ptr<local_endpoint>& _endpoint) {
+void routing_manager_client::register_client_error_handler(client_t _client, const std::shared_ptr<local_endpoint>& _endpoint,
+                                                           connection_role_e _role) {
 
-    _endpoint->register_cleanup_handler([weak_self = weak_from_this(), _client](bool _due_to_error) {
+    _endpoint->register_cleanup_handler([weak_self = weak_from_this(), _client, _role](bool _due_to_error) {
         if (auto self = weak_self.lock(); self) {
-            self->cleanup_client(_client, _due_to_error);
+            self->cleanup_client(_client, _due_to_error, _role);
         }
     });
 }
@@ -1878,25 +1881,33 @@ void routing_manager_client::set_port(port_t _port) {
     set_sec_client_port(_port);
 }
 
-void routing_manager_client::register_error_handler(client_t _client, std::shared_ptr<local_endpoint> _ep) {
-    register_client_error_handler(_client, _ep);
+void routing_manager_client::register_error_handler(client_t _client, std::shared_ptr<local_endpoint> _ep, connection_role_e _role) {
+    register_client_error_handler(_client, _ep, _role);
 }
 
-void routing_manager_client::cleanup_client(client_t _client, bool _due_to_error) {
+void routing_manager_client::cleanup_client(client_t _client, bool _due_to_error, connection_role_e _role) {
 
     if (_client != VSOMEIP_ROUTING_CLIENT) {
-        VSOMEIP_INFO_P << "self 0x" << hex4(get_client()) << " handles cleanup of client 0x" << hex4(_client) << ", not reconnecting";
+        VSOMEIP_INFO_P << "self 0x" << hex4(get_client()) << " handles cleanup of client 0x" << hex4(_client) << " ("
+                       << (_role == connection_role_e::provider ? "provider" : "consumer") << "), not reconnecting";
 
-        // First ensure that the connection is dropped, before enforcing a
-        // reconnect from the client. Otherwise a client subscribe might
-        // be handled by a partially cleaned-up connection
-        local_service_table requested_services;
-        remove_local(_due_to_error, _client, requested_services);
+        // The two roles ride distinct local sockets, so tear down only the
+        // failing role's state; the other role stays intact.
+        if (_role == connection_role_e::provider) {
+            remove_local_provider(_client, _due_to_error);
+        } else {
+            // First ensure that the consumer connection is dropped, before
+            // enforcing a reconnect from the client. Otherwise a client
+            // subscribe might be handled by a partially cleaned-up connection.
+            local_service_table requested_services;
+            remove_local_consumer(_client, _due_to_error, requested_services);
 
-        // Request the host these services again.
-        if (_due_to_error) {
-            if (auto state = state_machine_->state(); state == routing_client_state_e::ST_REGISTERED) {
-                send_request_services(requested_services.view());
+            // Request the host these services again. Re-requesting peer-offered
+            // services is a consumer-only concern;
+            if (_due_to_error) {
+                if (auto state = state_machine_->state(); state == routing_client_state_e::ST_REGISTERED) {
+                    send_request_services(requested_services.view());
+                }
             }
         }
 
@@ -2064,7 +2075,8 @@ void routing_manager_client::restart_sender([[maybe_unused]] std::unique_lock<st
     }
     sender_ = ep_mgr_->create_routing_client();
     if (sender_) {
-        register_error_handler(VSOMEIP_ROUTING_CLIENT, sender_);
+        // The sender takes the VSOMEIP_ROUTING_CLIENT reconnect path in cleanup_client, so the role is unused here.
+        register_error_handler(VSOMEIP_ROUTING_CLIENT, sender_, connection_role_e::consumer);
         // save to read even without acquiring the provider_mutex_, as a new
         // token is only generated during a reconnect or stop, start sequence,
         // which are serialized with the start of the sender.
@@ -2096,43 +2108,44 @@ void routing_manager_client::lazy_load(const std::string& _client_host) {
     // This data is better kept at the endpoint
 }
 
-void routing_manager_client::remove_local(bool _due_to_error, client_t _client, local_service_table& _requested_services) {
+void routing_manager_client::remove_local_provider(client_t _client, bool _due_to_error) {
 
     vsomeip_sec_client_t its_sec_client;
     configuration_->get_policy_manager()->get_client_to_sec_client_mapping(_client, its_sec_client);
     configuration_->get_policy_manager()->remove_client_to_sec_client_mapping(_client);
     auto ep = ep_mgr_->find_local_server_endpoint(_client);
     std::string const env = ep ? ep->get_env() : "";
-    {
-        std::scoped_lock its_lock(provider_mutex_);
-        auto const subscribed_eventgroups = get_subscriptions(_client, its_lock);
-        for (auto its_subscription : subscribed_eventgroups) {
-            auto [its_service, its_instance, its_eventgroup] = its_subscription;
-            // because we are in the remove local function within which the connection token is bumped,
-            // any inflight subscription for this client is going to be dropped, therefore adjust the book-keeping
-            // immediately.
-            unsubscribe_base(_client, its_service, its_instance, its_eventgroup, ANY_EVENT, its_lock);
-            VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                         << hex4(its_eventgroup) << "." << hex4(ANY_EVENT) << "]";
-            host_->on_subscription(its_service, its_instance, its_eventgroup, _client, &its_sec_client, env, false, [](bool) {
-                // no need to execute anything, subscribers are updated already
-            });
-        }
-        // remove the provider endpoint under the provider_mutex_ to ensure that no subscription callback (dispatcher thread)
-        // can mess up the book-keeping when checking the endpoint token
-        ep_mgr_->remove_provider_endpoint(_client, _due_to_error);
+
+    std::scoped_lock its_lock(provider_mutex_);
+    auto const subscribed_eventgroups = get_subscriptions(_client, its_lock);
+    for (auto its_subscription : subscribed_eventgroups) {
+        auto [its_service, its_instance, its_eventgroup] = its_subscription;
+        // because we are in the remove local function within which the connection token is bumped,
+        // any inflight subscription for this client is going to be dropped, therefore adjust the book-keeping
+        // immediately.
+        unsubscribe_base(_client, its_service, its_instance, its_eventgroup, ANY_EVENT, its_lock);
+        VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                     << hex4(its_eventgroup) << "." << hex4(ANY_EVENT) << "]";
+        host_->on_subscription(its_service, its_instance, its_eventgroup, _client, &its_sec_client, env, false, [](bool) {
+            // no need to execute anything, subscribers are updated already
+        });
     }
-    {
-        std::scoped_lock its_lock(consumer_mutex_);
-        auto removed = available_services_.remove_all_for_client(_client);
-        for (auto const& [its_service, its_instance, its_major, its_minor, its_client] : removed) {
-            // save the removed available services to re-request them from the router
-            _requested_services.insert(protocol::service_data{
-                    .service_ = its_service, .instance_ = its_instance, .major_version_ = its_major, .minor_version_ = its_minor});
-            on_stop_offer_service(its_service, its_instance, its_major, its_minor, true, its_lock);
-        }
-        remove_consumer(_client, _due_to_error, its_lock);
+    // remove the provider endpoint under the provider_mutex_ to ensure that no subscription callback (dispatcher thread)
+    // can mess up the book-keeping when checking the endpoint token
+    ep_mgr_->remove_provider_endpoint(_client, _due_to_error);
+}
+
+void routing_manager_client::remove_local_consumer(client_t _client, bool _due_to_error, local_service_table& _requested_services) {
+
+    std::scoped_lock its_lock(consumer_mutex_);
+    auto removed = available_services_.remove_all_for_client(_client);
+    for (auto const& [its_service, its_instance, its_major, its_minor, its_client] : removed) {
+        // save the removed available services to re-request them from the router
+        _requested_services.insert(protocol::service_data{
+                .service_ = its_service, .instance_ = its_instance, .major_version_ = its_major, .minor_version_ = its_minor});
+        on_stop_offer_service(its_service, its_instance, its_major, its_minor, true, its_lock);
     }
+    remove_consumer(_client, _due_to_error, its_lock);
 }
 
 void routing_manager_client::cleanup_consumer() {
@@ -3085,7 +3098,7 @@ std::shared_ptr<local_endpoint> routing_manager_client::find_or_create_consumer_
         }
         it->second.ep_ = ep;
         // TODO this should be adjusted, but it does imply we need to take a deep look how to delete what security mapping
-        register_error_handler(_client, ep);
+        register_error_handler(_client, ep, connection_role_e::consumer);
         ep->start();
     }
     return it->second.ep_;

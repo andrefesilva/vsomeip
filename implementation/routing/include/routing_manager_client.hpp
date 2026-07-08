@@ -110,13 +110,13 @@ public:
 
     void on_routing_info(const byte_t* _data, uint32_t _size);
 
-    void register_client_error_handler(client_t _client, const std::shared_ptr<local_endpoint>& _endpoint);
-    void cleanup_client(client_t _client, bool _due_to_error);
+    void register_client_error_handler(client_t _client, const std::shared_ptr<local_endpoint>& _endpoint, connection_role_e _role);
+    void cleanup_client(client_t _client, bool _due_to_error, connection_role_e _role);
 
     // local_endpoint_manager_host
     client_t get_client_id() override;
     void set_port(port_t _port) override;
-    void register_error_handler(client_t _client, std::shared_ptr<local_endpoint> _ep) override;
+    void register_error_handler(client_t _client, std::shared_ptr<local_endpoint> _ep, connection_role_e _role) override;
 
     void on_offered_services_info(std::vector<protocol::service_data> const& _services);
 
@@ -248,14 +248,27 @@ private:
     void restart_sender(std::unique_lock<std::mutex> const& _sender_mutex);
     void debounce_restart_sender_done();
 
-    /// @brief Remove local client
+    /// @brief Provider-side cleanup for a failing/closing accepted local server endpoint.
     ///
-    /// This will remove all information about local client, its' offered services, and also close the client endpoint to it
+    /// Drops the remote subscribers of the services WE offer to @p _client and
+    /// removes the accepted provider endpoint. Leaves all consumer-side state
+    /// (available services, outbound consumer endpoint, re-request) untouched.
     ///
-    /// @param _due_to_error, true in case of error
     /// @param _client what client
+    /// @param _due_to_error, true in case of error
+    void remove_local_provider(client_t _client, bool _due_to_error);
+
+    /// @brief Consumer-side cleanup for a failing/closing outbound consumer endpoint.
+    ///
+    /// Marks the services @p _client offered to us as unavailable and closes our
+    /// outbound consumer endpoint to it. Leaves all provider-side state (the
+    /// peer's subscriptions to our services, our accepted server endpoint)
+    /// untouched.
+    ///
+    /// @param _client what client
+    /// @param _due_to_error, true in case of error
     /// @param _requested_services what services were requested by us and offered by client;
-    void remove_local(bool _due_to_error, client_t _client, local_service_table& _requested_services);
+    void remove_local_consumer(client_t _client, bool _due_to_error, local_service_table& _requested_services);
 
     void cleanup_consumer();
     void cleanup_subscriber(std::scoped_lock<std::mutex> const& _provider_lock);
