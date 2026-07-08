@@ -201,7 +201,7 @@ private:
     const entry* find_entry_ptr(service_t _service, instance_t _instance) const {
         if (auto it = lower_bound(entries_, _service, _instance);
             it != entries_.end() && it->service == _service && it->instance == _instance) {
-            return std::to_address(it);
+            return &(*it);
         }
         return nullptr;
     }
