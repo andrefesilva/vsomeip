@@ -161,7 +161,7 @@ void endpoint_manager_base::add_local_server_endpoint_unlocked(client_t _client,
         it->second->trigger_error();
         return;
     }
-    host_.register_error_handler(_client, _connection);
+    host_.register_error_handler(_client, _connection, connection_role_e::provider);
     local_server_endpoints_[_client] = _connection;
     _connection->start(provider_tokens_[_client]);
     VSOMEIP_INFO_P << "self 0x" << hex4(get_client_id()) << ", client 0x" << hex4(_client) << ", connection > " << _connection->name();

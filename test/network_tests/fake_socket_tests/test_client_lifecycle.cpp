@@ -14,6 +14,7 @@
 #include "helpers/sockets/fake_tcp_socket_handle.hpp"
 #include "helpers/service_state.hpp"
 #include "helpers/availability_checker.hpp"
+#include "common/timeout_scale.hpp" // common::scaled_timeout
 
 #include "../../../implementation/utility/include/utility.hpp"
 
@@ -1326,5 +1327,180 @@ TEST_F(test_single_io_thread, stop_flushes_queued_messages_with_one_io_thread) {
 
     ecu_.stop_one(client_name_);
     ecu_.stop_one(router_name_);
+}
+
+// Regression tests "Decouple consumer vs. provider error handler".
+// A routing_manager_client can be, toward the same peer, both PROVIDER (accepted
+// socket for a service it offers) and CONSUMER (outbound socket for one it consumes),
+// on two distinct sockets keyed by client_t. A failure on one must tear down only
+// that role. Here A offers S1 (B subscribes) and consumes S2 (B offers); we fail one
+// socket and assert the other role of A survives.
+struct test_provider_consumer_error_isolation : public base_fake_socket_fixture {
+    test_provider_consumer_error_isolation() {
+        use_configuration("multiple_client_one_process.json");
+        create_app(routingmanager_name_);
+        create_app(a_name_);
+        create_app(b_name_);
+    }
+
+    // A: offers S1, consumes S2 (bound to the file-scope server/client names).
+    std::string const& a_name_{server_name_};
+    // B: offers S2, consumes S1.
+    std::string const& b_name_{client_name_};
+
+    // S1 is offered by A and consumed by B.
+    service_instance s1_{0x3344, 0x1};
+    event_ids ev1_{s1_, 0x8002, 0x1};
+    // S2 is offered by B and consumed by A.
+    service_instance s2_{0x3345, 0x1};
+    event_ids ev2_{s2_, 0x8002, 0x1};
+
+    std::vector<unsigned char> s1_payload_{0x11, 0x22};
+    std::vector<unsigned char> s2_payload_{0x33, 0x44};
+
+    static message_checker notification_checker(service_instance const& _si, vsomeip::event_t _event,
+                                                std::vector<unsigned char> const& _payload) {
+        return message_checker{std::nullopt, _si, _event, vsomeip::message_type_e::MT_NOTIFICATION, _payload};
+    }
+
+    app* rm_{};
+    app* a_{};
+    app* b_{};
+
+    // Brings the bidirectional provider/consumer relationship into a verified
+    // steady state: both directed local sockets exist and both directions
+    // actually carry a notification.
+    void bring_up_bidirectional() {
+        rm_ = start_client(routingmanager_name_);
+        ASSERT_NE(rm_, nullptr);
+        ASSERT_TRUE(await_connectable(routingmanager_name_));
+
+        a_ = start_client(a_name_);
+        ASSERT_NE(a_, nullptr);
+        ASSERT_TRUE(a_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        b_ = start_client(b_name_);
+        ASSERT_NE(b_, nullptr);
+        ASSERT_TRUE(b_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+        // A offers S1, B offers S2.
+        a_->offer(s1_);
+        a_->offer_event(ev1_);
+        b_->offer(s2_);
+        b_->offer_event(ev2_);
+
+        // B consumes S1 (provider connection B -> A).
+        b_->request_service(s1_);
+        ASSERT_TRUE(b_->availability_record_.wait_for_last(service_availability::available(s1_)));
+        b_->subscribe_event(ev1_);
+        ASSERT_TRUE(b_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(ev1_)));
+
+        // A consumes S2 (consumer connection A -> B).
+        a_->request_service(s2_);
+        ASSERT_TRUE(a_->availability_record_.wait_for_last(service_availability::available(s2_)));
+        a_->subscribe_event(ev2_);
+        ASSERT_TRUE(a_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(ev2_)));
+
+        // Both directed local sockets between A and B must exist before we
+        // fault-inject one of them.
+        ASSERT_TRUE(await_connection(b_name_, a_name_)); // provider: B -> A
+        ASSERT_TRUE(await_connection(a_name_, b_name_)); // consumer: A -> B
+        // Confirm they really are two independent directed connections.
+        ASSERT_GE(connection_count(b_name_, a_name_), 1u);
+        ASSERT_GE(connection_count(a_name_, b_name_), 1u);
+
+        // Baseline: both directions actually deliver a notification.
+        a_->send_event(ev1_, s1_payload_);
+        b_->send_event(ev2_, s2_payload_);
+        ASSERT_TRUE(b_->message_record_.wait_for(notification_checker(s1_, ev1_.event_id_, s1_payload_)))
+                << "baseline S1 notification not received by B: " << b_->message_record_;
+        ASSERT_TRUE(a_->message_record_.wait_for(notification_checker(s2_, ev2_.event_id_, s2_payload_)))
+                << "baseline S2 notification not received by A: " << a_->message_record_;
+    }
+};
+
+// Test 1 (happy path, provider state intact):
+// Failing ONLY A's CONSUMER socket (the outbound A -> B endpoint) must NOT drop
+// B's subscription to the service A offers. A must keep serving S1 to B.
+TEST_F(test_provider_consumer_error_isolation, consumer_socket_failure_keeps_provided_service_alive) {
+    bring_up_bidirectional();
+
+    // A is the connector in A -> B, so socket_role::client targets exactly A's
+    // outbound consumer endpoint and leaves the B -> A provider socket up.
+    ASSERT_TRUE(disconnect(a_name_, boost::asio::error::connection_reset, b_name_, std::nullopt, socket_role::client));
+
+    // Barrier: the consumer-side cleanup for the failed A -> B socket marks the
+    // peer-offered service S2 unavailable at A. Waiting for it guarantees the
+    // error handler has run before we probe the provider role.
+    ASSERT_TRUE(a_->availability_record_.wait_for_any(service_availability::unavailable(s2_)))
+            << "consumer cleanup barrier not reached: " << a_->availability_record_;
+
+    // Provider path (B -> A) must be untouched: B keeps receiving fresh S1.
+    b_->message_record_.clear();
+    std::vector<unsigned char> const next_s1{0x55, 0x66};
+    a_->send_event(ev1_, next_s1);
+    // Receiving the fresh S1 notification above already proves A's accepted
+    // provider connection to B is still alive.
+    EXPECT_TRUE(b_->message_record_.wait_for(notification_checker(s1_, ev1_.event_id_, next_s1)))
+            << "B stopped receiving S1 after A's consumer socket failed: " << b_->message_record_;
+}
+
+// Test 2 (different code path, consumer state intact):
+// Failing ONLY A's PROVIDER socket (the accepted B -> A endpoint) must NOT tear
+// down A's outbound consumer endpoint to B. We assert the consumer subscription
+// is NOT disturbed: A must not be forced to re-subscribe to S2.
+TEST_F(test_provider_consumer_error_isolation, provider_socket_failure_does_not_disturb_consumer_subscription) {
+    bring_up_bidirectional();
+
+    // Only observe subscription activity that happens AFTER the fault.
+    a_->subscription_record_.clear();
+
+    // Fail the whole B -> A connection (A's accepted provider endpoint); A's
+    // outbound A -> B consumer socket stays up.
+    ASSERT_TRUE(disconnect(b_name_, boost::asio::error::connection_reset, a_name_, boost::asio::error::connection_reset));
+
+    // Provider cleanup barrier: wait for B to mark S1 unavailable so the provider-side error handler has run before probing A's consumer
+    // role.
+    ASSERT_TRUE(b_->availability_record_.wait_for_any(service_availability::unavailable(s1_)))
+            << "provider cleanup barrier not reached: " << b_->availability_record_;
+
+    // The consumer endpoint to B must stay intact: A must NOT be driven to
+    // re-subscribe to S2. A consumer teardown + re-request.
+    EXPECT_FALSE(a_->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(ev2_),
+                                                       common::scaled_timeout(std::chrono::milliseconds(500))))
+            << "A re-subscribed to S2 after a provider-socket failure (consumer endpoint was torn down): " << a_->subscription_record_;
+
+    // And the untouched consumer socket still delivers fresh S2 notifications.
+    a_->message_record_.clear();
+    std::vector<unsigned char> const next_s2{0x77, 0x88};
+    b_->send_event(ev2_, next_s2);
+    // Receiving the fresh S2 notification above already proves A's outbound
+    // consumer connection to B is still alive.
+    EXPECT_TRUE(a_->message_record_.wait_for(notification_checker(s2_, ev2_.event_id_, next_s2)))
+            << "A stopped receiving S2 after A's provider socket failed: " << a_->message_record_;
+}
+
+// Test 3 (edge case, no cross-role side effects):
+// A PROVIDER-socket failure must NOT mark the peer-offered service unavailable
+// on the consumer side, and must NOT trigger the consumer re-request path.
+TEST_F(test_provider_consumer_error_isolation, provider_socket_failure_does_not_mark_consumed_service_unavailable) {
+    bring_up_bidirectional();
+
+    // Only look at availability transitions that happen AFTER the fault.
+    a_->availability_record_.clear();
+
+    // Fail the whole B -> A connection (A's accepted provider endpoint); A's
+    // outbound A -> B consumer socket stays up.
+    ASSERT_TRUE(disconnect(b_name_, boost::asio::error::connection_reset, a_name_, boost::asio::error::connection_reset));
+
+    // Provider cleanup barrier: wait for B to mark S1 unavailable so the provider-side teardown ran before we assert the negative on A's
+    // consumer side.
+    ASSERT_TRUE(b_->availability_record_.wait_for_any(service_availability::unavailable(s1_)))
+            << "provider cleanup barrier not reached: " << b_->availability_record_;
+
+    // Before the change, the provider error also ran the consumer cleanup block,
+    // which marked S2 unavailable and re-requested it. It must not happen now.
+    EXPECT_FALSE(a_->availability_record_.wait_for_any(service_availability::unavailable(s2_),
+                                                       common::scaled_timeout(std::chrono::milliseconds(200))))
+            << "A wrongly marked the consumed service S2 unavailable on a provider-socket failure: " << a_->availability_record_;
 }
 }
