@@ -1364,7 +1364,7 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
         case protocol::routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE: {
             std::scoped_lock its_lock(consumer_mutex_);
             for (const auto& s : e.services_) {
-                const bool was_available = available_services_.remove(s.service_, s.instance_);
+                const bool was_available = available_services_.remove(s.service_, s.instance_, s.major_version_);
                 on_stop_offer_service(s.service_, s.instance_, s.major_version_, s.minor_version_, was_available, its_lock);
             }
             break;
@@ -2201,8 +2201,8 @@ client_t routing_manager_client::get_client_by_address(const boost::asio::ip::ad
 
 client_t routing_manager_client::find_local_client(service_t _service, instance_t _instance) const {
     std::scoped_lock its_lock(consumer_mutex_);
-
-    return available_services_.find_client(_service, _instance);
+    // TODO major version
+    return available_services_.find_client(_service, _instance, ANY_MAJOR);
 }
 
 bool routing_manager_client::send_event(client_t _client, std::shared_ptr<message> _message, bool _force) {

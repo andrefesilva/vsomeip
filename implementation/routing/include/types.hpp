@@ -18,6 +18,7 @@ class serviceinfo;
 class endpoint_definition;
 
 typedef std::map<service_t, std::map<instance_t, std::shared_ptr<serviceinfo>>> services_t;
+typedef std::map<service_t, std::map<instance_t, std::map<major_version_t, std::shared_ptr<serviceinfo>>>> versioned_services_t;
 
 class eventgroupinfo;
 
