@@ -37,16 +37,18 @@ private:
 public:
     size_t size() const { return services_.size(); }
 
-    [[nodiscard]] bool contains(protocol::service_data const& _data) const {
+    protocol::service_data const* find(protocol::service_data const& _data) const {
         auto it = find_service(_data);
         if (it == services_.end()) {
-            return false;
+            return nullptr;
         }
         auto itE = find_next_service(it, _data.service_);
         it = find_instance(it, itE, _data.instance_);
         // TODO this should be wrong as soon as one client can requests multiple major versions
-        return it != itE;
+        return it != itE ? &(*it) : nullptr;
     }
+
+    [[nodiscard]] bool contains(protocol::service_data const& _data) const { return find(_data) != nullptr; }
 
     void insert(protocol::service_data const& _data) {
         auto const it = std::lower_bound(services_.begin(), services_.end(), _data, less{});

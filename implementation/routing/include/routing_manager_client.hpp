@@ -124,8 +124,6 @@ public:
     bool send(client_t _client, std::shared_ptr<message> _message, bool _force);
     bool is_available(service_t _service, instance_t _instance, major_version_t _major) const;
 
-    // that this function is provided to the application_impl feels pretty strange
-    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance) const;
     std::set<std::shared_ptr<event>> find_consumed_events(service_t _service, instance_t _instance, eventgroup_t _eventgroup) const;
     void notify_one(service_t _service, instance_t _instance, event_t _event, std::shared_ptr<payload> _payload, client_t _client,
                     bool _force);
@@ -172,7 +170,7 @@ private:
 
     void send_pong() const;
 
-    bool send_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
+    bool send_offer_service(protocol::service_data const& _data);
 
     bool send_event_registrations(client_t _client, std::span<protocol::register_event_data const> _registrations);
 
@@ -292,8 +290,6 @@ private:
     void stop_offer_service_base(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
                                  std::scoped_lock<std::mutex> const& _lock);
 
-    void clear_service_info(service_t _service, instance_t _instance, std::scoped_lock<std::mutex> const& _lock);
-    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance, std::scoped_lock<std::mutex> const&) const;
     void register_provider_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
                                  const std::set<eventgroup_t>& _eventgroups, const event_type_e _type, reliability_type_e _reliability,
                                  std::chrono::milliseconds _cycle, bool _change_resets_cycle, bool _update_on_change,
@@ -379,10 +375,9 @@ private:
     // "provider" side (offering of events, pending_offers, offered services etc.)
     mutable std::mutex provider_mutex_;
     // Set of services provided by this client
-    services_t provided_services_;
     service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> provided_events_;
     service_instance_map<std::map<eventgroup_t, uint32_t>> remote_subscriber_count_;
-    std::set<protocol::service> pending_offers_;
+    local_service_table offered_services_;
     // lc_count is bumped on every rmc::stop and on any reconnect invocation,
     // protected by the provider_mutex_, but it may be read during a start of the
     // sender at an arbitrary moment in time - although it shouldn't.
