@@ -355,7 +355,7 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
                     if (has_client_requested(its_client, r.service_, r.instance_)) {
                         VSOMEIP_WARNING_P << " Client 0x" << hex4(its_client) << " has already requested service [" << hex4(r.service_)
                                           << "." << hex4(r.instance_) << "]";
-                        if (!host_->handle_service_rerequest(its_client, r.service_, r.instance_)) {
+                        if (!host_->handle_service_rerequest(its_client, r.service_, r.instance_, r.major_version_)) {
                             continue;
                         }
                     }
@@ -935,7 +935,8 @@ void routing_manager_stub::handle_credentials(const client_t _client, std::set<p
         // search in local clients for the offering client
         for (auto request : _requests) {
             std::set<client_t> its_clients;
-            its_clients = host_->find_local_clients(request.service_, request.instance_);
+            // TODO
+            its_clients = host_->find_local_clients(request.service_, request.instance_, ANY_MAJOR);
             for (auto its_client : its_clients) {
                 its_offering_clients.insert(its_client);
             }
@@ -974,7 +975,7 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
         if (_client == VSOMEIP_ROUTING_CLIENT) {
             continue;
         }
-        std::set<client_t> its_clients = host_->find_local_clients(request.service_, request.instance_);
+        std::set<client_t> its_clients = host_->find_local_clients(request.service_, request.instance_, request.major_);
         // insert VSOMEIP_ROUTING_CLIENT to check whether service is remotely offered
         its_clients.insert(VSOMEIP_ROUTING_CLIENT);
         for (const client_t c : its_clients) {

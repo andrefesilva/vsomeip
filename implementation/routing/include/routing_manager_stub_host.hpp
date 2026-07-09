@@ -7,6 +7,7 @@
 
 #include <boost/asio/io_context.hpp>
 #include <vsomeip/handler.hpp>
+#include <vsomeip/primitive_types.hpp>
 #include <vsomeip/vsomeip_sec.h>
 #include "types.hpp"
 
@@ -80,9 +81,7 @@ public:
 
     virtual void on_resend_provided_events_response(pending_remote_offer_id_t _id) = 0;
 
-    virtual client_t find_local_client(service_t _service, instance_t _instance) = 0;
-
-    virtual std::set<client_t> find_local_clients(service_t _service, instance_t _instance) = 0;
+    virtual std::set<client_t> find_local_clients(service_t _service, instance_t _instance, major_version_t _major) = 0;
 
     virtual bool is_subscribe_to_any_event_allowed(const vsomeip_sec_client_t* _sec_client, client_t _client, service_t _service,
                                                    instance_t _instance, eventgroup_t _eventgroup) = 0;
@@ -93,7 +92,7 @@ public:
 
     virtual std::vector<protocol::service> get_requested_services(client_t _client) const = 0;
 
-    virtual bool handle_service_rerequest(client_t _client, service_t _service, instance_t _instance) = 0;
+    virtual bool handle_service_rerequest(client_t _client, service_t _service, instance_t _instance, major_version_t _major) = 0;
 
     virtual void remove_pending_requests(pending_request_removal_type_e _removal_type, client_t _client, service_t _service = ANY_SERVICE,
                                          instance_t _instance = ANY_INSTANCE) = 0;

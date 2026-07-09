@@ -235,8 +235,10 @@ void endpoint_manager_impl::add_remote_service_info(service_t _service, instance
 
         its_endpoint = find_remote_client(_service, _instance, _ep_definition->is_reliable());
         must_report = (its_endpoint && its_endpoint->is_established_or_connected());
-        if (must_report)
-            its_info = router_->find_service(_service, _instance);
+        if (must_report) {
+            // TODO major version
+            its_info = router_->find_service(_service, _instance, ANY_MAJOR);
+        }
     }
 
     if (must_report)
@@ -261,8 +263,10 @@ void endpoint_manager_impl::add_remote_service_info(service_t _service, instance
         must_report = (its_unreliable && its_unreliable->is_established_or_connected() && its_reliable
                        && its_reliable->is_established_or_connected());
 
-        if (must_report)
-            its_info = router_->find_service(_service, _instance);
+        if (must_report) {
+            // TODO major version
+            its_info = router_->find_service(_service, _instance, ANY_MAJOR);
+        }
     }
 
     if (must_report) {
@@ -871,7 +875,8 @@ void endpoint_manager_impl::on_connect(std::shared_ptr<boardnet_endpoint> _endpo
         for (auto& [its_si, its_reliability_map] : remote_services_) {
             if (auto found_endpoint = its_reliability_map.find(endpoint_is_reliable); found_endpoint != its_reliability_map.end()) {
                 if (found_endpoint->second == _endpoint) {
-                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service, its_si.instance));
+                    // TODO major version
+                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service, its_si.instance, ANY_MAJOR));
                     if (!its_info) {
                         _endpoint->set_established(true);
                         return;
@@ -908,7 +913,8 @@ void endpoint_manager_impl::on_disconnect(std::shared_ptr<boardnet_endpoint> _en
             const bool is_reliable = _endpoint->is_reliable();
             if (auto found_endpoint = its_reliability_map.find(is_reliable); found_endpoint != its_reliability_map.end()) {
                 if (found_endpoint->second == _endpoint) {
-                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service, its_si.instance));
+                    // TODO major version
+                    std::shared_ptr<serviceinfo> its_info(router_->find_service(its_si.service, its_si.instance, ANY_MAJOR));
                     if (!its_info) {
                         return;
                     }
@@ -1015,7 +1021,9 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_remote_client(ser
                             service_instances_[_service][its_endpoint.get()] = _instance;
 
                             // add endpoint to serviceinfo object
-                            if (auto found_service_info_inner = router_->find_service(_service, _instance); found_service_info_inner) {
+                            // TODO major version
+                            if (auto found_service_info_inner = router_->find_service(_service, _instance, ANY_MAJOR);
+                                found_service_info_inner) {
                                 found_service_info_inner->set_endpoint(its_endpoint, _reliable);
                             }
                         }
@@ -1063,7 +1071,8 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::create_remote_client(s
                 partition_id_t its_partition = configuration_->get_partition_id(_service, _instance);
                 client_endpoints_[its_endpoint_def->get_address()][its_endpoint_def->get_port()][_reliable][its_partition] = its_endpoint;
                 // Set the basic route to the service in the service info
-                auto found_service_info = router_->find_service(_service, _instance);
+                // TODO major version
+                auto found_service_info = router_->find_service(_service, _instance, ANY_MAJOR);
                 if (found_service_info) {
                     found_service_info->set_endpoint(its_endpoint, _reliable);
                 }
