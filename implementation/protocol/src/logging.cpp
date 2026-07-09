@@ -4,6 +4,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "../include/logging.hpp"
+#include "../include/command_types.hpp"
+#include "../../utility/include/utility.hpp"
 
 namespace vsomeip_v3::protocol {
 char const* to_string(id_e _id) {
@@ -84,5 +86,10 @@ char const* to_string(id_e _id) {
 }
 std::ostream& operator<<(std::ostream& _out, id_e _id) {
     return _out << to_string(_id);
+}
+
+std::ostream& operator<<(std::ostream& _out, service_data const& _data) {
+    return _out << "[" << hex4(_data.service_) << "." << hex4(_data.instance_) << "." << static_cast<int>(_data.major_version_) << "."
+                << _data.minor_version_ << "]";
 }
 }
