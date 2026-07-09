@@ -31,8 +31,22 @@ inline std::ostream& operator<<(std::ostream& _os, const service_instance_t& _si
     return _os;
 }
 
+struct versioned_service_instance_t {
+
+    constexpr auto operator<=>(const versioned_service_instance_t&) const = default;
+
+    service_t service;
+    instance_t instance;
+    major_version_t major;
+};
+
+std::ostream& operator<<(std::ostream& _os, versioned_service_instance_t const& _s);
+
 template<class T>
 using service_instance_map = std::unordered_map<service_instance_t, T>;
+
+template<class T>
+using versioned_service_instance_map = std::unordered_map<versioned_service_instance_t, T>;
 
 } // namespace vsomeip_v3
 
@@ -43,6 +57,17 @@ struct hash<vsomeip_v3::service_instance_t> {
         std::size_t seed = 0;
         boost::hash_combine(seed, k.service);
         boost::hash_combine(seed, k.instance);
+        return seed;
+    }
+};
+
+template<>
+struct hash<vsomeip_v3::versioned_service_instance_t> {
+    std::size_t operator()(const vsomeip_v3::versioned_service_instance_t& k) const {
+        std::size_t seed = 0;
+        boost::hash_combine(seed, k.service);
+        boost::hash_combine(seed, k.instance);
+        boost::hash_combine(seed, k.major);
         return seed;
     }
 };

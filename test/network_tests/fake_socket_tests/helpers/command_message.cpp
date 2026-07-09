@@ -6,6 +6,7 @@
 #include "command_message.hpp"
 
 #include "../../../../implementation/protocol/include/deserialize.hpp"
+#include "../../../../implementation/utility/include/is_value.hpp"
 #include "test_logging.hpp"
 #include <cstdint>
 #include <ostream>
@@ -50,6 +51,8 @@ namespace vsomeip_v3::testing {
     };
     if (_out_message.header_.id_ == protocol::id_e::ROUTING_INFO_ID) {
         return deal_with_payload(std::vector<protocol::routing_info_entry_data>{});
+    } else if (is_value(_out_message.header_.id_).any_of(protocol::id_e::OFFER_SERVICE_ID, protocol::id_e::STOP_OFFER_SERVICE_ID)) {
+        return deal_with_payload(protocol::service_data{});
     } else if (_out_message.header_.id_ == protocol::id_e::CONFIG_ID) {
         return deal_with_payload(std::vector<std::pair<std::string, std::string>>{});
     } else if (_out_message.header_.id_ == protocol::id_e::REQUEST_SERVICE_ID) {

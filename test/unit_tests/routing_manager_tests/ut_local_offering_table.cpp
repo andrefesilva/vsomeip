@@ -30,12 +30,13 @@ protected:
 // Empty-table behaviour
 // ---------------------------------------------------------------------------
 TEST_F(local_offering_table_test, empty_table_queries) {
-    EXPECT_EQ(table_.find_client(0x1111, 0x1), VSOMEIP_ROUTING_CLIENT);
-    EXPECT_FALSE(table_.find_entry(0x1111, 0x1).has_value());
-    EXPECT_TRUE(table_.find_clients(0x1111, 0x1).empty());
-    EXPECT_TRUE(table_.find_clients(0x1111, ANY_INSTANCE).empty());
+    EXPECT_EQ(table_.find_client(0x1111, 0x1, 0x2), VSOMEIP_ROUTING_CLIENT);
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x1, ANY_MAJOR).has_value());
+    EXPECT_TRUE(table_.find_clients(0x1111, 0x1, 0x1).empty());
+    EXPECT_TRUE(table_.find_clients(0x1111, 0x2, ANY_MAJOR).empty());
+    EXPECT_TRUE(table_.find_clients(0x1111, ANY_INSTANCE, ANY_MAJOR).empty());
     EXPECT_FALSE(table_.is_available(0x1111, 0x1, 0x1));
-    EXPECT_FALSE(table_.remove(0x1111, 0x1));
+    EXPECT_FALSE(table_.remove(0x1111, 0x1, 0x3));
 }
 
 // ---------------------------------------------------------------------------
@@ -57,22 +58,24 @@ TEST_F(local_offering_table_test, add_same_instance_different_concrete_major_is_
 
 TEST_F(local_offering_table_test, add_same_instance_any_major_not_new) {
     EXPECT_TRUE(table_.add(0x1111, 0x1, 0x2, 0x3, 0x10));
-    EXPECT_FALSE(table_.add(0x1111, 0x1, ANY_MAJOR, 0x3, 0x10));
+    EXPECT_TRUE(table_.add(0x1111, 0x1, ANY_MAJOR, 0x3, 0x10));
+    EXPECT_FALSE(table_.add(0x1111, 0x1, ANY_MAJOR, 0x1, 0x10));
 }
 
 TEST_F(local_offering_table_test, add_same_instance_default_major_not_new) {
     EXPECT_TRUE(table_.add(0x1111, 0x1, 0x2, 0x3, 0x10));
-    EXPECT_FALSE(table_.add(0x1111, 0x1, DEFAULT_MAJOR, 0x3, 0x10));
+    EXPECT_TRUE(table_.add(0x1111, 0x1, DEFAULT_MAJOR, 0x3, 0x10));
+    EXPECT_FALSE(table_.add(0x1111, 0x1, DEFAULT_MAJOR, 0x2, 0x10));
 }
 
 TEST_F(local_offering_table_test, add_overwrites_stored_entry) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
     table_.add(0x1111, 0x1, 0x2, 0x9, 0x11);
 
-    auto found = table_.find_entry(0x1111, 0x1);
+    auto found = table_.find_entry(0x1111, 0x1, 0x2);
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, make_entry(0x1111, 0x1, 0x2, 0x9, 0x11));
-    EXPECT_EQ(table_.find_client(0x1111, 0x1), 0x11);
+    EXPECT_EQ(table_.find_client(0x1111, 0x1, 0x2), 0x11);
 }
 
 // ---------------------------------------------------------------------------
@@ -81,23 +84,25 @@ TEST_F(local_offering_table_test, add_overwrites_stored_entry) {
 TEST_F(local_offering_table_test, find_client_and_entry_after_add) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
 
-    EXPECT_EQ(table_.find_client(0x1111, 0x1), 0x10);
+    EXPECT_EQ(table_.find_client(0x1111, 0x1, 0x2), 0x10);
 
-    auto found = table_.find_entry(0x1111, 0x1);
+    auto found = table_.find_entry(0x1111, 0x1, 0x2);
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(*found, make_entry(0x1111, 0x1, 0x2, 0x3, 0x10));
 }
 
 TEST_F(local_offering_table_test, find_client_miss_returns_routing_client) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
-    EXPECT_EQ(table_.find_client(0x1111, 0x2), VSOMEIP_ROUTING_CLIENT);
-    EXPECT_EQ(table_.find_client(0x2222, 0x1), VSOMEIP_ROUTING_CLIENT);
+    EXPECT_EQ(table_.find_client(0x1111, 0x2, 0x2), VSOMEIP_ROUTING_CLIENT);
+    EXPECT_EQ(table_.find_client(0x2222, 0x1, 0x2), VSOMEIP_ROUTING_CLIENT);
+    EXPECT_EQ(table_.find_client(0x1111, 0x1, 0x1), VSOMEIP_ROUTING_CLIENT);
 }
 
 TEST_F(local_offering_table_test, find_entry_miss_returns_nullopt) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
-    EXPECT_FALSE(table_.find_entry(0x1111, 0x2).has_value());
-    EXPECT_FALSE(table_.find_entry(0x2222, 0x1).has_value());
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x2, 0x2).has_value());
+    EXPECT_FALSE(table_.find_entry(0x2222, 0x1, 0x2).has_value());
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x1, 0x3).has_value());
 }
 
 // ---------------------------------------------------------------------------
@@ -105,27 +110,51 @@ TEST_F(local_offering_table_test, find_entry_miss_returns_nullopt) {
 // ---------------------------------------------------------------------------
 TEST_F(local_offering_table_test, remove_existing) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
-    EXPECT_TRUE(table_.remove(0x1111, 0x1));
-    EXPECT_FALSE(table_.find_entry(0x1111, 0x1).has_value());
-    EXPECT_EQ(table_.find_client(0x1111, 0x1), VSOMEIP_ROUTING_CLIENT);
+    EXPECT_TRUE(table_.remove(0x1111, 0x1, 0x2));
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x1, 0x2).has_value());
+    EXPECT_EQ(table_.find_client(0x1111, 0x1, 0x2), VSOMEIP_ROUTING_CLIENT);
 }
 
 TEST_F(local_offering_table_test, remove_missing_returns_false) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
-    EXPECT_FALSE(table_.remove(0x1111, 0x2));
-    EXPECT_FALSE(table_.remove(0x2222, 0x1));
+    EXPECT_FALSE(table_.remove(0x1111, 0x2, 0x2));
+    EXPECT_FALSE(table_.remove(0x2222, 0x1, 0x2));
+    EXPECT_FALSE(table_.remove(0x1111, 0x1, 0x1));
+}
+
+TEST_F(local_offering_table_test, remove_any_major_deletes_all_versions) {
+    table_.add(0x1111, 0x1, 0x1, 0x3, 0x10);
+    table_.add(0x1111, 0x1, 0x2, 0x3, 0x11);
+    table_.add(0x1111, 0x1, 0x3, 0x3, 0x11);
+    table_.add(0x1111, 0x2, 0x3, 0x3, 0x11);
+
+    EXPECT_TRUE(table_.remove(0x1111, 0x1, ANY_MAJOR));
+    auto kept = table_.find_entry(0x1111, 0x2, 0x3);
+    ASSERT_TRUE(kept.has_value());
+    EXPECT_EQ(*kept, make_entry(0x1111, 0x2, 0x3, 0x3, 0x11));
 }
 
 TEST_F(local_offering_table_test, remove_keeps_other_instances) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
     table_.add(0x1111, 0x2, 0x2, 0x3, 0x11);
 
-    EXPECT_TRUE(table_.remove(0x1111, 0x1));
-    EXPECT_FALSE(table_.find_entry(0x1111, 0x1).has_value());
+    EXPECT_TRUE(table_.remove(0x1111, 0x1, 0x2));
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x1, 0x2).has_value());
 
-    auto kept = table_.find_entry(0x1111, 0x2);
+    auto kept = table_.find_entry(0x1111, 0x2, 0x2);
     ASSERT_TRUE(kept.has_value());
     EXPECT_EQ(*kept, make_entry(0x1111, 0x2, 0x2, 0x3, 0x11));
+}
+TEST_F(local_offering_table_test, remove_keeps_other_version) {
+    table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
+    table_.add(0x1111, 0x1, 0x3, 0x3, 0x11);
+
+    EXPECT_TRUE(table_.remove(0x1111, 0x1, 0x2));
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x1, 0x2).has_value());
+
+    auto kept = table_.find_entry(0x1111, 0x1, 0x3);
+    ASSERT_TRUE(kept.has_value());
+    EXPECT_EQ(*kept, make_entry(0x1111, 0x1, 0x3, 0x3, 0x11));
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +162,9 @@ TEST_F(local_offering_table_test, remove_keeps_other_instances) {
 // ---------------------------------------------------------------------------
 TEST_F(local_offering_table_test, find_clients_concrete_instance) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
-    EXPECT_EQ(table_.find_clients(0x1111, 0x1), (std::set<client_t>{0x10}));
+    EXPECT_EQ(table_.find_clients(0x1111, 0x1, 0x2), (std::set<client_t>{0x10}));
+    EXPECT_EQ(table_.find_clients(0x1111, 0x1, ANY_MAJOR), (std::set<client_t>{0x10}));
+    EXPECT_EQ(table_.find_clients(0x1111, 0x1, 0x1), (std::set<client_t>{}));
 }
 
 TEST_F(local_offering_table_test, find_clients_any_instance_collects_all) {
@@ -141,20 +172,20 @@ TEST_F(local_offering_table_test, find_clients_any_instance_collects_all) {
     table_.add(0x1111, 0x2, 0x2, 0x3, 0x11);
     table_.add(0x1111, 0x3, 0x2, 0x3, 0x12);
 
-    EXPECT_EQ(table_.find_clients(0x1111, ANY_INSTANCE), (std::set<client_t>{0x10, 0x11, 0x12}));
+    EXPECT_EQ(table_.find_clients(0x1111, ANY_INSTANCE, ANY_MAJOR), (std::set<client_t>{0x10, 0x11, 0x12}));
 }
 
 TEST_F(local_offering_table_test, find_clients_any_instance_deduplicates) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
     table_.add(0x1111, 0x2, 0x2, 0x3, 0x10);
 
-    EXPECT_EQ(table_.find_clients(0x1111, ANY_INSTANCE), (std::set<client_t>{0x10}));
+    EXPECT_EQ(table_.find_clients(0x1111, ANY_INSTANCE, ANY_MAJOR), (std::set<client_t>{0x10}));
 }
 
 TEST_F(local_offering_table_test, find_clients_unknown_service_is_empty) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
-    EXPECT_TRUE(table_.find_clients(0x2222, ANY_INSTANCE).empty());
-    EXPECT_TRUE(table_.find_clients(0x1111, 0x9).empty());
+    EXPECT_TRUE(table_.find_clients(0x2222, ANY_INSTANCE, ANY_MAJOR).empty());
+    EXPECT_TRUE(table_.find_clients(0x1111, 0x9, ANY_MAJOR).empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -259,10 +290,10 @@ TEST_F(local_offering_table_test, remove_all_for_client_removes_and_returns_sort
     };
     EXPECT_EQ(removed, expected);
 
-    EXPECT_FALSE(table_.find_entry(0x1111, 0x1).has_value());
-    EXPECT_FALSE(table_.find_entry(0x2222, 0x5).has_value());
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x1, 0x2).has_value());
+    EXPECT_FALSE(table_.find_entry(0x2222, 0x5, 0x4).has_value());
 
-    auto kept = table_.find_entry(0x1111, 0x2);
+    auto kept = table_.find_entry(0x1111, 0x2, 0x2);
     ASSERT_TRUE(kept.has_value());
     EXPECT_EQ(*kept, make_entry(0x1111, 0x2, 0x2, 0x3, 0x11));
 }
@@ -270,7 +301,7 @@ TEST_F(local_offering_table_test, remove_all_for_client_removes_and_returns_sort
 TEST_F(local_offering_table_test, remove_all_for_client_unknown_is_empty) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
     EXPECT_TRUE(table_.remove_all_for_client(0x99).empty());
-    EXPECT_TRUE(table_.find_entry(0x1111, 0x1).has_value());
+    EXPECT_TRUE(table_.find_entry(0x1111, 0x1, 0x2).has_value());
 }
 
 // ---------------------------------------------------------------------------
@@ -288,8 +319,8 @@ TEST_F(local_offering_table_test, clear_returns_all_sorted_and_empties) {
     };
     EXPECT_EQ(removed, expected);
 
-    EXPECT_FALSE(table_.find_entry(0x1111, 0x1).has_value());
-    EXPECT_FALSE(table_.find_entry(0x2222, 0x5).has_value());
+    EXPECT_FALSE(table_.find_entry(0x1111, 0x1, 0x2).has_value());
+    EXPECT_FALSE(table_.find_entry(0x2222, 0x5, 0x4).has_value());
     EXPECT_TRUE(table_.clear().empty());
 }
 } // namespace vsomeip_v3

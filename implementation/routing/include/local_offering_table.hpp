@@ -42,41 +42,49 @@ public:
 
     bool add(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, client_t _client) {
         auto new_entry = entry{_service, _instance, _major, _minor, _client};
-        auto it = lower_bound(entries_, _service, _instance);
-        if (it != entries_.end() && it->service == _service && it->instance == _instance) {
+        auto it = lower_bound(_service, _instance, _major);
+        if (it != entries_.end() && it->service == _service && it->instance == _instance && it->major == _major) {
             // instance already known -> update entry
-            const bool is_new = _major != ANY_MAJOR && _major != DEFAULT_MAJOR && _major != it->major;
             *it = new_entry;
-            return is_new;
+            return false;
         }
         entries_.insert(it, new_entry);
         return true;
     }
 
-    bool remove(service_t _service, instance_t _instance) {
-
-        if (auto it = lower_bound(entries_, _service, _instance);
-            it != entries_.end() && it->service == _service && it->instance == _instance) {
-            entries_.erase(it);
-            return true;
+    bool remove(service_t _service, instance_t _instance, major_version_t _major) {
+        if (_major != ANY_MAJOR) {
+            auto it = lower_bound(_service, _instance, _major);
+            if (it != entries_.end() && it->service == _service && it->instance == _instance && it->major == _major) {
+                entries_.erase(it);
+                return true;
+            }
+            return false;
         }
-        return false;
+        // ANY_MAJOR: every entry for this (service, instance) is contiguous because the
+        // table is sorted, so erase the whole run in one shot.
+        auto [first, last] = instance_range(_service, _instance);
+        if (first == last) {
+            return false;
+        }
+        entries_.erase(first, last);
+        return true;
     }
 
-    client_t find_client(service_t _service, instance_t _instance) const {
-        const auto* e = find_entry_ptr(_service, _instance);
+    client_t find_client(service_t _service, instance_t _instance, major_version_t _major) const {
+        const auto* e = find_entry_ptr(_service, _instance, _major);
         return e ? e->client : static_cast<client_t>(VSOMEIP_ROUTING_CLIENT);
     }
 
-    std::optional<entry> find_entry(service_t _service, instance_t _instance) const {
-        const auto* e = find_entry_ptr(_service, _instance);
+    std::optional<entry> find_entry(service_t _service, instance_t _instance, major_version_t _major) const {
+        const auto* e = find_entry_ptr(_service, _instance, _major);
         if (!e) {
             return std::nullopt;
         }
         return *e;
     }
 
-    std::set<client_t> find_clients(service_t _service, instance_t _instance) const {
+    std::set<client_t> find_clients(service_t _service, instance_t _instance, major_version_t _major) const {
         std::set<client_t> clients;
         auto [first, last] = service_range(_service);
         if (_instance == ANY_INSTANCE) {
@@ -85,7 +93,7 @@ public:
             }
         } else {
             for (auto it = first; it != last; ++it) {
-                if (it->instance == _instance) {
+                if (it->instance == _instance && (it->major == _major || _major == ANY_MAJOR)) {
                     clients.insert(it->client);
                     break;
                 }
@@ -181,27 +189,47 @@ public:
 private:
     using const_iterator = std::vector<entry>::const_iterator;
 
-    // template avoids the need to write separate const vs. non-const overloads
-    template<typename Container>
-    static auto lower_bound(Container& _container, service_t _service, instance_t _instance) -> decltype(_container.begin()) {
-        return std::lower_bound(_container.begin(), _container.end(), std::make_pair(_service, _instance),
-                                [](const entry& _entry, const std::pair<service_t, instance_t>& _key) {
-                                    return std::make_pair(_entry.service, _entry.instance) < _key;
-                                });
+    // Only the non-const mutators (add/remove) need this; entries are ordered by (service, instance, major).
+    std::vector<entry>::iterator lower_bound(service_t _service, instance_t _instance, major_version_t _major) {
+        return std::lower_bound(
+                entries_.begin(), entries_.end(), std::tie(_service, _instance, _major),
+                [](const entry& _entry, auto const& _key) { return std::tie(_entry.service, _entry.instance, _entry.major) < _key; });
     }
 
     std::pair<const_iterator, const_iterator> service_range(service_t _service) const {
         auto first = std::lower_bound(entries_.begin(), entries_.end(), _service,
                                       [](const entry& _entry, service_t _search) { return _entry.service < _search; });
-        auto last = std::upper_bound(entries_.begin(), entries_.end(), _service,
+        auto last = std::upper_bound(first, entries_.end(), _service,
                                      [](service_t _search, const entry& _entry) { return _search < _entry.service; });
         return {first, last};
     }
 
-    const entry* find_entry_ptr(service_t _service, instance_t _instance) const {
-        if (auto it = lower_bound(entries_, _service, _instance);
-            it != entries_.end() && it->service == _service && it->instance == _instance) {
-            return &(*it);
+    // Contiguous run of all entries (across majors) for one concrete (service, instance).
+    std::pair<const_iterator, const_iterator> instance_range(service_t _service, instance_t _instance) const {
+        const auto key = std::make_pair(_service, _instance);
+        auto first = std::lower_bound(entries_.begin(), entries_.end(), key,
+                                      [](const entry& _entry, const std::pair<service_t, instance_t>& _k) {
+                                          return std::make_pair(_entry.service, _entry.instance) < _k;
+                                      });
+        auto last = std::upper_bound(first, entries_.end(), key, [](const std::pair<service_t, instance_t>& _k, const entry& _entry) {
+            return _k < std::make_pair(_entry.service, _entry.instance);
+        });
+        return {first, last};
+    }
+
+    const entry* find_entry_ptr(service_t _service, instance_t _instance, major_version_t _major = ANY_MAJOR) const {
+        auto [first, last] = instance_range(_service, _instance);
+        if (first == last) {
+            return nullptr;
+        }
+        if (_major == ANY_MAJOR) {
+            return &(*first);
+        }
+        // A single instance carries only a handful of majors, so a linear scan is cheaper and clearer than a second search.
+        for (auto it = first; it != last; ++it) {
+            if (it->major == _major) {
+                return &(*it);
+            }
         }
         return nullptr;
     }

@@ -201,7 +201,7 @@ public:
 
     void on_resend_provided_events_response(pending_remote_offer_id_t _id);
     client_t find_local_client(service_t _service, instance_t _instance);
-    std::set<client_t> find_local_clients(service_t _service, instance_t _instance);
+    std::set<client_t> find_local_clients(service_t _service, instance_t _instance, major_version_t _major);
 
     void on_register_application(client_t _client, const boost::asio::ip::address& _address, port_t _port);
 
@@ -221,13 +221,13 @@ public:
 
     bool is_external_routing_ready() const;
 
-    bool handle_service_rerequest(client_t _client, service_t _service, instance_t _instance);
+    bool handle_service_rerequest(client_t _client, service_t _service, instance_t _instance, major_version_t _major);
 
     void remove_pending_requests(pending_request_removal_type_e _removal_type, client_t _client, service_t _service = ANY_SERVICE,
                                  instance_t _instance = ANY_INSTANCE);
 
     // endpoint_manager_impl requires this to be accessible
-    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance) const;
+    std::shared_ptr<serviceinfo> find_service(service_t _service, instance_t _instance, major_version_t _major) const;
     bool offer_service_base(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
     std::shared_ptr<serviceinfo> create_service_info(service_t _service, instance_t _instance, major_version_t _major,
                                                      minor_version_t _minor, ttl_t _ttl, bool _is_local_service);
@@ -376,7 +376,7 @@ private:
 
     services_t get_services_remote() const;
     void clear_service_info(service_t _service, instance_t _instance);
-    services_t get_services() const;
+    versioned_services_t get_services() const;
 
     void notify_one(service_t _service, instance_t _instance, event_t _event, std::shared_ptr<payload> _payload, client_t _client,
                     bool _force);
@@ -441,11 +441,11 @@ private:
     // map to store pending offers.
     // 1st client id in tuple: client id of new offering application
     // 2nd client id in tuple: client id of previously/stored offering application
-    service_instance_map<std::tuple<major_version_t, minor_version_t, client_t, client_t>> pending_offers_;
+    versioned_service_instance_map<std::tuple<minor_version_t, client_t, client_t>> pending_offers_;
     // map to store pending requests
     // 1st client id corresponds to the id of the offering application
     // 2nd set of client id corresponds to the ids of the requesting applications
-    std::unordered_map<service_instance_t, std::tuple<client_t, std::set<client_t>>> pending_requests_;
+    versioned_service_instance_map<std::pair<client_t, std::set<client_t>>> pending_requests_;
 
     std::mutex remote_subscription_state_mutex_;
     std::map<std::tuple<service_t, instance_t, eventgroup_t, client_t>, subscription_state_e> remote_subscription_state_;
@@ -488,7 +488,7 @@ private:
 
     services_t services_remote_;
     mutable std::mutex services_remote_mutex_;
-    services_t services_;
+    versioned_services_t services_;
     mutable std::mutex services_mutex_;
 
     // Eventgroups
