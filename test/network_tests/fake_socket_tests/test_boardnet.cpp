@@ -193,11 +193,11 @@ struct test_boardnet_helper : public base_fake_socket_fixture {
     message_checker field_checker_{std::nullopt, boardnet_interface_.instance_, boardnet_interface_.fields_[0].event_id_,
                                    vsomeip::message_type_e::MT_NOTIFICATION, std::vector<unsigned char>{}};
 
-    boost::asio::ip::udp::endpoint const ecu_one_sd_comm_{boost::asio::ip::make_address("160.48.199.65"), 30490};
-    boost::asio::ip::udp::endpoint const ecu_two_sd_comm_{boost::asio::ip::make_address("160.48.199.99"), 30490};
+    boost::asio::ip::udp::endpoint const ecu_one_sd_comm_{boost::asio::ip::make_address("127.0.0.1"), 30490};
+    boost::asio::ip::udp::endpoint const ecu_two_sd_comm_{boost::asio::ip::make_address("127.0.0.2"), 30490};
 
     /// Endpoint used for SOME/IP communication between client and server (hosts).
-    boost::asio::ip::udp::endpoint const ecu_one_client_port_{boost::asio::ip::make_address("160.48.199.65"), 30491};
+    boost::asio::ip::udp::endpoint const ecu_one_client_port_{boost::asio::ip::make_address("127.0.0.1"), 30491};
 
     std::map<std::string, app*> apps_;
     std::set<std::string> env_vars_;
@@ -2589,7 +2589,7 @@ struct test_offer_stop_offer_subscription : base_fake_socket_fixture {
 
 TEST_F(test_offer_stop_offer_subscription, subscriptions_are_acknowledged_after_a_stop_offer_offer_cycle) {
     /**
-     * Regression test for NTWALL-1145
+     * Regression test:
      * When a router receives a subscription for a boardnet service, after having
      * dealt with a stop_offer, the subscription was never forwarded to the boardnet.
      **/
@@ -2728,10 +2728,10 @@ struct test_someip_record : public base_fake_socket_fixture {
     ecu_config ecu_four_cfg_ = [this]() {
         ecu_config cfg{{tcp_interface_}};
         cfg.apps_ = {application_config{"router_two", 0x6311}};
-        cfg.unicast_ip_ = boost::asio::ip::make_address("160.48.199.98");
+        cfg.unicast_ip_ = boost::asio::ip::make_address("127.0.0.3");
         cfg.routing_config_ = local_tcp_config{.router_name_ = "router_two",
-                                               .host_ = boost::asio::ip::make_address("160.48.199.181"),
-                                               .guest_ = boost::asio::ip::make_address("160.48.199.181")};
+                                               .host_ = boost::asio::ip::make_address("127.0.0.6"),
+                                               .guest_ = boost::asio::ip::make_address("127.0.0.6")};
         cfg.network_ = "vsomeip-two";
         return cfg;
     }();

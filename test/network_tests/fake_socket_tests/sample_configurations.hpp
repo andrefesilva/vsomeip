@@ -71,10 +71,10 @@ namespace boardnet {
 inline const ecu_config ecu_one_config = []() {
     ecu_config cfg;
     cfg.apps_ = {application_config{"router_one", 0x6310}};
-    cfg.unicast_ip_ = boost::asio::ip::make_address("160.48.199.99");
+    cfg.unicast_ip_ = boost::asio::ip::make_address("127.0.0.2");
     cfg.routing_config_ = local_tcp_config{.router_name_ = "router_one",
-                                           .host_ = boost::asio::ip::make_address("160.48.199.253"),
-                                           .guest_ = boost::asio::ip::make_address("160.48.199.253")};
+                                           .host_ = boost::asio::ip::make_address("127.0.0.7"),
+                                           .guest_ = boost::asio::ip::make_address("127.0.0.7")};
     cfg.network_ = "vsomeip-one";
     return cfg;
 }();
@@ -83,10 +83,10 @@ inline const ecu_config ecu_one_config = []() {
 inline const ecu_config ecu_two_config = []() {
     ecu_config cfg = {{interfaces::boardnet::service_3344}};
     cfg.apps_ = {application_config{"router_two", 0x6311}};
-    cfg.unicast_ip_ = boost::asio::ip::make_address("160.48.199.98");
+    cfg.unicast_ip_ = boost::asio::ip::make_address("127.0.0.3");
     cfg.routing_config_ = local_tcp_config{.router_name_ = "router_two",
-                                           .host_ = boost::asio::ip::make_address("160.48.199.181"),
-                                           .guest_ = boost::asio::ip::make_address("160.48.199.181")};
+                                           .host_ = boost::asio::ip::make_address("127.0.0.6"),
+                                           .guest_ = boost::asio::ip::make_address("127.0.0.6")};
     cfg.network_ = "vsomeip-two";
     return cfg;
 }();
@@ -95,10 +95,10 @@ inline const ecu_config ecu_three_config = []() {
     ecu_config cfg;
     cfg.apps_ = {application_config{"router_three", 0x6312}};
     cfg.network_ = "vsomeip-three";
-    cfg.unicast_ip_ = boost::asio::ip::make_address("160.48.199.119");
+    cfg.unicast_ip_ = boost::asio::ip::make_address("127.0.0.4");
     cfg.routing_config_ = local_tcp_config{.router_name_ = "router_three",
-                                           .host_ = boost::asio::ip::make_address("160.48.199.153"),
-                                           .guest_ = boost::asio::ip::make_address("160.48.199.153")};
+                                           .host_ = boost::asio::ip::make_address("127.0.0.5"),
+                                           .guest_ = boost::asio::ip::make_address("127.0.0.5")};
     return cfg;
 }();
 }
