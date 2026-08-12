@@ -1,5 +1,121 @@
 Changes
 =======
+v3.7.5
+- global
+  - Add extra logs
+  - Upgrade compatibility to Boost 1.91
+  - Modernize service_instance_t
+  - Minor export cleanup
+  - Get rid of virtuals usage to build up a SOMEIP message
+  - Fix Android build issues
+  - Fix a few overflows
+  - Dead code removal
+  - Add Sanitizers/Valgrinds log on build
+  - Enable multiple major version offerings
+
+- configuration
+  - Change default number of io threads to 1
+
+- application
+  - Log a warning when no message handler is installed
+  - Add handler exception logs
+  - Decouple consumer vs. provider error handler
+
+- CI
+  - Nodeset Refactor
+  - Add Android NDK r25b portability gate
+  - Cache Boost for Android in Artifactory
+
+- routing
+  - Refactor: Struct based IPC for SERVICE commands
+  - Synchronize pending_offers and provided_services
+  - Refactor: Struct based to single field commands
+  - Migrate multiple_services command
+  - Remove offer commands
+  - Remove routing_manager_base
+  - Convert blocking rmc::stop to async continuation approach
+  - Fix offer stop offer
+  - Turn external_routing_ready_ into a property
+  - rmc: fix on_message check
+  - Refactor: Struct based to aggregate simple commands
+  - replace send command
+  - Turn last_session into a property and add mutex
+  - replace the subscribe_answer commands
+  - rmc: drop available_services_history_
+  - use timer utility in rmc
+  - rmi: remove some dead code
+  - Cleanup pending event registration
+  - Refactor: Struct base approach on routing info cmd
+  - Refactor: Struct based approach for register event command
+  - Drop obsolete hack event promotion plain -> selective
+  - Move consumer eps into rmc
+  - Replace update security commands
+  - Refactor: Struct based to some variable-sized commands
+  - Clear service info doesnt remove ports
+  - Replace subscribe command
+  - Drops all VSOMEIP commands former implementation
+  - Move event caching to rmc
+  - Reconnect upon receiving new client id
+  - Forward only requested service version
+  - Refactor the local_offering_table
+  - Remove the eventgroupinfo from rmc as provider
+  - Drop remote response for recycled/released client id
+  - Event::set_reliability error
+  - Check eventgroup with multiple events
+  - Service announces availability before all endpoints are up
+  - Merge pending_offers_ + provided_services_
+
+- endpoints
+  - Fix double connect
+  - Add sender info to error logs
+  - Prevent double start of netlink_connector
+  - ucei: reuse receive buffer
+  - Set established as false early on disconnect
+  - endpoints: drop unneeded errors
+  - Drop connection on suspicious message
+  - simpler get_message_size
+  - Ignore fully overlaping segments
+  - Change sockets to shared_ptrs
+  - Log buffer on endpoint receive_cbk errors
+  - Log file descriptors
+
+- tests
+  - Increase TTL offer test big sd msg
+  - Fix climate_test
+  - Fix flaky test_boardnet_with_fake_sockets
+  - Consolidate memcheck suppressions
+  - standardize test scripts
+  - Optimize restart routing test
+  - Use host-provided version of Boost for network tests
+  - Fix port checks in external_local_* and routing tests
+  - Fix timing issue in suspend_resume_test_service
+  - Make debounce_filter test slightly more jitter-tolerant
+  - Fix potential race in test_connection_restoration
+  - Fix potential hang in initial_event tests
+  - Fix header_factory_test for multi-dispatch
+  - Fix race condition in client_id_test_service
+  - Fake sockets - Record SOME/IP and SD messages on gate
+  - Add network-tests image pull fallback and seed job
+  - Fix a race in test_boardnet
+  - Remove several magic sleeps from test cases
+  - Fix race in malicious_data_tests
+  - Enforce single dispatch for big_payload tests
+  - Fix offered_services_info_test
+  - Fix additional boardnet tests
+  - Introduce test timeout scaling
+  - Try to make debounce_filter_test more robust under load
+  - Remove deprecated tests
+  - Harden debounce_filter_test against timing issues
+  - tests: fix rare application_tests failure
+  - tests: fix race in udp_connection_refused_recv
+  - Retry unreliable suspend trigger in suspend test cases
+  - Fix more flakyness in suspend_resume_test_initial
+  - Parallelize network tests
+  - Fix e2e tests
+  - Reserve port ranges used in test cases
+  - Fix usei_fixture.corrupted_data timeout
+  - Fix race condition in restart_routing_test
+
 v3.7.4
 - global
   - Refactor: simplify nested map structures
