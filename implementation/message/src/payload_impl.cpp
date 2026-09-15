@@ -22,11 +22,12 @@ payload_impl::payload_impl(const std::vector<byte_t>& _data) : data_(_data) { }
 payload_impl::payload_impl(const payload_impl& _payload) : data_(_payload.data_) { }
 
 bool payload_impl::operator==(const payload& _other) const {
-    bool is_equal{get_length() == _other.get_length()};
-    if (is_equal) {
-        is_equal = (0 == std::memcmp(get_data(), _other.get_data(), get_length()));
+    const length_t its_length{get_length()};
+    if (its_length != _other.get_length()) {
+        return false;
     }
-    return is_equal;
+    // An empty payload yields a null data pointer, which memcmp (declared nonnull) must never receive.
+    return its_length == 0 || 0 == std::memcmp(get_data(), _other.get_data(), its_length);
 }
 
 byte_t* payload_impl::get_data() {

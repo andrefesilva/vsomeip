@@ -195,6 +195,15 @@ function(add_custom_test)
             "${MY_TEST_ENVIRONMENT}"
         )
     endif()
+
+    # Apply sanitizer runtime options to all tests
+    if(SANITIZER_ENV)
+        set_property(
+            TEST ${MY_TEST_NAME}
+            APPEND PROPERTY ENVIRONMENT
+            "${SANITIZER_ENV}"
+        )
+    endif()
 endfunction()
 
 # setup helper for bash tests

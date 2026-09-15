@@ -139,6 +139,20 @@ if (NOT MSVC)
         SET(CMAKE_EXE_LINKER_FLAGS "-Wl,--disable-new-dtags")
     endif ()
 
+    # Sanitizer runtime options: halt on first error so CI fails immediately
+    if (ENABLE_SANITIZERS)
+        set(SANITIZER_ENV
+            "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1"
+            "LSAN_OPTIONS=exitcode=23:print_suppressions=0"
+            "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+        )
+    endif ()
+    if (ENABLE_THREAD_SANITIZER)
+        set(SANITIZER_ENV
+            "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1"
+        )
+    endif ()
+
     if (ENABLE_PROFILING)
         set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
     endif ()
