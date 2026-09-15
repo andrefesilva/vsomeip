@@ -404,12 +404,10 @@ void policy_manager_impl::load(const configuration_element& _element, const bool
         load_security_policy_extensions(_element);
         load_routing_credentials(_element);
 
-        if (policy_enabled_ && check_credentials_) {
-            VSOMEIP_INFO << "Security configuration is active.";
-        }
+        if (policy_enabled_ && reported_security_mode_ != check_credentials_) {
+            reported_security_mode_ = check_credentials_;
 
-        if (policy_enabled_ && !check_credentials_) {
-            VSOMEIP_INFO << "Security configuration is active but in audit mode (allow all)";
+            VSOMEIP_INFO << "Security configuration is active" << (check_credentials_ ? "." : " but in audit mode (allow all)");
         }
     }
 }

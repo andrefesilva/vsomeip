@@ -8,6 +8,7 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <vector>
 
@@ -120,6 +121,7 @@ private:
     bool allow_remote_clients_;
     bool check_whitelist_;
 
+    std::optional<bool> reported_security_mode_;
     mutable std::mutex service_interface_whitelist_mutex_;
     boost::icl::interval_set<service_t> service_interface_whitelist_;
 
