@@ -1230,6 +1230,8 @@ TEST_F(test_multiversion_support_aggregate_consumption, releasing_v2_does_not_di
 TEST_F(test_multiversion_support_aggregate_consumption, releasing_v1_drops_it_from_the_post_resume_find_but_not_v2) {
     auto gate = someip_gate::create();
     ASSERT_TRUE(set_udp_data_pipe({consumer_ecu_.sd_endpoint(), consumer_ecu_.router_name_}, {sd_multicast_ep_}, gate->get_data_pipe()));
+    auto in_gate = someip_gate::create();
+    ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {sd_multicast_ep_, consumer_ecu_.router_name_}, in_gate->get_data_pipe()));
 
     start_apps();
 
@@ -1253,6 +1255,9 @@ TEST_F(test_multiversion_support_aggregate_consumption, releasing_v1_drops_it_fr
 
     ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::unavailable(interface_v2_.instance_),
                                                                common::scaled_timeout(std::chrono::seconds(10))));
+
+    in_gate->block(true);
+
     consumer_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_SUSPENDED);
 
     auto seen_majors = std::make_shared<attribute_recorder<vsomeip::major_version_t>>();
@@ -1275,6 +1280,8 @@ TEST_F(test_multiversion_support_aggregate_consumption, releasing_v1_drops_it_fr
     EXPECT_FALSE(seen_majors->wait_for_any(vsomeip::major_version_t{0x1}, std::chrono::milliseconds(0)))
             << "v1 was released -- it must not be re-requested after resume";
     gate->block(false);
+    in_gate->get_data_pipe()->clear();
+    in_gate->block(false);
 
     // Restore only the still-requested major: v2 should become available again, v1 stays gone.
     provider_v2_->offer(interface_v2_.instance_);
@@ -1288,6 +1295,8 @@ TEST_F(test_multiversion_support_aggregate_consumption, releasing_v1_drops_it_fr
 TEST_F(test_multiversion_support_aggregate_consumption, releasing_v2_drops_it_from_the_post_resume_find_but_not_v1) {
     auto gate = someip_gate::create();
     ASSERT_TRUE(set_udp_data_pipe({consumer_ecu_.sd_endpoint(), consumer_ecu_.router_name_}, {sd_multicast_ep_}, gate->get_data_pipe()));
+    auto in_gate = someip_gate::create();
+    ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {sd_multicast_ep_, consumer_ecu_.router_name_}, in_gate->get_data_pipe()));
 
     start_apps();
 
@@ -1311,6 +1320,9 @@ TEST_F(test_multiversion_support_aggregate_consumption, releasing_v2_drops_it_fr
 
     ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::unavailable(interface_v1_.instance_),
                                                                common::scaled_timeout(std::chrono::seconds(10))));
+
+    in_gate->block(true);
+
     consumer_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_SUSPENDED);
 
     auto seen_majors = std::make_shared<attribute_recorder<vsomeip::major_version_t>>();
@@ -1333,6 +1345,8 @@ TEST_F(test_multiversion_support_aggregate_consumption, releasing_v2_drops_it_fr
     EXPECT_FALSE(seen_majors->wait_for_any(vsomeip::major_version_t{0x2}, std::chrono::milliseconds(0)))
             << "v2 was released -- it must not be re-requested after resume";
     gate->block(false);
+    in_gate->get_data_pipe()->clear();
+    in_gate->block(false);
 
     // Restore only the still-requested major: v1 should become available again, v2 stays gone.
     provider_v1_->offer(interface_v1_.instance_);

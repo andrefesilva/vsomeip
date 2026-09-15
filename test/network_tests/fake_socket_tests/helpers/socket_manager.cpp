@@ -1041,7 +1041,13 @@ bool socket_manager::send_someip(std::vector<unsigned char> const& _buffer, boos
         // the gate let it straight through -- deliver only to this one member, not the whole group.
         control_data_t forwarded;
         while (member_pipe->fetch_data(forwarded)) {
-            handle->consume(forwarded.buffer_, _src, _dst);
+            if (!forwarded.addresses_) {
+                LOCAL_LOG << "[WARNING] dropping a gated udp datagram with no addresses: only the tcp pipe stores address-less data, "
+                             "so something else is writing into a udp_pipe_rule pipe";
+                continue;
+            }
+            auto const& [src, dst] = *forwarded.addresses_;
+            handle->consume(forwarded.buffer_, src, dst);
         }
     }
     return true;
