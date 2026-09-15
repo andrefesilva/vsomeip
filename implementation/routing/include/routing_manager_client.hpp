@@ -202,7 +202,8 @@ private:
     void on_stop_offer_service(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
                                bool _was_available, std::scoped_lock<std::mutex> const& _consumer_lock);
 
-    [[nodiscard]] bool send_pending_commands(std::scoped_lock<std::mutex, std::mutex> const& _consumer_provider_lock);
+    [[nodiscard]] bool send_pending_commands(std::scoped_lock<std::mutex, std::mutex> const& _consumer_provider_lock,
+                                             std::scoped_lock<std::mutex> const& _lock);
 
     bool create_and_start_receiver([[maybe_unused]] std::scoped_lock<std::mutex> const& _lock, client_t _client);
 
@@ -364,6 +365,13 @@ private:
     std::shared_ptr<security> get_security() const override;
 
     client_t get_client() const;
+
+    /// The client-id of the current registration, taken from the state machine under mutex_.
+    /// Always prefer this over get_client() when stamping an outgoing command: host_->get_client()
+    /// keeps the last assigned id across a deregistration, the state machine resets it to
+    /// VSOMEIP_CLIENT_UNSET, so a command can never carry the id of a superseded connection.
+    /// Must NOT be called with mutex_ held - use state_machine_->client() directly there.
+    client_t get_registered_client() const;
 
     void collect_pending_subscriptions(service_t _service, instance_t _instance, major_version_t _major,
                                        std::vector<subscription_data_t>& _collected_subscriptions, std::scoped_lock<std::mutex> const&);
