@@ -857,7 +857,8 @@ bool matches(udp_party const& _party, boost::asio::ip::udp::endpoint const& _ep,
 }
 }
 
-std::optional<std::string> socket_manager::resolve_udp_app_unlocked(boost::asio::ip::udp::endpoint const& _ep) const {
+std::optional<std::string> socket_manager::resolve_udp_app_unlocked(boost::asio::ip::udp::endpoint const& _ep,
+                                                                    std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive) const {
     fd_t fd{0};
     if (auto const it = endpoint_udp_to_fd_.find(_ep); it != endpoint_udp_to_fd_.end()) {
         fd = it->second;
@@ -867,7 +868,9 @@ std::optional<std::string> socket_manager::resolve_udp_app_unlocked(boost::asio:
     }
     if (auto const h_it = fd_to_handle_.find(fd); h_it != fd_to_handle_.end()) {
         if (auto handle = h_it->second.lock(); handle) {
-            return handle->get_app_name();
+            auto its_app_name = handle->get_app_name();
+            _keep_alive.push_back(std::move(handle));
+            return its_app_name;
         }
     }
     return std::nullopt;
@@ -896,6 +899,7 @@ std::vector<std::shared_ptr<fake_udp_socket_handle>> socket_manager::resolve_mul
                                                                                              boost::asio::ip::udp::endpoint const& _dst,
                                                                                              bool& _blocked) {
     std::vector<std::shared_ptr<fake_udp_socket_handle>> group;
+    std::vector<std::shared_ptr<fake_socket_handle>> keep_alive; // cannot hold mtx_ while destroying handle!
     std::scoped_lock lock(mtx_);
     _blocked = block_udp_messages_[_src.address()] || block_udp_messages_[_dst.address()];
     if (_blocked) {
@@ -904,9 +908,14 @@ std::vector<std::shared_ptr<fake_udp_socket_handle>> socket_manager::resolve_mul
     if (auto it_multicast = multicast_to_fds_.find(_dst.address()); it_multicast != multicast_to_fds_.end()) {
         for (auto const& fd : it_multicast->second) {
             if (auto handle_it = fd_to_handle_.find(fd); handle_it != fd_to_handle_.end()) {
-                if (auto udp_handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(handle_it->second.lock()); udp_handle) {
-                    group.push_back(udp_handle);
+                auto its_handle = handle_it->second.lock();
+                if (!its_handle) {
+                    continue;
                 }
+                if (auto udp_handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(its_handle); udp_handle) {
+                    group.push_back(std::move(udp_handle));
+                }
+                keep_alive.push_back(std::move(its_handle));
             }
         }
     }
@@ -969,10 +978,11 @@ bool socket_manager::send_someip(std::vector<unsigned char> const& _buffer, boos
                                  boost::asio::ip::udp::endpoint _dst) {
     std::shared_ptr<data_pipe> matched_pipe;
     std::optional<std::string> src_app;
+    std::vector<std::shared_ptr<fake_socket_handle>> keep_alive; // cannot hold mtx_ while destroying handle!
     {
         std::scoped_lock lock(mtx_);
-        src_app = resolve_udp_app_unlocked(_src);
-        auto const dst_app = _dst.address().is_multicast() ? std::nullopt : resolve_udp_app_unlocked(_dst);
+        src_app = resolve_udp_app_unlocked(_src, keep_alive);
+        auto const dst_app = _dst.address().is_multicast() ? std::nullopt : resolve_udp_app_unlocked(_dst, keep_alive);
 
         if (auto const it = std::find_if(udp_pipe_rules_.begin(), udp_pipe_rules_.end(),
                                          [&](udp_pipe_rule const& _rule) {

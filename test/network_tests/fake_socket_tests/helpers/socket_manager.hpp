@@ -552,7 +552,10 @@ private:
     void flush_udp_pipe(std::shared_ptr<data_pipe> const& _pipe, udp_party const& _receiver);
 
     /// Must be called with mtx_ held. Returns the app name owning the socket bound to _ep, if any.
-    std::optional<std::string> resolve_udp_app_unlocked(boost::asio::ip::udp::endpoint const& _ep) const;
+    /// The resolved handle is appended to _keep_alive, which the caller must declare before taking
+    /// mtx_: cannot hold mtx_ while destroying handle!
+    std::optional<std::string> resolve_udp_app_unlocked(boost::asio::ip::udp::endpoint const& _ep,
+                                                        std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive) const;
 
     /// Returns every currently-joined member of the multicast group @p _dst.address(), or an empty
     /// vector (with @p _blocked set) if @p _src/@p _dst is currently address-blocked.
