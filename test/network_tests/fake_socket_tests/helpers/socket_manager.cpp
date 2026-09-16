@@ -924,12 +924,18 @@ std::vector<std::shared_ptr<fake_udp_socket_handle>> socket_manager::resolve_mul
 
 std::shared_ptr<fake_udp_socket_handle> socket_manager::find_multicast_member(boost::asio::ip::address const& _address,
                                                                               std::string const& _app_name) {
+    std::vector<std::shared_ptr<fake_socket_handle>> keep_alive; // cannot hold mtx_ while destroying handle!
     std::scoped_lock lock(mtx_);
     if (auto it = multicast_to_fds_.find(_address); it != multicast_to_fds_.end()) {
         for (auto const& fd : it->second) {
             if (auto h_it = fd_to_handle_.find(fd); h_it != fd_to_handle_.end()) {
-                if (auto handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(h_it->second.lock());
-                    handle && handle->get_app_name() == _app_name) {
+                auto its_handle = h_it->second.lock();
+                if (!its_handle) {
+                    continue;
+                }
+                auto handle = std::dynamic_pointer_cast<fake_udp_socket_handle>(its_handle);
+                keep_alive.push_back(std::move(its_handle));
+                if (handle && handle->get_app_name() == _app_name) {
                     return handle;
                 }
             }
