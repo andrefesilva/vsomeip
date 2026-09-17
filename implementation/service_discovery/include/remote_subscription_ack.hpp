@@ -17,14 +17,15 @@ namespace sd {
 
 class message_impl;
 
+/**
+ * @brief Represents pending subscription acks to be sent in "one go"
+ *
+ * **Thread Safety:**
+ * Not thread safe. Any usage has to be synchronized externally.
+ */
 class remote_subscription_ack {
 public:
     remote_subscription_ack(const boost::asio::ip::address& _address);
-
-    // The complete flag signals whether or not all subscribes
-    // of a message have been inserted.
-    bool is_complete() const;
-    void complete();
 
     // The done flag signals whether or not all subscribes
     // have been processed.
@@ -41,17 +42,12 @@ public:
 
     std::set<std::shared_ptr<remote_subscription>> get_subscriptions() const;
     void add_subscription(const std::shared_ptr<remote_subscription>& _subscription);
-    bool has_subscription() const;
-
-    std::mutex& get_mutex();
 
 private:
-    mutable std::mutex mutex_;
-    std::vector<std::shared_ptr<message_impl>> messages_;
-    bool is_complete_;
-    bool is_done_;
-
     const boost::asio::ip::address target_address_;
+
+    std::vector<std::shared_ptr<message_impl>> messages_;
+    bool is_done_;
 
     std::set<std::shared_ptr<remote_subscription>> subscriptions_;
 };

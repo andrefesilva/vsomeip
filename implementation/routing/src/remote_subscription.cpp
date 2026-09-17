@@ -33,19 +33,6 @@ bool remote_subscription::equals(const std::shared_ptr<remote_subscription>& _ot
     return operator==(*_other);
 }
 
-bool remote_subscription::address_equals(const std::shared_ptr<remote_subscription>& _other) const {
-    bool relibale_address_equals(false);
-    bool unrelibale_address_equals(false);
-
-    if (reliable_ && (*_other).reliable_) {
-        relibale_address_equals = (reliable_->get_address() == (*_other).reliable_->get_address());
-    }
-    if (unreliable_ && (*_other).unreliable_) {
-        unrelibale_address_equals = (unreliable_->get_address() == (*_other).unreliable_->get_address());
-    }
-    return (relibale_address_equals || unrelibale_address_equals);
-}
-
 void remote_subscription::reset(const std::set<client_t>& _clients) {
     auto its_client_state = std::make_pair(remote_subscription_state_e::SUBSCRIPTION_PENDING, std::chrono::steady_clock::time_point());
     if (_clients.empty()) {

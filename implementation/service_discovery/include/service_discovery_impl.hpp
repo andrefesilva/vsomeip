@@ -74,7 +74,6 @@ public:
     void unsubscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup, client_t _client);
     void unsubscribe_all(service_t _service, instance_t _instance);
     void unsubscribe_all_on_suspend();
-    void remove_subscriptions(service_t _service, instance_t _instance);
     void reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major);
 
     bool send(bool _is_announcing);
@@ -87,19 +86,14 @@ public:
 
     void on_endpoint_connected(service_t _service, instance_t _instance, const std::shared_ptr<boardnet_endpoint>& _endpoint);
 
-    void offer_service(const std::shared_ptr<serviceinfo>& _info);
-    /**
-     * @brief Stop offering the service described by `_info` and send a StopOffer if required
-     *
-     * Does *NOT* send a StopOffer if we are already `stop()`ed (aka suspended)
-     */
-    void stop_offer_service(const std::shared_ptr<serviceinfo>& _info);
-    bool send_collected_stop_offers(const std::vector<std::shared_ptr<serviceinfo>>& _infos);
+    void offer_service(const std::shared_ptr<serviceinfo>& _info) override;
+    void stop_offer_service(const std::shared_ptr<serviceinfo>& _info) override;
+    bool send_collected_stop_offers(const std::vector<std::shared_ptr<serviceinfo>>& _infos) override;
 
-    void update_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription);
+    void update_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription) override;
 
-    void register_sd_acceptance_handler(const sd_acceptance_handler_t& _handler);
-    void register_reboot_notification_handler(const reboot_notification_handler_t& _handler);
+    void register_sd_acceptance_handler(const sd_acceptance_handler_t& _handler) override;
+    void register_reboot_notification_handler(const reboot_notification_handler_t& _handler) override;
 
     void remove_remote_offer_type_by_ip(const boost::asio::ip::address& _address, uint16_t _port, bool _reliable) override;
 
@@ -124,10 +118,6 @@ private:
     void insert_subscription_ack(const std::shared_ptr<remote_subscription_ack>& _acknowledgement,
                                  const std::shared_ptr<eventgroupinfo>& _info, ttl_t _ttl,
                                  const std::shared_ptr<endpoint_definition>& _target, const std::set<client_t>& _clients);
-
-    void insert_subscription_ack_unlocked(const std::shared_ptr<remote_subscription_ack>& _acknowledgement,
-                                          const std::shared_ptr<eventgroupinfo>& _info, ttl_t _ttl,
-                                          const std::shared_ptr<endpoint_definition>& _target, const std::set<client_t>& _clients);
 
     struct sd_acceptance_state_t {
         bool sd_acceptance_required_;
@@ -170,8 +160,6 @@ private:
     bool send(const std::vector<std::shared_ptr<message_impl>>& _messages);
     bool serialize_and_send(const std::vector<std::shared_ptr<message_impl>>& _messages, const boost::asio::ip::address& _address);
     bool serialize_and_send(const std::shared_ptr<message_impl>& _message, const boost::asio::ip::address& _address);
-
-    void update_acknowledgement(const std::shared_ptr<remote_subscription_ack>& _acknowledgement);
 
     bool is_tcp_connected(service_t _service, instance_t _instance, const std::shared_ptr<endpoint_definition>& its_endpoint);
 
@@ -371,9 +359,9 @@ private:
 
     std::string sd_multicast_;
 
+    // used within `on_message` because someone was lazy to pass it "down the stack"
     boost::asio::ip::address current_remote_address_;
 
-    std::mutex pending_remote_subscriptions_mutex_;
     std::map<std::shared_ptr<remote_subscription>, std::shared_ptr<remote_subscription_ack>> pending_remote_subscriptions_;
 
     configuration::ttl_map_t ttl_factor_offers_;

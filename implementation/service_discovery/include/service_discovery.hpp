@@ -52,9 +52,20 @@ public:
     virtual void on_endpoint_connected(service_t _service, instance_t _instance, const std::shared_ptr<boardnet_endpoint>& _endpoint) = 0;
 
     virtual void offer_service(const std::shared_ptr<serviceinfo>& _info) = 0;
+
+    /**
+     * @brief Stop offering the service described by `_info` and send a StopOffer if required
+     *
+     * Does *NOT* send a StopOffer if we are already `stop()`ed (aka suspended)
+     */
     virtual void stop_offer_service(const std::shared_ptr<serviceinfo>& _info) = 0;
     virtual bool send_collected_stop_offers(const std::vector<std::shared_ptr<serviceinfo>>& _infos) = 0;
 
+    /**
+     * @brief Updates remote subscription state, invoked when local application accepts/rejects subscription
+     *
+     * Which of course, should lead to a SUB ACK/NACK
+     */
     virtual void update_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription) = 0;
 
     virtual void register_sd_acceptance_handler(const sd_acceptance_handler_t& _handler) = 0;
