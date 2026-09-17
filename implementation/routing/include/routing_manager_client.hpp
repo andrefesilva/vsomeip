@@ -149,10 +149,26 @@ public:
     bool are_available(available_t& _available, service_t _service, instance_t _instance, major_version_t _major,
                        minor_version_t _minor) const;
 
-    // Registers the handler against the current availability under consumer_mutex_, avoiding the TOCTOU race of a
-    // separate get_availability_state(); for wildcard registrations it also replays the currently available instances.
-    void register_availability_handler(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                                       const std::function<void(bool _is_available)>& _register_handler);
+    // Resolves the current availability for the given key under consumer_mutex_ and hands it to _availability_cb,
+    // so the caller can act on it without racing a change. A wildcard key also yields the instances to replay, for
+    // the caller to deliver to that one handler; on_availability() would reach every matching handler.
+    template<typename Callback>
+    void resolve_availability(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
+                              Callback&& _availability_cb) const {
+        std::scoped_lock its_lock{consumer_mutex_};
+        if (_service != ANY_SERVICE && _instance != ANY_INSTANCE) {
+            _availability_cb(available_services_.has_available(_service, _instance, _major, _minor), available_t{});
+        } else {
+            // Wildcards can't resolve to a single state, so hand back what is available for the caller to replay.
+            available_t its_replay;
+            available_services_.for_each_available(_service, _instance, _major, _minor,
+                                                   [&its_replay](const local_offering_table::entry& e) {
+                                                       its_replay[e.service][e.instance][e.major] = e.minor;
+                                                       return true;
+                                                   });
+            _availability_cb(false, its_replay);
+        }
+    }
 
 private:
     bool prepare_sending(client_t _client, std::shared_ptr<message> _message, bool _force);

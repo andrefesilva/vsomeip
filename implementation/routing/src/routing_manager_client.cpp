@@ -442,14 +442,9 @@ void routing_manager_client::release_service(client_t _client, service_t _servic
         const bool other_local_interest =
                 _instance != ANY_INSTANCE && (requests_.contains(wildcard_request) || requests_to_debounce_.contains(wildcard_request));
 
-        // Reset client-side availability tracking so a subsequent request_service() + RIE_ADD
-        // fires ON_AVAILABLE again. Without this, available_services_.add() returns false
-        // (already present) and the callback is silently suppressed as a duplicate.
+        // Dropped without notifying, so the next request_service() + RIE_ADD is a real transition again.
         if (!other_local_interest) {
-            if (const auto its_entry = available_services_.find_entry(_service, _instance, ANY_MAJOR)) {
-                available_services_.remove(_service, _instance, ANY_MAJOR);
-                host_->reset_availability_state(_service, _instance, its_entry->major, its_entry->minor);
-            }
+            available_services_.remove(_service, _instance, ANY_MAJOR);
         }
     }
     std::scoped_lock inner_lock(mutex_);
@@ -3421,24 +3416,6 @@ vsomeip_sec_client_t routing_manager_client::get_sec_client() const {
 bool routing_manager_client::is_available(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor) const {
     std::scoped_lock its_lock{consumer_mutex_};
     return available_services_.has_available(_service, _instance, _major, _minor);
-}
-
-void routing_manager_client::register_availability_handler(service_t _service, instance_t _instance, major_version_t _major,
-                                                           minor_version_t _minor,
-                                                           const std::function<void(bool _is_available)>& _register_handler) {
-    std::scoped_lock its_lock{consumer_mutex_};
-    if (_service != ANY_SERVICE && _instance != ANY_INSTANCE) {
-        // Concrete service/instance: register the handler atomically against the current availability.
-        _register_handler(available_services_.has_available(_service, _instance, _major, _minor));
-    } else {
-        // Wildcards can't resolve to a single state: register as not-available, then replay every matching
-        // instance so the handler is invoked for each one currently available (all under consumer_mutex_).
-        _register_handler(false);
-        available_services_.for_each_available(_service, _instance, _major, _minor, [this](const local_offering_table::entry& e) {
-            host_->on_availability(e.service, e.instance, availability_state_e::AS_AVAILABLE, e.major, e.minor);
-            return true;
-        });
-    }
 }
 
 bool routing_manager_client::are_available(available_t& _available, service_t _service, instance_t _instance, major_version_t _major,
