@@ -418,7 +418,8 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
         }
     }
     if (!found) {
-        VSOMEIP_ERROR_P << hex4(_client) << " tried to release a service that had not been requested before";
+        VSOMEIP_ERROR_P << "Client " << get_client_info(_client) << " tried to release the service [" << hex4(_service) << "."
+                        << hex4(_instance) << "] that had not been requested before";
         return;
     }
 

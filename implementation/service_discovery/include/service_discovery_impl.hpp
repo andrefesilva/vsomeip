@@ -172,7 +172,7 @@ private:
     void stop_subscription_expiration_timer_unlocked();
     void expire_subscriptions(const boost::system::error_code& _error);
 
-    bool check_ipv4_address(const boost::asio::ip::address& its_address) const;
+    bool check_ipv4_address(const boost::asio::ip::address& its_address, const boost::asio::ip::address& _sender) const;
 
     bool check_static_header_fields(const std::shared_ptr<const message>& _message, const boost::asio::ip::address& _sender) const;
     bool check_layer_four_protocol(const std::shared_ptr<const ip_option_impl>& _ip_option) const;
