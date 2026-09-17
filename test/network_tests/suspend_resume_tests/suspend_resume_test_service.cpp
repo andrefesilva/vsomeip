@@ -27,8 +27,9 @@ pid_t daemon_pid__;
 
 static void restore_network() {
     const char* ip = std::getenv("TEST_IP_MASTER");
-    if (!ip || !*ip)
+    if (!ip || !*ip) {
         ip = "169.254.87.2";
+    }
     std::string s{ip};
     std::string net = s.substr(0, s.rfind('.')) + ".0";
 
@@ -109,7 +110,7 @@ private:
                 VSOMEIP_DEBUG << "[TEST] STR simulation: waiting signal, iteration#" << iteration;
                 std::unique_lock its_lock(sr_mutex_);
                 // Wait for both suspend requested and subscription active to avoid signal pile-up under high load (valgrind).
-                sr_cv_.wait(its_lock, [this] { return (is_suspend_requested_.load() && is_subscribe_.load()) || !is_running_; });
+                sr_cv_.wait(its_lock, [this] { return (is_suspend_requested_.load() && subscribers_.load() > 0) || !is_running_; });
                 is_suspend_requested_ = false;
             }
 
@@ -120,17 +121,17 @@ private:
             unsigned delay_ms = (iteration * 1049) % 773;
 
             VSOMEIP_DEBUG << "[TEST] STR simulation: iteration#" << std::dec << iteration << ", is_running_=" << std::boolalpha
-                          << is_running_ << ", delay_ms=" << delay_ms << ", is_subscribe=" << std::boolalpha << is_subscribe_;
+                          << is_running_ << ", delay_ms=" << delay_ms << ", subscribers=" << std::dec << subscribers_;
             VSOMEIP_INFO << "[TEST] STR simulation: iteration#" << std::dec << iteration << ", send kill SIGUSR1 to PID: " << std::dec
-                         << daemon_pid__ << ", is_subscribe=" << std::boolalpha << is_subscribe_ << ", is_running_=" << std::boolalpha
+                         << daemon_pid__ << ", subscribers=" << std::dec << subscribers_ << ", is_running_=" << std::boolalpha
                          << is_running_;
             kill(daemon_pid__, SIGUSR1);
 
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
 
             VSOMEIP_DEBUG << "[TEST] STR simulation: iteration#" << std::dec << iteration
-                          << ", simulate network off, is_subscribe=" << std::boolalpha << is_subscribe_
-                          << ", is_running_=" << std::boolalpha << is_running_;
+                          << ", simulate network off, subscribers=" << std::dec << subscribers_ << ", is_running_=" << std::boolalpha
+                          << is_running_;
 
             std::ignore = system("timeout 2s ip link set eth0 down");
 
@@ -139,12 +140,12 @@ private:
             if ((iteration % 3) == 0) {
                 VSOMEIP_INFO << "[TEST] STR simulation: iteration#" << std::dec << iteration
                              << ", send kill SIGUSR2 too early to PID: " << std::dec << daemon_pid__ << ", before " << (1000 - delay_ms)
-                             << "ms, is_subscribe=" << std::boolalpha << is_subscribe_ << ", is_running_=" << std::boolalpha << is_running_;
+                             << "ms, subscribers=" << std::dec << subscribers_ << ", is_running_=" << std::boolalpha << is_running_;
                 kill(daemon_pid__, SIGUSR2);
             }
 
             VSOMEIP_DEBUG << "[TEST] STR simulation: iteration#" << std::dec << iteration
-                          << ", simulate network on, is_subscribe=" << std::boolalpha << is_subscribe_ << ", is_running_=" << std::boolalpha
+                          << ", simulate network on, subscribers=" << std::dec << subscribers_ << ", is_running_=" << std::boolalpha
                           << is_running_;
 
             restore_network();
@@ -153,7 +154,7 @@ private:
 
             if ((iteration % 3) != 0) {
                 VSOMEIP_INFO << "[TEST] STR simulation: iteration#" << std::dec << iteration << ", send kill SIGUSR2 to PID: " << std::dec
-                             << daemon_pid__ << ", after " << (1000 - delay_ms) << "ms, is_subscribe=" << std::boolalpha << is_subscribe_
+                             << daemon_pid__ << ", after " << (1000 - delay_ms) << "ms, subscribers=" << std::dec << subscribers_
                              << ", is_running_=" << std::boolalpha << is_running_;
                 kill(daemon_pid__, SIGUSR2);
             }
@@ -162,8 +163,8 @@ private:
         // Workaround with logging which is freed before all threads have been stopped
         kill(daemon_pid__, SIGUSR1);
 
-        VSOMEIP_DEBUG << "[TEST] STR simulation: exit, is_running_=" << std::boolalpha << is_running_ << ", is_subscribe=" << std::boolalpha
-                      << is_subscribe_ << ", is_suspend_requested_=" << std::boolalpha << is_suspend_requested_;
+        VSOMEIP_DEBUG << "[TEST] STR simulation: exit, is_running_=" << std::boolalpha << is_running_ << ", subscribers=" << std::dec
+                      << subscribers_ << ", is_suspend_requested_=" << std::boolalpha << is_suspend_requested_;
         wait_runner_.store(false);
     }
 
@@ -188,7 +189,7 @@ private:
     void offer_service() {
         VSOMEIP_DEBUG << "[TEST] Offer event " << std::hex << std::setfill('0') << std::setw(4) << TEST_SERVICE << "." << std::setw(4)
                       << TEST_INSTANCE << "." << std::setw(4) << TEST_EVENT << "." << std::setw(2) << TEST_EVENTGROUP
-                      << ", is_subscribe=" << std::boolalpha << is_subscribe_;
+                      << ", subscribers=" << std::dec << subscribers_;
 
         app_->offer_event(TEST_SERVICE, TEST_INSTANCE, TEST_EVENT, {TEST_EVENTGROUP}, vsomeip::event_type_e::ET_FIELD,
                           std::chrono::milliseconds::zero(), false, true, nullptr, vsomeip::reliability_type_e::RT_UNRELIABLE);
@@ -199,13 +200,13 @@ private:
 
         VSOMEIP_DEBUG << "[TEST] Notify event " << std::hex << std::setfill('0') << std::setw(4) << TEST_SERVICE << "." << std::setw(4)
                       << TEST_INSTANCE << "." << std::setw(4) << TEST_EVENT << " " << std::setw(2) << its_data[0] << std::setw(2) << " "
-                      << its_data[1] << " " << std::setw(2) << its_data[2] << ", is_subscribe=" << std::boolalpha << is_subscribe_;
+                      << its_data[1] << " " << std::setw(2) << its_data[2] << ", subscribers=" << std::dec << subscribers_;
 
         app_->notify(TEST_SERVICE, TEST_INSTANCE, TEST_EVENT, its_payload);
 
         VSOMEIP_DEBUG << "[TEST] Offer service " << std::hex << std::setfill('0') << std::setw(4) << TEST_SERVICE << "." << std::setw(4)
                       << TEST_INSTANCE << "." << std::setw(2) << TEST_MAJOR << ", minor=" << std::dec << std::setw(0) << TEST_MINOR
-                      << ", is_subscribe=" << std::boolalpha << is_subscribe_;
+                      << ", subscribers=" << std::dec << subscribers_;
 
         app_->offer_service(TEST_SERVICE, TEST_INSTANCE, TEST_MAJOR, TEST_MINOR);
     }
@@ -213,7 +214,7 @@ private:
     // handler
     void on_state(vsomeip::state_type_e _state) {
         VSOMEIP_DEBUG << "[TEST] on_state registered=" << std::boolalpha << (_state == vsomeip::state_type_e::ST_REGISTERED)
-                      << ", is_subscribe=" << std::boolalpha << is_subscribe_;
+                      << ", subscribers=" << std::dec << subscribers_;
 
         if (_state == vsomeip::state_type_e::ST_REGISTERED) {
             offer_service();
@@ -224,7 +225,7 @@ private:
         VSOMEIP_DEBUG << "[TEST] on_message " << std::hex << std::setfill('0') << std::setw(4) << _message->get_service() << "."
                       << std::setw(4) << _message->get_instance() << "." << std::setw(4) << _message->get_method() << " " << std::setw(2)
                       << (_message->get_payload()->get_length() > 0 ? *_message->get_payload()->get_data() : -1) << ", length=" << std::dec
-                      << std::setw(4) << _message->get_payload()->get_length() << ", is_subscribe=" << std::boolalpha << is_subscribe_;
+                      << std::setw(4) << _message->get_payload()->get_length() << ", subscribers=" << std::dec << subscribers_;
 
         if (_message->get_service() == TEST_SERVICE && _message->get_instance() == TEST_INSTANCE && _message->get_method() == TEST_METHOD) {
 
@@ -256,11 +257,21 @@ private:
         (void)_gid;
 
         VSOMEIP_DEBUG << "[TEST] on_subscribe client=" << std::hex << std::setfill('0') << std::setw(4) << _client
-                      << ", subscribe=" << std::boolalpha << _is_subscribe << ", was is_subscribe_=" << is_subscribe_;
-        is_subscribe_ = _is_subscribe;
+                      << ", subscribe=" << std::boolalpha << _is_subscribe << ", subscribers=" << std::dec << subscribers_;
 
+        // vsomeip calls this handler once per subscription, so a stale subscription expiring
+        // must not hide a subscription that is still alive.
         if (_is_subscribe) {
+            {
+                std::scoped_lock its_lock(sr_mutex_);
+                ++subscribers_;
+            }
             sr_cv_.notify_one();
+        } else {
+            std::scoped_lock its_lock(sr_mutex_);
+            if (subscribers_ > 0) {
+                --subscribers_;
+            }
         }
 
         return true;
@@ -271,7 +282,7 @@ private: // members
     std::shared_ptr<vsomeip::application> app_;
     std::atomic<bool> is_running_{true};
     std::atomic<bool> wait_runner_{true};
-    std::atomic<bool> is_subscribe_{false};
+    std::atomic<unsigned> subscribers_{0};
     std::atomic<bool> is_suspend_requested_{false};
     std::mutex mutex_;
     std::condition_variable cv_;
