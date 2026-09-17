@@ -8,8 +8,12 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <set>
 #include <string>
+#include <vector>
 
+#include "configuration_element.hpp"
 #include "configuration_plugin.hpp"
 
 namespace vsomeip_v3 {
@@ -33,6 +37,13 @@ public:
     std::shared_ptr<configuration> get_configuration(const std::string& _name, const std::string& _path);
     void clear_configurations() override;
 
+    struct bootstrap_documents {
+        std::set<std::string, std::less<>> input_;
+        std::vector<configuration_element> elements_;
+    };
+    void store_bootstrap_documents(bootstrap_documents&& _documents);
+    std::optional<bootstrap_documents> take_bootstrap_documents(const std::set<std::string, std::less<>>& _input);
+
 protected:
     // Overridable factory — tests replace this to inject mock configurations.
     virtual std::shared_ptr<cfg::configuration_impl> make_configuration(const std::string& _path);
@@ -43,6 +54,10 @@ private:
     static std::shared_ptr<configuration_plugin_impl> the_configuration_plugin__;
     std::mutex mutex_;
     std::map<std::string, std::shared_ptr<cfg::configuration_impl>> configurations_;
+
+    // Extra mutex as mutex_ is held while load() runs, and load() takes the documents.
+    std::mutex bootstrap_documents_mutex_;
+    std::optional<bootstrap_documents> bootstrap_documents_;
 };
 
 } // namespace vsomeip_v3

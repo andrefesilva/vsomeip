@@ -7,13 +7,11 @@
 
 #include <chrono>
 #include <iostream>
-#include <memory>
 #include <ostream>
 #include <sstream>
 #include <string>
 #include <thread>
 
-#include "../../../implementation/configuration/include/configuration_impl.hpp"
 #include "../../../implementation/logger/include/logger_impl.hpp"
 #include "../../../implementation/utility/include/blocking_guard.hpp"
 
@@ -21,21 +19,6 @@ namespace {
 
 using vsomeip_v3::logger::level_e;
 using vsomeip_v3::logger::logger_impl;
-
-// configuration has >100 pure virtuals, so derive from the concrete configuration_impl and override only the logging getters
-// needed to send the guard's output to the console.
-class console_configuration : public vsomeip_v3::cfg::configuration_impl {
-public:
-    console_configuration() : configuration_impl("") { }
-
-    bool has_console_log() const override { return true; }
-    bool has_file_log() const override { return false; }
-    bool has_dlt_log() const override { return false; }
-    const std::string& get_logfile() const override { return logfile_value_; }
-    level_e get_loglevel() const override { return level_e::LL_DEBUG; }
-
-    std::string logfile_value_{};
-};
 
 // Redirects std::cout into a buffer so the emitted log can be inspected.
 class cout_capture {
@@ -62,9 +45,14 @@ constexpr auto ERROR_TIME = vsomeip_v3::VSOMEIP_CALLBACK_ERROR_TIME;
 
 class blocking_guard_test : public ::testing::Test {
 protected:
-    // The logger is a process-wide singleton; enable the console around each test and turn it off again.
-    void SetUp() override { logger_impl::get()->set_configuration(std::make_shared<console_configuration>()); }
-    void TearDown() override { logger_impl::get()->set_configuration(nullptr); }
+    // The logger is process-wide and immutable. Its default console sink at level info carries the
+    // warning and error lines checked below; skip instead of failing when the process disables it.
+    void SetUp() override {
+        const auto& its_configuration = logger_impl::get()->get_configuration();
+        if (!its_configuration.console_enabled || !(level_e::LL_WARNING <= its_configuration.loglevel)) {
+            GTEST_SKIP() << "console logging at warning level or above is required";
+        }
+    }
 };
 
 TEST_F(blocking_guard_test, returns_the_callback_result) {

@@ -82,15 +82,9 @@ message::message(level_e _level) : std::ostream(&buffer_), level_{_level} {
         return;
     }
 
-    // Store logger config locally to avoid repeated access to atomics
-    // TODO: Simplify once access to logger config no longer needs to be threadsafe
-    auto its_cfg = its_logger->get_configuration();
-    console_enabled_ = its_cfg.console_enabled;
-    dlt_enabled_ = its_cfg.dlt_enabled;
-    file_enabled_ = its_cfg.file_enabled;
-
+    const auto& its_cfg = its_logger->get_configuration();
     // Check whether this message should be logged at all
-    if ((console_enabled_ || dlt_enabled_ || file_enabled_) && level_ <= its_cfg.loglevel) {
+    if ((its_cfg.console_enabled || its_cfg.dlt_enabled || its_cfg.file_enabled) && level_ <= its_cfg.loglevel) {
         buffer_.activate();
         when_ = std::chrono::system_clock::now();
     }
@@ -111,7 +105,8 @@ message::~message() try {
         return;
     }
 
-    if (console_enabled_) {
+    const auto& its_cfg = its_logger->get_configuration();
+    if (its_cfg.console_enabled) {
 #ifndef ANDROID
         // std::cout is threadsafe, but output may be interleaved if multiple things are
         // streamed. To avoid a lock, build the full logline first and stream as a
@@ -172,7 +167,7 @@ message::~message() try {
 #endif // !ANDROID
     }
 
-    if (file_enabled_) {
+    if (its_cfg.file_enabled) {
         // Delegate logging of the message the logger, which ensures that log_to_file() is
         // thread-safe. To keep the API simple, construct the string here, where we have all
         // the information readily available.
@@ -192,7 +187,7 @@ message::~message() try {
         its_logger->log_to_file(output);
     }
 
-    if (dlt_enabled_) {
+    if (its_cfg.dlt_enabled) {
 #ifdef USE_DLT
         // Some versions of DLT require a null-terminated string and std::string_view does not
         // provide that, so explicitly add a null byte

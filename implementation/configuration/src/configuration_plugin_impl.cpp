@@ -3,6 +3,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#include <utility>
+
 #include "../include/configuration_plugin_impl.hpp"
 #include "../include/configuration_impl.hpp"
 
@@ -62,8 +64,28 @@ std::shared_ptr<cfg::configuration_impl> configuration_plugin_impl::make_configu
 }
 
 void configuration_plugin_impl::clear_configurations() {
-    std::scoped_lock its_lock(mutex_);
-    configurations_.clear();
+    {
+        std::scoped_lock its_lock(mutex_);
+        configurations_.clear();
+    }
+    std::scoped_lock its_lock(bootstrap_documents_mutex_);
+    bootstrap_documents_.reset();
+}
+
+void configuration_plugin_impl::store_bootstrap_documents(bootstrap_documents&& _documents) {
+    std::scoped_lock its_lock(bootstrap_documents_mutex_);
+    bootstrap_documents_ = std::move(_documents);
+}
+
+std::optional<configuration_plugin_impl::bootstrap_documents>
+configuration_plugin_impl::take_bootstrap_documents(const std::set<std::string, std::less<>>& _input) {
+    std::scoped_lock its_lock(bootstrap_documents_mutex_);
+    if (!bootstrap_documents_ || bootstrap_documents_->input_ != _input) {
+        return std::nullopt;
+    }
+    auto its_documents = std::move(*bootstrap_documents_);
+    bootstrap_documents_.reset();
+    return its_documents;
 }
 
 } // namespace vsomeip_v3

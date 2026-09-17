@@ -31,6 +31,7 @@
 #include "logger_ext.hpp"
 #include "../include/client.hpp"
 #include "../include/configuration_impl.hpp"
+#include "../include/configuration_plugin_impl.hpp"
 #include "../include/event.hpp"
 #include "../include/eventgroup.hpp"
 #include "../include/service.hpp"
@@ -47,16 +48,22 @@
 namespace vsomeip_v3 {
 namespace cfg {
 
+std::shared_ptr<configuration_impl> configuration_impl::get_logger_configuration() {
+    auto its_configuration = std::make_shared<configuration_impl>("");
+    its_configuration->load_logger_configuration();
+    return its_configuration;
+}
+
 configuration_impl::configuration_impl(const std::string& _path) :
-    default_unicast_{"local"}, is_loaded_{false}, is_logging_loaded_{false}, diagnosis_{VSOMEIP_DIAGNOSIS_ADDRESS}, diagnosis_mask_{0xFF00},
-    has_console_log_{true}, has_file_log_{false}, has_dlt_log_{false}, logfile_{"/tmp/vsomeip.log"},
-    loglevel_{vsomeip_v3::logger::level_e::LL_INFO}, is_suppress_events_enabled_{false}, is_sd_enabled_{VSOMEIP_SD_DEFAULT_ENABLED},
-    sd_protocol_{VSOMEIP_SD_DEFAULT_PROTOCOL}, sd_multicast_{VSOMEIP_SD_DEFAULT_MULTICAST}, sd_port_{VSOMEIP_SD_DEFAULT_PORT},
-    sd_initial_delay_min_{VSOMEIP_SD_DEFAULT_INITIAL_DELAY_MIN}, sd_initial_delay_max_{VSOMEIP_SD_DEFAULT_INITIAL_DELAY_MAX},
-    sd_repetitions_base_delay_{VSOMEIP_SD_DEFAULT_REPETITIONS_BASE_DELAY}, sd_repetitions_max_{VSOMEIP_SD_DEFAULT_REPETITIONS_MAX},
-    sd_ttl_{VSOMEIP_SD_DEFAULT_TTL}, sd_cyclic_offer_delay_{VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY},
-    sd_offer_debounce_time_{VSOMEIP_SD_DEFAULT_OFFER_DEBOUNCE_TIME}, sd_find_debounce_time_{VSOMEIP_SD_DEFAULT_FIND_DEBOUNCE_TIME},
-    sd_find_initial_debounce_reps_(VSOMEIP_SD_INITIAL_FIND_DEBOUNCE_REPS),
+    default_unicast_{"local"}, is_loaded_{false}, is_logging_loaded_{false}, is_application_logging_loaded_{false},
+    is_global_source_{false}, diagnosis_{VSOMEIP_DIAGNOSIS_ADDRESS}, diagnosis_mask_{0xFF00}, has_console_log_{true}, has_file_log_{false},
+    has_dlt_log_{false}, logfile_{"/tmp/vsomeip.log"}, loglevel_{vsomeip_v3::logger::level_e::LL_INFO}, is_suppress_events_enabled_{false},
+    is_sd_enabled_{VSOMEIP_SD_DEFAULT_ENABLED}, sd_protocol_{VSOMEIP_SD_DEFAULT_PROTOCOL}, sd_multicast_{VSOMEIP_SD_DEFAULT_MULTICAST},
+    sd_port_{VSOMEIP_SD_DEFAULT_PORT}, sd_initial_delay_min_{VSOMEIP_SD_DEFAULT_INITIAL_DELAY_MIN},
+    sd_initial_delay_max_{VSOMEIP_SD_DEFAULT_INITIAL_DELAY_MAX}, sd_repetitions_base_delay_{VSOMEIP_SD_DEFAULT_REPETITIONS_BASE_DELAY},
+    sd_repetitions_max_{VSOMEIP_SD_DEFAULT_REPETITIONS_MAX}, sd_ttl_{VSOMEIP_SD_DEFAULT_TTL},
+    sd_cyclic_offer_delay_{VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY}, sd_offer_debounce_time_{VSOMEIP_SD_DEFAULT_OFFER_DEBOUNCE_TIME},
+    sd_find_debounce_time_{VSOMEIP_SD_DEFAULT_FIND_DEBOUNCE_TIME}, sd_find_initial_debounce_reps_(VSOMEIP_SD_INITIAL_FIND_DEBOUNCE_REPS),
     sd_find_initial_debounce_time_(VSOMEIP_SD_INITIAL_FIND_DEBOUNCE_TIME),
     sd_wait_route_netlink_notification_{VSOMEIP_SD_WAIT_ROUTE_NETLINK_NOTIFICATION},
     sd_stop_offer_watchdog_time_{VSOMEIP_SD_STOP_OFFER_WATCHDOG_TIME}, sd_offers_watchdog_time_{VSOMEIP_SD_OFFERS_WATCHDOG_TIME},
@@ -96,66 +103,57 @@ configuration_impl::configuration_impl(const std::string& _path) :
 
 configuration_impl::~configuration_impl() { }
 
-bool configuration_impl::load(const std::string& _name) {
-    std::scoped_lock its_lock(mutex_);
-    if (is_loaded_) {
-        return true;
-    }
-
-    // Environment
-    char* its_env;
-
-    // Predefine file / folder
-    std::string its_file(VSOMEIP_DEFAULT_CONFIGURATION_FILE); // configuration file
-    std::string its_folder(VSOMEIP_DEFAULT_CONFIGURATION_FOLDER); // configuration folder
+std::set<std::string, std::less<>> configuration_impl::get_configuration_input(const std::string& _name,
+                                                                               bool _use_named_configuration) const {
+    std::string its_file(VSOMEIP_DEFAULT_CONFIGURATION_FILE);
+    std::string its_folder(VSOMEIP_DEFAULT_CONFIGURATION_FOLDER);
 
     if (!path_.empty()) {
         if (utility::is_file(path_)) {
             its_file = path_;
-            its_folder = "";
+            its_folder.clear();
         } else {
-            its_file = "";
+            its_file.clear();
             its_folder = path_;
         }
     }
 
-    // Override with local file / folder (if existing)
-    std::string its_local_file(VSOMEIP_LOCAL_CONFIGURATION_FILE);
+    const std::string its_local_file(VSOMEIP_LOCAL_CONFIGURATION_FILE);
     if (utility::is_file(its_local_file)) {
         its_file = its_local_file;
     }
 
-    std::string its_local_folder(VSOMEIP_LOCAL_CONFIGURATION_FOLDER);
+    const std::string its_local_folder(VSOMEIP_LOCAL_CONFIGURATION_FOLDER);
     if (utility::is_folder(its_local_folder)) {
         its_folder = its_local_folder;
     }
 
-    // Override with path from environment (if existing)
-    std::string its_named_configuration(VSOMEIP_ENV_CONFIGURATION);
-    its_named_configuration += "_" + _name;
-
-    its_env = VSOMEIP_GETENV(its_named_configuration.c_str());
-    if (nullptr == its_env) {
+    const char* its_env = nullptr;
+    if (_use_named_configuration && !_name.empty()) {
+        std::string its_named_configuration(VSOMEIP_ENV_CONFIGURATION);
+        its_named_configuration += "_" + _name;
+        its_env = VSOMEIP_GETENV(its_named_configuration.c_str());
+    }
+    if (its_env == nullptr) {
         its_env = VSOMEIP_GETENV(VSOMEIP_ENV_CONFIGURATION);
     }
-    if (nullptr != its_env) {
+    if (its_env != nullptr) {
         if (utility::is_file(its_env)) {
             its_file = its_env;
-            its_folder = "";
+            its_folder.clear();
         } else if (utility::is_folder(its_env)) {
             its_folder = its_env;
-            its_file = "";
+            its_file.clear();
         }
     }
 
-    std::set<std::string> its_input;
-    if (its_file != "") {
+    std::set<std::string, std::less<>> its_input;
+    if (!its_file.empty()) {
         its_input.insert(its_file);
     }
-    if (its_folder != "") {
+    if (!its_folder.empty()) {
         its_input.insert(its_folder);
 #if defined(__linux__) || defined(__QNX__)
-        // load security configuration files from UID_GID sub folder if existing
         std::stringstream its_security_config_folder;
         its_security_config_folder << its_folder << "/" << getuid() << "_" << getgid();
         if (utility::is_folder(its_security_config_folder.str())) {
@@ -163,9 +161,52 @@ bool configuration_impl::load(const std::string& _name) {
         }
 #endif
     }
+    return its_input;
+}
+
+void configuration_impl::load_logger_configuration() {
+    const char* its_env = VSOMEIP_GETENV(VSOMEIP_ENV_MANDATORY_CONFIGURATION_FILES);
+    set_mandatory(its_env != nullptr ? std::string(its_env) : std::string(VSOMEIP_MANDATORY_CONFIGURATION_FILES));
+
+    // Warnings are collected but never logged here: emitting a log message
+    // would recursively create the logger this configuration is loaded for.
+    // Applications re-derive the same warnings when parsing their own files.
+    std::set<std::string, std::less<>> its_warnings;
+    std::set<std::string, std::less<>> its_failed;
+    std::vector<configuration_element> its_elements;
+    const auto its_input = get_configuration_input("", false);
+    read_data(its_input, its_elements, its_failed, true, false, false);
+    bool has_logger_configuration{false};
+    for (const auto& its_element : its_elements) {
+        has_logger_configuration = load_logger_configuration(its_element, its_warnings) || has_logger_configuration;
+    }
+    if (has_logger_configuration) {
+        if (auto its_plugin = configuration_plugin_impl::get(); its_plugin && its_failed.empty()) {
+            its_plugin->store_bootstrap_documents({its_input, std::move(its_elements)});
+        }
+    } else {
+        its_elements.clear();
+        read_data(its_input, its_elements, its_failed, false, false, false);
+        for (const auto& its_element : its_elements) {
+            has_logger_configuration = load_logger_configuration(its_element, its_warnings) || has_logger_configuration;
+        }
+    }
+
+    is_logging_loaded_ = true;
+}
+
+bool configuration_impl::load(const std::string& _name) {
+    std::scoped_lock its_lock(mutex_);
+    if (is_loaded_) {
+        return true;
+    }
+
+    const auto its_input = get_configuration_input(_name, true);
+    // Same input as the logger bootstrap, so this parse can also provide the logger settings.
+    is_global_source_ = path_.empty() && its_input == get_configuration_input("", false);
 
     // Determine standard configuration file
-    its_env = VSOMEIP_GETENV(VSOMEIP_ENV_MANDATORY_CONFIGURATION_FILES);
+    const char* its_env = VSOMEIP_GETENV(VSOMEIP_ENV_MANDATORY_CONFIGURATION_FILES);
     if (nullptr != its_env) {
         std::string its_temp(its_env);
         set_mandatory(its_temp);
@@ -174,13 +215,21 @@ bool configuration_impl::load(const std::string& _name) {
     }
 
     // Start reading
-    std::set<std::string> its_failed;
+    std::set<std::string, std::less<>> its_failed;
 
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     std::vector<configuration_element> its_mandatory_elements;
 
-    // Look for the standard configuration file.
-    read_data(its_input, its_mandatory_elements, its_failed, true);
+    // Look for the standard configuration file, unless the logger bootstrap already parsed it.
+    std::optional<configuration_plugin_impl::bootstrap_documents> its_documents;
+    if (is_global_source_) {
+        its_documents = configuration_plugin_impl::get()->take_bootstrap_documents(its_input);
+    }
+    if (its_documents) {
+        its_mandatory_elements = std::move(its_documents->elements_);
+    } else {
+        read_data(its_input, its_mandatory_elements, its_failed, true);
+    }
     load_data(its_mandatory_elements, true, false);
 
     // Retain the inputs so the optional configuration can be loaded later, once
@@ -188,11 +237,6 @@ bool configuration_impl::load(const std::string& _name) {
     // The mandatory elements themselves are not retained; load_optional()
     // re-reads them from input_ when it needs them.
     input_ = its_input;
-
-    // Dummy initialization; if logger configs were not found use default
-    if (!is_logging_loaded_) {
-        logger::logger_impl::init(shared_from_this());
-    }
 
     validate_client_identifiers();
 
@@ -265,7 +309,7 @@ void configuration_impl::load_optional() {
 
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-    std::set<std::string> its_failed;
+    std::set<std::string, std::less<>> its_failed;
     std::vector<configuration_element> its_optional_elements;
 
     // Re-read the mandatory files' own elements: the mandatory load in load()
@@ -319,8 +363,8 @@ void configuration_impl::lazy_load_security(const std::string& _client_host, pol
 
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-    std::set<std::string> its_input{its_folder};
-    std::set<std::string> its_failed;
+    std::set<std::string, std::less<>> its_input{its_folder};
+    std::set<std::string, std::less<>> its_failed;
     std::vector<configuration_element> its_mandatory_elements;
 
     // load security configuration files from UID_GID sub folder if existing
@@ -437,11 +481,12 @@ bool configuration_impl::remote_offer_info_remove(service_t _service, instance_t
     return ret;
 }
 
-void configuration_impl::read_data(const std::set<std::string>& _input, std::vector<configuration_element>& _elements,
-                                   std::set<std::string>& _failed, bool _mandatory_only, bool _read_second_level) const {
+void configuration_impl::read_data(const std::set<std::string, std::less<>>& _input, std::vector<configuration_element>& _elements,
+                                   std::set<std::string, std::less<>>& _failed, bool _mandatory_only, bool _read_second_level,
+                                   bool _log_errors) const {
     for (auto i : _input) {
         if (utility::is_file(i)) {
-            load_policy_data(i, _elements, _failed, _mandatory_only);
+            load_policy_data(i, _elements, _failed, _mandatory_only, _log_errors);
         } else if (utility::is_folder(i)) {
             // Use the map to ensure the configuration files are read in
             // the ascending order of their names. This allows to use
@@ -454,7 +499,9 @@ void configuration_impl::read_data(const std::set<std::string>& _input, std::vec
                 if (!boost::filesystem::is_directory(p)) {
                     auto ext = p.extension().string();
                     if (!_mandatory_only && !boost::iequals(ext, ".json")) {
-                        VSOMEIP_INFO << "Configuration '" << p.string() << "' skipped: not json extension";
+                        if (_log_errors) {
+                            VSOMEIP_INFO << "Configuration '" << p.string() << "' skipped: not json extension";
+                        }
                         continue;
                     }
 
@@ -470,21 +517,23 @@ void configuration_impl::read_data(const std::set<std::string>& _input, std::vec
             }
 
             for (const auto& n : its_names) {
-                load_policy_data(n.first, _elements, _failed, n.second);
+                load_policy_data(n.first, _elements, _failed, n.second, _log_errors);
             }
         }
     }
 }
 
 void configuration_impl::load_policy_data(const std::string& _input, std::vector<configuration_element>& _elements,
-                                          std::set<std::string>& _failed, bool _mandatory_only) const {
+                                          std::set<std::string, std::less<>>& _failed, bool _mandatory_only, bool _log_errors) const {
     if (is_mandatory(_input) == _mandatory_only) {
         boost::property_tree::ptree its_tree;
         try {
             boost::property_tree::json_parser::read_json(_input, its_tree);
             _elements.push_back({_input, std::move(its_tree)});
         } catch (boost::property_tree::json_parser_error& ex) {
-            VSOMEIP_ERROR_P << "Could not parse JSON file '" << _input << "', ex: " << ex.what();
+            if (_log_errors) {
+                VSOMEIP_ERROR_P << "Could not parse JSON file '" << _input << "', ex: " << ex.what();
+            }
 
             _failed.insert(_input);
         }
@@ -492,19 +541,24 @@ void configuration_impl::load_policy_data(const std::string& _input, std::vector
 }
 
 bool configuration_impl::load_data(const std::vector<configuration_element>& _elements, bool _load_mandatory, bool _load_optional) {
-    // Load logging configuration data
-    std::set<std::string> its_warnings;
-
     if (!is_logging_loaded_) {
+        std::set<std::string, std::less<>> its_warnings;
         for (const auto& e : _elements) {
-            is_logging_loaded_ = load_logging(e, its_warnings) || is_logging_loaded_;
+            is_logging_loaded_ = load_logger_configuration(e, its_warnings) || is_logging_loaded_;
         }
+        if (is_logging_loaded_ && is_global_source_) {
+            // Hand the settings over before the first message below, so the logger
+            // does not parse the same files again. No-op once the logger exists.
+            logger::logger_impl::init(*this);
+        }
+        for (const auto& w : its_warnings) {
+            VSOMEIP_WARNING << w;
+        }
+    }
 
-        if (is_logging_loaded_) {
-            logger::logger_impl::init(shared_from_this());
-            for (const auto& w : its_warnings) {
-                VSOMEIP_WARNING << w;
-            }
+    if (!is_application_logging_loaded_) {
+        for (const auto& e : _elements) {
+            is_application_logging_loaded_ = load_logging(e) || is_application_logging_loaded_;
         }
     }
 
@@ -554,12 +608,14 @@ bool configuration_impl::load_data(const std::vector<configuration_element>& _el
     return is_logging_loaded_ && has_routing && has_applications;
 }
 
-bool configuration_impl::load_logging(const configuration_element& _element, std::set<std::string>& _warnings) {
+bool configuration_impl::load_logger_configuration(const configuration_element& _element, std::set<std::string, std::less<>>& _warnings) {
+    bool has_logger_configuration{false};
     try {
         auto its_logging = _element.tree_.get_child("logging");
         for (auto i = its_logging.begin(); i != its_logging.end(); ++i) {
             std::string its_key(i->first);
             if (its_key == "console") {
+                has_logger_configuration = true;
                 if (is_configured_[ET_LOGGING_CONSOLE]) {
                     _warnings.insert("Multiple definitions for logging.console. Ignoring definition from " + _element.name_);
                 } else {
@@ -572,6 +628,7 @@ bool configuration_impl::load_logging(const configuration_element& _element, std
                     is_configured_[ET_LOGGING_CONSOLE] = true;
                 }
             } else if (its_key == "file") {
+                has_logger_configuration = true;
                 if (is_configured_[ET_LOGGING_FILE]) {
                     _warnings.insert("Multiple definitions for logging.file. Ignoring definition from " + _element.name_);
                 } else {
@@ -588,6 +645,7 @@ bool configuration_impl::load_logging(const configuration_element& _element, std
                 }
 #ifdef USE_DLT
             } else if (its_key == "dlt") {
+                has_logger_configuration = true;
                 if (is_configured_[ET_LOGGING_DLT]) {
                     _warnings.insert("Multiple definitions for logging.dlt. Ignoring definition from " + _element.name_);
                 } else {
@@ -597,6 +655,7 @@ bool configuration_impl::load_logging(const configuration_element& _element, std
                 }
 #endif
             } else if (its_key == "level") {
+                has_logger_configuration = true;
                 if (is_configured_[ET_LOGGING_LEVEL]) {
                     _warnings.insert("Multiple definitions for logging.level. Ignoring definition from " + _element.name_);
                 } else {
@@ -617,10 +676,22 @@ bool configuration_impl::load_logging(const configuration_element& _element, std
                         _warnings.insert("Unrecognized logging level '" + its_value + "', will default to 'info'");
                         loglevel_ = vsomeip_v3::logger::level_e::LL_INFO;
                     }
-
                     is_configured_[ET_LOGGING_LEVEL] = true;
                 }
-            } else if (its_key == "version") {
+            }
+        }
+    } catch (...) {
+        return false;
+    }
+    return has_logger_configuration;
+}
+
+bool configuration_impl::load_logging(const configuration_element& _element) {
+    try {
+        auto its_logging = _element.tree_.get_child("logging");
+        for (auto i = its_logging.begin(); i != its_logging.end(); ++i) {
+            const std::string its_key(i->first);
+            if (its_key == "version") {
                 std::stringstream its_converter;
                 for (auto j : i->second) {
                     std::string its_sub_key(j.first);

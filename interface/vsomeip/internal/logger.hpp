@@ -54,9 +54,6 @@ private:
 
     buffer buffer_;
     const level_e level_;
-    bool console_enabled_{false};
-    bool dlt_enabled_{false};
-    bool file_enabled_{false};
     std::chrono::system_clock::time_point when_;
     mutable std::string timestamp_;
 };
