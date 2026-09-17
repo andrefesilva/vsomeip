@@ -158,6 +158,20 @@ public:
     void request_event(event_ids const& _ei, vsomeip::event_type_e _et = vsomeip::event_type_e::ET_EVENT);
 
     /**
+     * Grants uid/gid permission to offer _si: routing_manager_stub::get_requester_policies() will
+     * then match it against any uid/gid already allowed to request _si (@see allow_requesting) and
+     * cache the result, to be handed to uid/gid the next time it registers
+     * (routing_manager_stub::on_register_application -> bundled into the ASSIGN_CLIENT_ACK).
+     */
+    void allow_offering(uid_t _uid, gid_t _gid, service_instance const& _si);
+
+    /**
+     * Grants uid/gid permission to request _si. Must be configured before the matching
+     * @see allow_offering call for the requester policy to be computed.
+     */
+    void allow_requesting(uid_t _uid, gid_t _gid, service_instance const& _si);
+
+    /**
      * 1. registers a subscription handler to record subscription events with @see
      * subscription_record_.
      * 2. calls vsomeip::application::request_event()

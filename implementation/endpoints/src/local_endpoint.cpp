@@ -156,12 +156,12 @@ void local_endpoint::escalate_internal(std::unique_lock<std::mutex>& _lock, bool
 bool local_endpoint::send(byte_t const* _data, uint32_t _size) {
     std::scoped_lock const lock{mutex_};
     if (is_flushing_) {
-        VSOMEIP_WARNING_P << "Dropping message type: " << protocol::read_command_id(_data, _size) << " and size: " << _size
+        VSOMEIP_WARNING_P << "Dropping message " << protocol::read_command_header(_data, _size) << " and size: " << _size
                           << ", due to the current state: " << status_unlock();
         return false;
     }
     if (std::numeric_limits<size_t>::max() - _size < send_queue_.size()) {
-        VSOMEIP_ERROR_P << "Dropping message type: " << protocol::read_command_id(_data, _size) << " and size: " << _size
+        VSOMEIP_ERROR_P << "Dropping message " << protocol::read_command_header(_data, _size) << " and size: " << _size
                         << ", to avoid buffer overflow, " << status_unlock();
         return false;
     }
@@ -173,12 +173,12 @@ bool local_endpoint::send(byte_t const* _data, uint32_t _size) {
     // 2. send_queue_.size() starts with 0 -> queue_limit_ is not smaller then send_queue_.size() after n = 0
     // 1. + 2. => the next line can never cause trouble
     if (queue_limit_ != QUEUE_SIZE_UNLIMITED && queue_limit_ - send_queue_.size() < _size) {
-        VSOMEIP_ERROR_P << "Dropping message of type: " << protocol::read_command_id(_data, _size) << ", because the queue limit ("
+        VSOMEIP_ERROR_P << "Dropping message " << protocol::read_command_header(_data, _size) << ", because the queue limit ("
                         << queue_limit_ << ") would be exceeded with the message size: " << _size << ", " << status_unlock();
         return false;
     }
     if (max_message_size_ < _size) {
-        VSOMEIP_ERROR_P << "Dropping message of type: " << protocol::read_command_id(_data, _size) << " because the message size (" << _size
+        VSOMEIP_ERROR_P << "Dropping message " << protocol::read_command_header(_data, _size) << " because the message size (" << _size
                         << ") exceeded the limit (" << max_message_size_ << "), " << status_unlock();
         return false;
     }
@@ -191,25 +191,24 @@ template<typename T>
 bool local_endpoint::send(T const& _in, [[maybe_unused]] std::shared_ptr<trace::connector_impl> const& _tc) {
     std::scoped_lock const lock{mutex_};
     auto const wire_size = protocol::wire_size(_in);
-    auto const id = _in.header_.id_;
 
     if (is_flushing_) {
-        VSOMEIP_WARNING_P << "Dropping message type: " << id << " and size: " << wire_size
+        VSOMEIP_WARNING_P << "Dropping message " << _in.header_ << " and size: " << wire_size
                           << ", due to the current state: " << status_unlock();
         return false;
     }
     if (std::numeric_limits<size_t>::max() - wire_size < send_queue_.size()) {
-        VSOMEIP_ERROR_P << "Dropping message type: " << id << " and size: " << wire_size
+        VSOMEIP_ERROR_P << "Dropping message " << _in.header_ << " and size: " << wire_size
                         << ", to avoid buffer overflow, state: " << status_unlock();
         return false;
     }
     if (queue_limit_ != QUEUE_SIZE_UNLIMITED && queue_limit_ - send_queue_.size() < wire_size) {
-        VSOMEIP_ERROR_P << "Dropping message of type: " << id << ", because the queue limit (" << queue_limit_
+        VSOMEIP_ERROR_P << "Dropping message " << _in.header_ << ", because the queue limit (" << queue_limit_
                         << ") would be exceeded with the message size: " << wire_size << ", state: " << status_unlock();
         return false;
     }
     if (max_message_size_ < wire_size) {
-        VSOMEIP_ERROR_P << "Dropping message of type: " << id << " because the message size (" << wire_size << ") exceeded the limit ("
+        VSOMEIP_ERROR_P << "Dropping message " << _in.header_ << " because the message size (" << wire_size << ") exceeded the limit ("
                         << max_message_size_ << "), state: " << status_unlock();
         return false;
     }
@@ -797,8 +796,8 @@ template bool local_endpoint::send<protocol::subscribe_answer_command_data>(prot
 template bool
 local_endpoint::send<protocol::single_field_command_data<offer_type_e>>(protocol::single_field_command_data<offer_type_e> const&,
                                                                         std::shared_ptr<trace::connector_impl> const&);
-template bool local_endpoint::send<protocol::single_field_command_data<client_t>>(protocol::single_field_command_data<client_t> const&,
-                                                                                  std::shared_ptr<trace::connector_impl> const&);
+template bool local_endpoint::send<protocol::assign_client_ack_command_data>(protocol::assign_client_ack_command_data const&,
+                                                                             std::shared_ptr<trace::connector_impl> const&);
 template bool local_endpoint::send<protocol::single_field_command_data<pending_remote_offer_id_t>>(
         protocol::single_field_command_data<pending_remote_offer_id_t> const&, std::shared_ptr<trace::connector_impl> const&);
 

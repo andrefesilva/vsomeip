@@ -71,6 +71,8 @@ namespace vsomeip_v3::testing {
         return deal_with_payload(protocol::subscribe_answer_data{});
     } else if (_out_message.header_.id_ == protocol::id_e::UNSUBSCRIBE_ACK_ID) {
         return deal_with_payload(protocol::unsubscribe_ack_data{});
+    } else if (_out_message.header_.id_ == protocol::id_e::ASSIGN_CLIENT_ACK_ID) {
+        return deal_with_payload(protocol::assign_client_ack_data{});
     } else {
         std::vector<unsigned char> payload;
         payload.reserve(_out_message.header_.length_);

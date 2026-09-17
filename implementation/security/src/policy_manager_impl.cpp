@@ -1079,23 +1079,20 @@ void policy_manager_impl::get_requester_policies(const std::shared_ptr<policy> _
 
                     for (const auto& i : o.second) {
                         for (const auto& j : r.second) {
-                            for (const auto& k : j.second) {
-                                instance_t its_i_lower, its_i_upper, its_k_lower, its_k_upper;
-                                get_bounds(i, its_i_lower, its_i_upper);
-                                get_bounds(k, its_k_lower, its_k_upper);
+                            instance_t its_i_lower, its_i_upper, its_j_lower, its_j_upper;
+                            get_bounds(i, its_i_lower, its_i_upper);
+                            get_bounds(j.first, its_j_lower, its_j_upper);
 
-                                if (its_i_lower <= its_k_upper && its_k_lower <= its_i_upper) {
-                                    auto its_instance_min = std::max(its_i_lower, its_k_lower);
-                                    auto its_instance_max = std::min(its_i_upper, its_k_upper);
+                            if (its_i_lower <= its_j_upper && its_j_lower <= its_i_upper) {
+                                auto its_instance_min = std::max(its_i_lower, its_j_lower);
+                                auto its_instance_max = std::min(its_i_upper, its_j_upper);
 
-                                    boost::icl::interval_map<instance_t, boost::icl::interval_set<method_t>> its_instances_methods;
-                                    its_instances_methods += std::make_pair(
-                                            boost::icl::interval<instance_t>::closed(its_instance_min, its_instance_max), j.second);
+                                boost::icl::interval_map<instance_t, boost::icl::interval_set<method_t>> its_instances_methods;
+                                its_instances_methods += std::make_pair(
+                                        boost::icl::interval<instance_t>::closed(its_instance_min, its_instance_max), j.second);
 
-                                    its_policy->requests_ +=
-                                            std::make_pair(boost::icl::interval<instance_t>::closed(its_service_min, its_service_max),
-                                                           its_instances_methods);
-                                }
+                                its_policy->requests_ += std::make_pair(
+                                        boost::icl::interval<instance_t>::closed(its_service_min, its_service_max), its_instances_methods);
                             }
                         }
                     }

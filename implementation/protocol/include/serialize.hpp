@@ -170,6 +170,17 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         return write_fields(_mem, _value.service_key_, _value.eventgroup_, _value.subscriber_, _value.event_, _value.pending_id_);
     } else if constexpr (std::is_same_v<T, update_security_policy_view>) {
         return write_fields(_mem, _value.update_id_, _value.policy_);
+    } else if constexpr (std::is_same_v<T, std::vector<update_security_policy_view>>) {
+        auto count = static_cast<uint32_t>(_value.size());
+        uint32_t written = serialize(count, _mem);
+        for (auto const& v : _value) {
+            written += serialize(v.update_id_, _mem + written);
+            written += serialize(static_cast<uint32_t>(v.policy_.size()), _mem + written);
+            written += serialize(v.policy_, _mem + written);
+        }
+        return written;
+    } else if constexpr (std::is_same_v<T, assign_client_ack_view>) {
+        return write_fields(_mem, _value.assigned_, _value.policies_);
     } else if constexpr (std::is_same_v<T, routing_info_entry_data>) {
         bool const has_address = !_value.address_.is_unspecified();
 

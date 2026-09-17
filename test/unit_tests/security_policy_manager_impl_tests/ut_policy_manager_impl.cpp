@@ -1416,6 +1416,90 @@ TEST(security_policy_manager_test, get_requester_policies) {
     ASSERT_FALSE(its_policy_set.empty());
 }
 
+TEST(security_policy_manager_test, get_requester_policies_matches_by_instance_not_method) {
+    // Regression test: get_requester_policies() must match a request against an offer by
+    // comparing the offer's instance interval against the request's *instance* interval. A prior
+    // bug compared it against the request's *method* interval instead.
+    std::unique_ptr<vsomeip_v3::policy_manager_impl> its_policy_manager(new vsomeip_v3::policy_manager_impl());
+
+    constexpr vsomeip_v3::service_t offered_service = 0x1000;
+    constexpr vsomeip_v3::instance_t offered_instance = 0x0010;
+
+    // The offerer's own policy. Not added to the manager - get_requester_policies only needs it
+    // to know what is being offered.
+    auto its_offerer_policy = std::make_shared<vsomeip_v3::policy>();
+    boost::icl::interval_set<vsomeip_v3::instance_t> its_offered_instances;
+    its_offered_instances.insert(boost::icl::interval<vsomeip_v3::instance_t>::closed(offered_instance, offered_instance));
+    its_offerer_policy->offers_ +=
+            std::make_pair(boost::icl::interval<vsomeip_v3::service_t>::closed(offered_service, offered_service), its_offered_instances);
+
+    // A requester whose request instance (0x0050) does not overlap offered_instance (0x0010),
+    // but whose method interval does equal it numerically.
+    constexpr vsomeip_v3::instance_t non_overlapping_instance = 0x0050;
+    constexpr vsomeip_v3::method_t method_equal_to_offered_instance = static_cast<vsomeip_v3::method_t>(offered_instance);
+
+    boost::icl::interval_set<vsomeip_v3::method_t> its_methods;
+    its_methods.insert(
+            boost::icl::interval<vsomeip_v3::method_t>::closed(method_equal_to_offered_instance, method_equal_to_offered_instance));
+
+    auto its_requester_policy = std::make_shared<vsomeip_v3::policy>();
+    boost::icl::interval_map<vsomeip_v3::instance_t, boost::icl::interval_set<vsomeip_v3::method_t>> its_instance_methods;
+    its_instance_methods += std::make_pair(
+            boost::icl::interval<vsomeip_v3::instance_t>::closed(non_overlapping_instance, non_overlapping_instance), its_methods);
+    its_requester_policy->requests_ +=
+            std::make_pair(boost::icl::interval<vsomeip_v3::service_t>::closed(offered_service, offered_service), its_instance_methods);
+
+    its_policy_manager->update_security_policy(uid, gid, its_requester_policy);
+
+    std::set<std::shared_ptr<vsomeip_v3::policy>> its_requesters;
+    its_policy_manager->get_requester_policies(its_offerer_policy, its_requesters);
+
+    // The request's instance (0x0050) does not overlap the offer's instance (0x0010), so there
+    // must be no match - regardless of the method interval's numeric value.
+    EXPECT_TRUE(its_requesters.empty());
+}
+
+TEST(security_policy_manager_test, get_requester_policies_content) {
+    // Complements the check above: when the request's instance interval genuinely overlaps the
+    // offer's instance, get_requester_policies() must return a policy carrying exactly the
+    // overlapping service/instance range together with the request's methods.
+    std::unique_ptr<vsomeip_v3::policy_manager_impl> its_policy_manager(new vsomeip_v3::policy_manager_impl());
+
+    constexpr vsomeip_v3::service_t offered_service = 0x1000;
+    constexpr vsomeip_v3::instance_t offered_instance = 0x0010;
+    constexpr vsomeip_v3::method_t requested_method = 0x0005;
+
+    auto its_offerer_policy = std::make_shared<vsomeip_v3::policy>();
+    boost::icl::interval_set<vsomeip_v3::instance_t> its_offered_instances;
+    its_offered_instances.insert(boost::icl::interval<vsomeip_v3::instance_t>::closed(offered_instance, offered_instance));
+    its_offerer_policy->offers_ +=
+            std::make_pair(boost::icl::interval<vsomeip_v3::service_t>::closed(offered_service, offered_service), its_offered_instances);
+
+    boost::icl::interval_set<vsomeip_v3::method_t> its_methods;
+    its_methods.insert(boost::icl::interval<vsomeip_v3::method_t>::closed(requested_method, requested_method));
+
+    auto its_requester_policy = std::make_shared<vsomeip_v3::policy>();
+    boost::icl::interval_map<vsomeip_v3::instance_t, boost::icl::interval_set<vsomeip_v3::method_t>> its_instance_methods;
+    its_instance_methods +=
+            std::make_pair(boost::icl::interval<vsomeip_v3::instance_t>::closed(offered_instance, offered_instance), its_methods);
+    its_requester_policy->requests_ +=
+            std::make_pair(boost::icl::interval<vsomeip_v3::service_t>::closed(offered_service, offered_service), its_instance_methods);
+
+    its_policy_manager->update_security_policy(uid, gid, its_requester_policy);
+
+    std::set<std::shared_ptr<vsomeip_v3::policy>> its_requesters;
+    its_policy_manager->get_requester_policies(its_offerer_policy, its_requesters);
+
+    ASSERT_EQ(1u, its_requesters.size());
+    auto const& its_result = *its_requesters.begin();
+
+    auto found_service = its_result->requests_.find(offered_service);
+    ASSERT_NE(found_service, its_result->requests_.end());
+    auto found_instance = found_service->second.find(offered_instance);
+    ASSERT_NE(found_instance, found_service->second.end());
+    EXPECT_TRUE(boost::icl::contains(found_instance->second, requested_method));
+}
+
 TEST(security_policy_manager_test, get_policy_extension_path) {
     // Test pointer.
     std::unique_ptr<vsomeip_v3::policy_manager_impl> its_policy_manager(new vsomeip_v3::policy_manager_impl());

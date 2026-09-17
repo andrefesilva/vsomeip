@@ -8,6 +8,8 @@
 #include <vsomeip/constants.hpp>
 #include <vsomeip/primitive_types.hpp>
 
+#include <cstring>
+
 namespace vsomeip_v3 {
 namespace protocol {
 
@@ -82,7 +84,7 @@ struct service {
     }
 };
 
-static constexpr version_t IPC_VERSION = 5;
+static constexpr version_t IPC_VERSION = 6;
 
 static const size_t COMMAND_HEADER_SIZE = 9;
 static const size_t SEND_COMMAND_HEADER_SIZE = 15;
@@ -114,6 +116,17 @@ static inline bool operator==(const id_e& _lhs, const byte_t& _rhs) {
 }
 static inline id_e read_command_id(byte_t const* _data, size_t _size) {
     return _size <= COMMAND_POSITION_ID ? id_e::UNKNOWN_ID : static_cast<id_e>(_data[COMMAND_POSITION_ID]);
+}
+
+// Sender's client identifier, as read directly off the wire (i.e. usable even when the command
+// could not be fully parsed) - 0xffff (VSOMEIP_CLIENT_UNSET) if _data is too short to contain it.
+static inline client_t read_command_client(byte_t const* _data, size_t _size) {
+    if (_size < COMMAND_POSITION_SIZE) {
+        return static_cast<client_t>(0xffff);
+    }
+    client_t its_client{};
+    std::memcpy(&its_client, _data + COMMAND_POSITION_CLIENT, sizeof(its_client));
+    return its_client;
 }
 
 } // namespace protocol

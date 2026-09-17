@@ -170,6 +170,16 @@ std::string to_string(command_message const& c) {
     s << c;
     return s.str();
 }
+std::string to_string(vsomeip_v3::protocol::update_security_policy_data const& u) {
+    std::stringstream s;
+    s << "{ update_id: " << u.update_id_ << ", policy: " << to_string(u.policy_) << " }";
+    return s.str();
+}
+std::string to_string(vsomeip_v3::protocol::assign_client_ack_data const& a) {
+    std::stringstream s;
+    s << "{ assigned: " << hex4(a.assigned_) << ", policies: " << to_string(a.policies_) << " }";
+    return s.str();
+}
 
 std::string to_string(std::shared_ptr<vsomeip_v3::sd::entry_impl> const& e) {
     std::stringstream s;
