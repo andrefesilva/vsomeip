@@ -63,6 +63,7 @@ set (TEST_SUITES
     test_send_offer_check
     test_protocol_messages
     test_registration_ordering
+    test_remote_host_restart
     test_remote_offer_endpoint_change
     test_sd_protocol
     test_someip_tp

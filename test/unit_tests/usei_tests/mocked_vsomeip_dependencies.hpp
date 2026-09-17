@@ -228,7 +228,7 @@ template class vsomeip_v3::server_endpoint_impl<boost::asio::ip::udp>;
 
 struct mock_endpoint_host : public vsomeip_v3::boardnet_endpoint_host {
     MOCK_METHOD1(on_connect, void(std::shared_ptr<vsomeip_v3::boardnet_endpoint> _endpoint));
-    MOCK_METHOD1(on_disconnect, void(std::shared_ptr<vsomeip_v3::boardnet_endpoint> _endpoint));
+    MOCK_METHOD2(on_disconnect, void(std::shared_ptr<vsomeip_v3::boardnet_endpoint> _endpoint, vsomeip_v3::disconnect_reason_e _reason));
     MOCK_METHOD4(on_bind_error,
                  bool(std::shared_ptr<vsomeip_v3::boardnet_endpoint> _endpoint, const boost::asio::ip::address& _remote_address,
                       uint16_t _remote_port, uint16_t& _local_port));

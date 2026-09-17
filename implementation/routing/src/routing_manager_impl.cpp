@@ -1859,7 +1859,7 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
 }
 
 void routing_manager_impl::del_routing_info(service_t _service, instance_t _instance, major_version_t _major, bool _has_reliable,
-                                            bool _has_unreliable, bool _trigger_availability) {
+                                            bool _has_unreliable, bool _trigger_availability, std::optional<disconnect_reason_e> _reason) {
 
     std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance, _major));
     if (!its_info) {
@@ -1919,11 +1919,11 @@ void routing_manager_impl::del_routing_info(service_t _service, instance_t _inst
     }
 
     if (_has_reliable) {
-        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, true);
+        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, true, _reason);
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, _major, true);
     }
     if (_has_unreliable) {
-        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, false);
+        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, false, _reason);
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, _major, false);
     }
 
@@ -3693,7 +3693,34 @@ void routing_manager_impl::service_endpoint_connected(service_t _service, instan
 }
 
 void routing_manager_impl::service_endpoint_disconnected(service_t _service, instance_t _instance, major_version_t _major,
-                                                         minor_version_t _minor) {
+                                                         minor_version_t _minor, const std::shared_ptr<boardnet_endpoint>& _endpoint,
+                                                         disconnect_reason_e _reason) {
+    VSOMEIP_WARNING_P << "Lost connection to remote service: [" << hex4(_service) << "." << hex4(_instance) << "] " << to_string(_reason);
+
+    // A broken TCP connection means the remote is gone or restarted: drop the offer and let service
+    // discovery find it again, instead of reporting it available on a bare TCP reconnect before SD has
+    // reboot-checked the peer (whose first SD message would then close that endpoint and drop queued data).
+    // UDP errors carry no session semantics and are left to the SD TTL.
+    if (_reason == disconnect_reason_e::CONNECTION_LOST && _endpoint && _endpoint->is_reliable()) {
+        if (discovery_) {
+            discovery_->unsubscribe_all(_service, _instance);
+            if (auto its_info = find_service(_service, _instance, _major); its_info) {
+                for (const bool is_reliable : {true, false}) {
+                    if (auto its_client_endpoint = std::dynamic_pointer_cast<client_endpoint>(its_info->get_endpoint(is_reliable));
+                        its_client_endpoint) {
+                        boost::asio::ip::address its_address;
+                        if (its_client_endpoint->get_remote_address(its_address)) {
+                            discovery_->remove_remote_offer_type_by_ip(its_address, its_client_endpoint->get_remote_port(), is_reliable);
+                        }
+                    }
+                }
+            }
+            discovery_->reset_request_sent_counter(_service, _instance, _major);
+        }
+        del_routing_info(_service, _instance, _major, true, true, true, _reason);
+        return;
+    }
+
     stub_->on_stop_offer_service(VSOMEIP_ROUTING_CLIENT, _service, _instance, _major, _minor);
 
     {
@@ -3710,8 +3737,6 @@ void routing_manager_impl::service_endpoint_disconnected(service_t _service, ins
             remote_subscription_state_.erase(its_key);
         }
     }
-
-    VSOMEIP_WARNING_P << "Lost connection to remote service: [" << hex4(_service) << "." << hex4(_instance) << "]";
 }
 
 void routing_manager_impl::send_unsubscription(client_t _offering_client, service_t _service, instance_t _instance,

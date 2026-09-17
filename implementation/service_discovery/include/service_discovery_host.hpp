@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <chrono>
 
 #include <boost/asio/ip/address.hpp>
@@ -49,8 +50,12 @@ public:
                                   const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
                                   const endpoint_manager_impl::remote_offer_state& _state) = 0;
 
+    /**
+     * @param _reason the disconnect reason that triggered the removal, if any.
+     */
     virtual void del_routing_info(service_t _service, instance_t _instance, major_version_t _major, bool _has_reliable,
-                                  bool _has_unreliable, bool _trigger_availability) = 0;
+                                  bool _has_unreliable, bool _trigger_availability,
+                                  std::optional<disconnect_reason_e> _reason = std::nullopt) = 0;
 
     virtual void update_routing_info(std::chrono::milliseconds _elapsed) = 0;
 

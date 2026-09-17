@@ -67,7 +67,7 @@ private:
     uint32_t get_max_allowed_reconnects() const;
     void max_allowed_reconnects_reached();
 
-    void wait_until_sent(const boost::system::error_code& _error);
+    void wait_until_sent(const boost::system::error_code& _error, disconnect_reason_e _reason);
 
     // magic cookie state; both are modified under `socket_mutex_`
     bool use_magic_cookies_ = false;

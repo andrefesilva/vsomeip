@@ -20,6 +20,7 @@
 #include <vsomeip/constants.hpp>
 #include "../../utility/include/service_instance_map.hpp"
 
+#include "boardnet_endpoint_host.hpp"
 #include "buffer.hpp"
 #include "endpoint_impl.hpp"
 #include "client_endpoint.hpp"
@@ -98,7 +99,7 @@ protected:
                                                     std::chrono::nanoseconds* _maximum_retention) const = 0;
     void close_socket(bool _recreate_socket, bool _due_to_error);
     void close_socket_unlocked(bool _recreate_socket);
-    void notify_disconnect();
+    void notify_disconnect(disconnect_reason_e _reason);
     void start_connect_timer();
     void start_connecting_timer();
     bool check_message_size(uint32_t _size) const;

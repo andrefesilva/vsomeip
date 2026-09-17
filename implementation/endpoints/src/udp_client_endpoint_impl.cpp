@@ -358,7 +358,8 @@ void udp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
             VSOMEIP_WARNING_P << "local: " << get_address_port_local() << " remote: " << get_address_port_remote()
                               << " error: " << _error.message();
             close_socket(false, true);
-            notify_disconnect();
+            // ICMP port unreachable on the connected socket
+            notify_disconnect(disconnect_reason_e::CONNECTION_LOST);
         } else {
             receive(std::move(_recv_buffer));
         }
@@ -482,7 +483,8 @@ void udp_client_endpoint_impl::send_cbk(boost::system::error_code const& _error,
             VSOMEIP_WARNING_P << "Endpoint is already restarting:" << get_remote_information();
         } else {
             close_socket(false, true);
-            notify_disconnect();
+            // Send error on the connected socket after the remote had been reachable.
+            notify_disconnect(disconnect_reason_e::CONNECTION_LOST);
         }
         service_t its_service(0);
         method_t its_method(0);
