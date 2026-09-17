@@ -311,9 +311,17 @@ void local_server::tmp_connection::receive_cbk(boost::system::error_code const& 
     while (receive_buffer_->next_message(result)) {
         protocol::command_header its_header{};
         auto parsed_hdr_bytes = protocol::deserialize(its_header, result.message_data_, result.message_size_);
-        if (!parsed_hdr_bytes || its_header.version_ != protocol::IPC_VERSION) {
+        if (!parsed_hdr_bytes) {
             VSOMEIP_ERROR_P << "Deserialization failed, memory: " << utility::dump(result.message_data_, result.message_size_)
                             << " Breaking connection > " << socket_->to_string();
+            socket_->stop(true);
+            return;
+        }
+        if (its_header.version_ != protocol::IPC_VERSION) {
+            VSOMEIP_ERROR_P << "IPC protocol version mismatch: peer uses " << its_header.version_ << ", expected " << protocol::IPC_VERSION
+                            << " (mixed vsomeip versions), command: 0x" << hex2(static_cast<uint8_t>(its_header.id_))
+                            << ", memory: " << utility::dump(result.message_data_, result.message_size_) << " Breaking connection > "
+                            << socket_->to_string();
             socket_->stop(true);
             return;
         }

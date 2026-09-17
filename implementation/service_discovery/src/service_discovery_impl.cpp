@@ -1781,12 +1781,14 @@ void service_discovery_impl::process_eventgroupentry(std::shared_ptr<eventgroupe
                             return;
                         }
 
-                        if (!check_ipv4_address(its_first_address) || 0 == its_first_port) {
+                        if (!check_ipv4_address(its_first_address, its_sender) || 0 == its_first_port) {
                             if (its_ttl > 0) {
                                 insert_subscription_ack(_acknowledgement, its_info, 0, nullptr, its_clients);
                             }
                             VSOMEIP_ERROR_P << "Invalid port or IP address in first IPv4 endpoint option specified! "
-                                            << its_sender.to_string() << " session: " << hex4(its_session);
+                                            << its_sender.to_string() << " session: " << hex4(its_session) << " for: [" << hex4(its_service)
+                                            << "." << hex4(its_instance) << "." << hex4(its_eventgroup)
+                                            << "] option: " << its_first_address.to_string() << ":" << its_first_port;
                             return;
                         }
                     } else if (its_second_port == ILLEGAL_PORT) {
@@ -1801,17 +1803,18 @@ void service_discovery_impl::process_eventgroupentry(std::shared_ptr<eventgroupe
                                 insert_subscription_ack(_acknowledgement, its_info, 0, nullptr, its_clients);
                             }
                             VSOMEIP_ERROR_P << "Multiple IPv4 endpoint options of same kind referenced! " << its_sender.to_string()
-                                            << " session: " << hex4(its_session) << its_session
-                                            << " is_second_reliable: " << is_second_reliable;
+                                            << " session: " << hex4(its_session) << " is_second_reliable: " << is_second_reliable;
                             return;
                         }
 
-                        if (!check_ipv4_address(its_second_address) || 0 == its_second_port) {
+                        if (!check_ipv4_address(its_second_address, its_sender) || 0 == its_second_port) {
                             if (its_ttl > 0) {
                                 insert_subscription_ack(_acknowledgement, its_info, 0, nullptr, its_clients);
                             }
                             VSOMEIP_ERROR_P << "Invalid port or IP address in second IPv4 endpoint option specified! "
-                                            << its_sender.to_string() << " session: " << hex4(its_session);
+                                            << its_sender.to_string() << " session: " << hex4(its_session) << " for: [" << hex4(its_service)
+                                            << "." << hex4(its_instance) << "." << hex4(its_eventgroup)
+                                            << "] option: " << its_second_address.to_string() << ":" << its_second_port;
                             return;
                         }
                     } else {
@@ -2369,7 +2372,8 @@ void service_discovery_impl::expire_subscriptions(const boost::system::error_cod
     }
 }
 
-bool service_discovery_impl::check_ipv4_address(const boost::asio::ip::address& its_address) const {
+bool service_discovery_impl::check_ipv4_address(const boost::asio::ip::address& its_address,
+                                                const boost::asio::ip::address& _sender) const {
     // Check unallowed ipv4 address
     bool is_valid = true;
 
@@ -2379,7 +2383,8 @@ bool service_discovery_impl::check_ipv4_address(const boost::asio::ip::address& 
 
     // same address as unicast address of DUT not allowed
     if (its_unicast_address == endpoint_address) {
-        VSOMEIP_ERROR << "Subscriber's IP address is same as host's address! : " << its_address;
+        VSOMEIP_ERROR_P << "Subscriber's IP address is same as host's address! endpoint option: " << its_address << ", host: " << unicast_
+                        << ", sent by: " << _sender;
         is_valid = false;
     } else {
         const uint32_t self = bithelper::read_uint32_be(&its_unicast_address[0]);
@@ -2387,7 +2392,8 @@ bool service_discovery_impl::check_ipv4_address(const boost::asio::ip::address& 
         const uint32_t netmask = bithelper::read_uint32_be(&its_netmask[0]);
 
         if ((self & netmask) != (remote & netmask)) {
-            VSOMEIP_ERROR << "Subscriber's IP isn't in the same subnet as host's IP: " << its_address;
+            VSOMEIP_ERROR_P << "Subscriber's IP isn't in the same subnet as host's IP! endpoint option: " << its_address
+                            << ", host: " << unicast_ << ", netmask: " << configuration_->get_netmask() << ", sent by: " << _sender;
             is_valid = false;
         }
     }
