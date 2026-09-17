@@ -6,6 +6,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <list>
 #include <map>
 #include <memory>
@@ -74,6 +75,8 @@ struct suppress_t {
 
 class configuration_impl : public configuration, public std::enable_shared_from_this<configuration_impl> {
 public:
+    static std::shared_ptr<configuration_impl> get_logger_configuration();
+
     explicit configuration_impl(const std::string& _path);
     virtual ~configuration_impl();
 
@@ -272,15 +275,20 @@ public:
     bool is_remote_access_allowed() const;
 
 private:
-    void read_data(const std::set<std::string>& _input, std::vector<configuration_element>& _elements, std::set<std::string>& _failed,
-                   bool _mandatory_only, bool _read_second_level = false) const;
+    void load_logger_configuration();
+    std::set<std::string, std::less<>> get_configuration_input(const std::string& _name, bool _use_named_configuration) const;
+
+    void read_data(const std::set<std::string, std::less<>>& _input, std::vector<configuration_element>& _elements,
+                   std::set<std::string, std::less<>>& _failed, bool _mandatory_only, bool _read_second_level = false,
+                   bool _log_errors = true) const;
 #ifndef VSOMEIP_DISABLE_POLICY
-    void load_policy_data(const std::string& _input, std::vector<configuration_element>& _elements, std::set<std::string>& _failed,
-                          bool _mandatory_only) const;
+    void load_policy_data(const std::string& _input, std::vector<configuration_element>& _elements,
+                          std::set<std::string, std::less<>>& _failed, bool _mandatory_only, bool _log_errors) const;
 #endif // !VSOMEIP_DISABLE_POLICY
     bool load_data(const std::vector<configuration_element>& _elements, bool _load_mandatory, bool _load_optional);
 
-    bool load_logging(const configuration_element& _element, std::set<std::string>& _warnings);
+    bool load_logger_configuration(const configuration_element& _element, std::set<std::string, std::less<>>& _warnings);
+    bool load_logging(const configuration_element& _element);
 
     bool load_applications(const configuration_element& _element);
     void load_application_data(const boost::property_tree::ptree& _tree, const std::string& _file_name);
@@ -414,13 +422,15 @@ private:
     const std::string default_unicast_;
     bool is_loaded_;
     bool is_logging_loaded_;
+    bool is_application_logging_loaded_;
+    bool is_global_source_;
 
     std::set<std::string> mandatory_;
 
     // Retained after the mandatory load so the optional (routing-manager
     // exclusive) configuration can be loaded lazily via load_optional() once
     // the caller knows which application is the routing host.
-    std::set<std::string> input_;
+    std::set<std::string, std::less<>> input_;
     bool optional_loaded_ = false;
 
     // Retained after load() for per-app policy replay via load_security_policies()

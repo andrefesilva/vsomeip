@@ -5,21 +5,26 @@
 
 project("unit_tests_logger_tests" LANGUAGES CXX)
 
-file(GLOB SRCS ../main.cpp *.cpp)
-
 # ----------------------------------------------------------------------------
-# Executable and libraries to link
+# Executables and libraries to link
 # ----------------------------------------------------------------------------
-add_executable(${PROJECT_NAME} ${SRCS})
-target_link_libraries(
-    ${PROJECT_NAME}
-    vsomeip3-test
-    ${Boost_LIBRARIES}
-    ${DL_LIBRARY}
-    gtest
-    vsomeip_utilities
-)
+# The logger configuration is process-wide and immutable, so the sinks-enabled,
+# no-sink and application-first handoff scenarios each need their own executable.
+add_executable(unit_tests_logger_tests main.cpp ut_logger.cpp)
+add_executable(unit_tests_logger_no_sink_tests main_no_sinks.cpp ut_logger_no_sinks.cpp)
+add_executable(unit_tests_logger_configuration_handoff_tests main_configuration_handoff.cpp ut_logger_configuration_handoff.cpp)
 
-add_test(NAME ${PROJECT_NAME} COMMAND ${PROJECT_NAME})
+foreach(target unit_tests_logger_tests unit_tests_logger_no_sink_tests unit_tests_logger_configuration_handoff_tests)
+    target_link_libraries(
+        ${target}
+        vsomeip3-test
+        ${Boost_LIBRARIES}
+        ${DL_LIBRARY}
+        gtest
+        vsomeip_utilities
+    )
 
-add_dependencies(build_unit_tests ${PROJECT_NAME})
+    add_test(NAME ${target} COMMAND ${target})
+
+    add_dependencies(build_unit_tests ${target})
+endforeach()

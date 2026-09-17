@@ -121,7 +121,7 @@ std::shared_ptr<vsomeip::configuration> load_config(std::string key, std::string
 #if defined(__linux__) || defined(__QNX__)
     setenv("VSOMEIP_CONFIGURATION", config_file.c_str(), 1);
 #else
-    _putenv_s("VSOMEIP_CONFIGURATION", config_file.c_str()
+    _putenv_s("VSOMEIP_CONFIGURATION", config_file.c_str());
 #endif
 
     // `configuration_plugin_impl` does caching based on `key`, so each test needs to pass a
@@ -153,7 +153,7 @@ void check_file(const std::string& _config_file, const std::string& _expected_un
 #if defined(__linux__) || defined(__QNX__)
     setenv("VSOMEIP_CONFIGURATION", _config_file.c_str(), 1);
 #else
-    _putenv_s("VSOMEIP_CONFIGURATION", _config_file.c_str()
+    _putenv_s("VSOMEIP_CONFIGURATION", _config_file.c_str());
 #endif
 
     // 1. Create configuration object

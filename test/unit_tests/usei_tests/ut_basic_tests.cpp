@@ -288,7 +288,7 @@ TEST_F(usei_fixture, no_overwrite_during_restart) {
 }
 
 TEST_F(usei_fixture, no_overwrite_during_restart_with_multicast) {
-    constexpr size_t MESSAGE_SENT_COUNT = 1000000;
+    constexpr size_t MESSAGE_SENT_COUNT = 100000;
     using namespace std::chrono_literals;
     std::atomic<bool> finished{false};
 

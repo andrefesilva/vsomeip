@@ -5,10 +5,9 @@
 
 #pragma once
 
-#include <atomic>
 #include <fstream>
-#include <memory>
 #include <mutex>
+#include <string>
 #include <string_view>
 
 #ifdef USE_DLT
@@ -25,21 +24,18 @@ namespace logger {
 
 class logger_impl {
 public:
-    logger_impl();
-    VSOMEIP_IMPORT_EXPORT static void init(const std::shared_ptr<configuration>& _configuration);
     static logger_impl* get();
+    static void init(const configuration& _configuration);
 
-    // Note: struct must be trivially copyable and thus cannot contain the log file name.
-    // alignas(4) to work around a bug in ancient MSVC15 which for some reason we still support...
-    struct alignas(4) config {
+    struct config {
         bool console_enabled;
         bool dlt_enabled;
         bool file_enabled;
         level_e loglevel;
+        std::string logfile;
     };
 
-    void set_configuration(const std::shared_ptr<configuration>& _configuration);
-    config get_configuration() const;
+    const config& get_configuration() const;
 
     void log_to_file(std::string_view _msg);
 
@@ -49,7 +45,10 @@ public:
 #endif
 
 private:
-    std::atomic<config> config_;
+    explicit logger_impl(config _config);
+    static logger_impl* get_or_create(const configuration* _configuration);
+
+    const config config_;
 
     std::mutex log_file_mutex_;
     std::ofstream log_file_;

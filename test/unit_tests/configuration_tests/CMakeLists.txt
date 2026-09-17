@@ -9,6 +9,7 @@ set(TEST_SRCS
     ../main.cpp
     mock_configuration.cpp
     test_configuration.cpp
+    test_logger_configuration.cpp
 )
 
 add_executable(

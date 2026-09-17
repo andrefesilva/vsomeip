@@ -39,7 +39,6 @@
 
 #include "../../../implementation/tracing/include/connector_impl.hpp"
 #include "../../../implementation/configuration/include/trace.hpp"
-#include "../../../implementation/configuration/include/configuration_impl.hpp"
 #include "../../../implementation/logger/include/logger_impl.hpp"
 
 #ifdef USE_DLT
@@ -111,8 +110,7 @@ void connector_setup() {
     std::ios_base::sync_with_stdio(false);
     g_saved_cout = std::cout.rdbuf(&g_null_sink);
 
-    auto configuration = std::make_shared<vsomeip_v3::cfg::configuration_impl>("");
-    vsomeip_v3::logger::logger_impl::init(configuration);
+    static_cast<void>(vsomeip_v3::logger::logger_impl::get());
 
 #ifdef USE_DLT
     DLT_REGISTER_APP("VSIP", "vSomeIP tracing benchmark");
@@ -264,8 +262,7 @@ void connector_setup_with_filters(int _filter_count) {
     std::ios_base::sync_with_stdio(false);
     g_saved_cout = std::cout.rdbuf(&g_null_sink);
 
-    auto configuration = std::make_shared<vsomeip_v3::cfg::configuration_impl>("");
-    vsomeip_v3::logger::logger_impl::init(configuration);
+    static_cast<void>(vsomeip_v3::logger::logger_impl::get());
 
 #ifdef USE_DLT
     DLT_REGISTER_APP("VSIP", "vSomeIP tracing benchmark");

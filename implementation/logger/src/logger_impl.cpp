@@ -4,19 +4,30 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <ios>
+#include <utility>
 #include <vsomeip/runtime.hpp>
 
 #include "../include/logger_impl.hpp"
 #include "../../configuration/include/configuration.hpp"
+#include "../../configuration/include/configuration_impl.hpp"
 
 namespace vsomeip_v3::logger {
+
+namespace {
+
+logger_impl::config to_config(const configuration& _configuration) {
+    return {_configuration.has_console_log(), _configuration.has_dlt_log(), _configuration.has_file_log(), _configuration.get_loglevel(),
+            _configuration.get_logfile()};
+}
+
+logger_impl::config load_configuration() {
+    return to_config(*cfg::configuration_impl::get_logger_configuration());
+}
 
 #ifdef USE_DLT
 
 constexpr const char* VSOMEIP_LOG_DEFAULT_CONTEXT_ID = "VSIP";
 constexpr const char* VSOMEIP_LOG_DEFAULT_CONTEXT_NAME = "vSomeIP context";
-
-namespace {
 
 // Unregisters the eternal logger's DLT context at exit, decoupled from the immortal logger instance.
 // This sets an internal pointer to null, which will cause libdlt to discard any subsequent attempt to log,
@@ -26,11 +37,15 @@ struct context_unregistrar {
     ~context_unregistrar() { DLT_UNREGISTER_CONTEXT(*context); }
 };
 
-} // namespace
-
 #endif
 
-logger_impl::logger_impl() : config_{{false, false, false, level_e::LL_NONE}} {
+} // namespace
+
+logger_impl::logger_impl(config _config) : config_{std::move(_config)} {
+    if (config_.file_enabled) {
+        log_file_ = std::ofstream{config_.logfile, std::ios_base::out | std::ios_base::app};
+    }
+
 #ifdef USE_DLT
     auto context_id = runtime::get_property("LogContext");
     if (context_id == "") {
@@ -44,33 +59,8 @@ logger_impl::logger_impl() : config_{{false, false, false, level_e::LL_NONE}} {
 #endif
 }
 
-void logger_impl::init(const std::shared_ptr<configuration>& _configuration) {
-    logger_impl::get()->set_configuration(_configuration);
-}
-
-logger_impl::config logger_impl::get_configuration() const {
-    return config_.load(std::memory_order_acquire);
-}
-
-void logger_impl::set_configuration(const std::shared_ptr<configuration>& _configuration) {
-    if (_configuration) {
-        // GCC < 10 hates member initializers in atomic structs
-        config cfg; // NOLINT(cppcoreguidelines-pro-type-member-init)
-        cfg.loglevel = _configuration->get_loglevel();
-        cfg.console_enabled = _configuration->has_console_log();
-        cfg.dlt_enabled = _configuration->has_dlt_log();
-        {
-            std::scoped_lock its_lock{log_file_mutex_};
-            cfg.file_enabled = _configuration->has_file_log();
-            if (cfg.file_enabled) {
-                log_file_ = std::ofstream{_configuration->get_logfile(), std::ios_base::out | std::ios_base::app};
-            } else {
-                // Release the OS handle when file logging is turned off.
-                log_file_ = std::ofstream{};
-            }
-        }
-        config_.store(cfg, std::memory_order_release);
-    }
+const logger_impl::config& logger_impl::get_configuration() const {
+    return config_;
 }
 
 void logger_impl::log_to_file(std::string_view _msg) {
@@ -127,9 +117,18 @@ void logger_impl::log_to_dlt(level_e _level, std::string_view _msg) {
 #endif
 
 logger_impl* logger_impl::get() {
-    // Immortal singleton: never destroyed, so detached threads may keep logging after main() with no shutdown races.
-    // The static pointer keeps it reachable, so LSan stays quiet.
-    static auto* const instance = new logger_impl(); // NOSONAR: False positive S6018, also 'new' and "leak" is intentional
+    return get_or_create(nullptr);
+}
+
+void logger_impl::init(const configuration& _configuration) {
+    static_cast<void>(get_or_create(&_configuration));
+}
+
+logger_impl* logger_impl::get_or_create(const configuration* _configuration) {
+    // Immortal singleton, so detached threads may keep logging after main() with no shutdown races.
+    static auto* const instance = new logger_impl(
+            _configuration != nullptr ? to_config(*_configuration)
+                                      : load_configuration()); // NOSONAR: False positive S6018, also 'new' and "leak" is intentional
     return instance;
 }
 

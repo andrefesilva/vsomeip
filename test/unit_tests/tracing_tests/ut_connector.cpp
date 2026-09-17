@@ -26,7 +26,6 @@
 #include "../../../implementation/tracing/include/defines.hpp"
 #include "../../../implementation/tracing/include/enumeration_types.hpp"
 #include "../../../implementation/configuration/include/trace.hpp"
-#include "../../../implementation/configuration/include/configuration_impl.hpp"
 #include "../../../implementation/logger/include/logger_impl.hpp"
 
 #ifdef USE_DLT
@@ -217,12 +216,10 @@ std::string channel_line(const std::string& _output, const std::string& _channel
 class connector_test : public ::testing::Test {
 protected:
     void SetUp() override {
-        // trace() logs through the vsomeip console logger. A default constructed
-        // configuration enables console logging at LL_INFO, which is required for
-        // the log output to reach std::cout where the tests can capture it.
-        auto configuration = std::make_shared<vsomeip_v3::cfg::configuration_impl>("");
-        vsomeip_v3::logger::logger_impl::init(configuration);
-
+        // Construct the process logger before manipulating the DLT application
+        // registration below. The logger owns its DLT context for the process
+        // lifetime and must not be created inside a per-test registration.
+        static_cast<void>(vsomeip_v3::logger::logger_impl::get());
 #ifdef USE_DLT
         // In DLT builds the connector forwards traces to registered DLT contexts,
         // so an application has to be registered for the DLT calls to be valid.
