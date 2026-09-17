@@ -1234,7 +1234,7 @@ void endpoint_manager_impl::drop_from(const boost::asio::ip::address& _address) 
         if (drop) {
             VSOMEIP_INFO_P << "dropping connection for client: " << hex4(client) << ", " << ep->name();
             // this is technically not correct, but it should be good enough for now.
-            ep->trigger_error(); // ensure that we do all the clean-up
+            ep->request_cleanup(true); // ensure that we do all the clean-up
         }
     }
     // important to have the lock still acquired, because the endpoints error handler
@@ -1292,7 +1292,7 @@ bool endpoint_manager_impl::add_local_routing_endpoint_unlocked(client_t _client
             it2->second->stop(true);
         }
         pending_routing_endpoints_[_client] = _ep;
-        it->second->trigger_error();
+        it->second->request_cleanup(true);
         return false;
     }
 
@@ -1303,7 +1303,7 @@ bool endpoint_manager_impl::add_local_routing_endpoint_unlocked(client_t _client
                 if (id != _client) {
                     // the other caase we did already take care above.
                     VSOMEIP_WARNING_P << "Deregistering old client " << hex4(id) << " due to new client " << hex4(_client) << " @ " << addr;
-                    ep->trigger_error();
+                    ep->request_cleanup(true);
                 }
                 break;
             }

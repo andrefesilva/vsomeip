@@ -28,6 +28,16 @@
 
 #include <unistd.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <future>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <thread>
+
 namespace vsomeip_v3::testing {
 
 class stub_factory : public abstract_socket_factory {
@@ -177,7 +187,6 @@ TEST_F(test_uds_local_endpoint, config_command_leads_to_information_forwarding_t
 
     EXPECT_EQ(received_messages, send_messages);
 }
-
 // The identity reported for the peer (passed in when the consumer endpoint is created) is checked
 // against the one actually read off the socket (SO_PEERCRED) once connected. On a mismatch -- e.g.
 // the client id was re-used by another process -- the connection must not become usable.
@@ -214,7 +223,10 @@ TEST_F(test_uds_local_endpoint, connection_stays_up_when_the_reported_peer_ident
     auto client = create_client_ep(its_real_identity);
 
     bool cleanup_called{false};
-    client->register_cleanup_handler([&](bool) { cleanup_called = true; });
+    client->register_cleanup_handler([&](bool _due_to_error) {
+        cleanup_called = true;
+        client->stop(_due_to_error);
+    });
 
     server->start([this](auto const& ep) {
         server_eps_.push_back(ep);
@@ -229,5 +241,268 @@ TEST_F(test_uds_local_endpoint, connection_stays_up_when_the_reported_peer_ident
     auto config_msg = create_client_config_command();
     client->send(&config_msg[0], static_cast<uint32_t>(config_msg.size()));
     io_.poll();
+
+    client->request_cleanup(false);
+    io_.poll();
+    EXPECT_TRUE(cleanup_called);
+}
+
+TEST_F(test_uds_local_endpoint, a_terminated_endpoint_abandons_the_rest_of_the_burst) {
+
+    auto server = create_server();
+    auto client = create_client_ep();
+    server->start([this](auto const& ep) {
+        server_eps_.push_back(ep);
+        ep->start();
+    });
+    client->start();
+
+    io_.poll();
+
+    // The server keeps a fresh connection as a tmp_connection until the client identifies itself
+    // with a config command; only then is a local_endpoint created and passed to the connection
+    // handler. Any other command sent before that is rejected and breaks the connection.
+    auto config_msg = create_client_config_command();
+    client->send(&config_msg[0], static_cast<uint32_t>(config_msg.size()));
+    io_.poll();
+    ASSERT_FALSE(server_eps_.empty());
+
+    // Terminate the endpoint from within the first dispatch, which is what stop() does when it is
+    // called by an owner while a burst is being processed. The two remaining messages of the burst
+    // must not reach the routing host anymore.
+    std::size_t dispatched{0};
+    ON_CALL(*server_routing_host_, on_message).WillByDefault([&](auto...) {
+        if (++dispatched == 1) {
+            ASSERT_FALSE(server_eps_.empty());
+            server_eps_.front()->stop(true);
+        }
+    });
+    EXPECT_CALL(*server_routing_host_, on_message).Times(1);
+
+    std::vector<std::vector<byte_t>> send_messages;
+    add_offer_service_command(send_messages);
+    add_offer_service_command(send_messages);
+    add_offer_service_command(send_messages);
+    for (auto const& msg : send_messages) {
+        client->send(&msg[0], static_cast<uint32_t>(msg.size()));
+    }
+
+    io_.poll();
+    // no further read may have been armed either
+    io_.poll();
+
+    EXPECT_EQ(dispatched, 1u);
+}
+
+// Fixture for the cases that need the io context to be driven by more than one thread: the
+// interleaving under test is a cleanup running on one thread while another is inside on_message.
+struct test_uds_local_endpoint_mt : test_uds_local_endpoint {
+    void connect_and_settle() {
+        server_ = create_server();
+        client_ = create_client_ep();
+        server_->start([this](auto const& ep) {
+            server_eps_.push_back(ep);
+            ep->start();
+        });
+        client_->start();
+        io_.poll();
+        // identifies the client to the server, which only then creates the server side endpoint
+        auto config_msg = create_client_config_command();
+        client_->send(&config_msg[0], static_cast<uint32_t>(config_msg.size()));
+        io_.poll();
+        ASSERT_FALSE(server_eps_.empty());
+    }
+
+    // Blocks every dispatch until release_dispatch() is called, and records when it entered and
+    // when it left.
+    void block_in_on_message() {
+        ON_CALL(*server_routing_host_, on_message).WillByDefault([this](auto...) {
+            {
+                std::unique_lock lk{m_};
+                in_dispatch_ = true;
+            }
+            cv_.notify_all();
+            std::unique_lock lk{m_};
+            cv_.wait(lk, [this] { return release_; });
+            events_.emplace_back("dispatch_end");
+            cv_.notify_all();
+        });
+    }
+
+    void await_dispatch() {
+        std::unique_lock lk{m_};
+        cv_.wait(lk, [this] { return in_dispatch_; });
+    }
+
+    void release_dispatch() {
+        {
+            std::scoped_lock lk{m_};
+            release_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    void run_io(unsigned _threads) {
+        guard_.emplace(boost::asio::make_work_guard(io_));
+        for (unsigned i = 0; i < _threads; ++i) {
+            io_threads_.emplace_back([this] { io_.run(); });
+        }
+    }
+
+    void TearDown() override {
+        release_dispatch();
+        guard_.reset();
+        io_.stop();
+        for (auto& t : io_threads_) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+    }
+
+    std::shared_ptr<local_server> server_;
+    std::shared_ptr<local_endpoint> client_;
+
+    std::mutex m_;
+    std::condition_variable cv_;
+    bool in_dispatch_{false};
+    bool release_{false};
+    std::vector<std::string> events_; // guarded by m_
+
+    std::optional<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>> guard_;
+    std::vector<std::thread> io_threads_;
+};
+
+TEST_F(test_uds_local_endpoint_mt, cleanup_does_not_overlap_a_dispatch_in_flight) {
+
+    connect_and_settle();
+    block_in_on_message();
+
+    server_eps_.front()->register_cleanup_handler([this](bool) {
+        {
+            std::scoped_lock lk{m_};
+            events_.emplace_back("cleanup");
+        }
+        cv_.notify_all();
+    });
+
+    run_io(2);
+
+    std::vector<std::vector<byte_t>> send_messages;
+    add_offer_service_command(send_messages);
+    client_->send(&send_messages[0][0], static_cast<uint32_t>(send_messages[0].size()));
+
+    await_dispatch();
+    // Escalates on the second io thread while the first one is still inside on_message.
+    server_eps_.front()->request_cleanup(true);
+
+    {
+        // Nothing may be recorded yet: the dispatch has not finished, so the cleanup must still be
+        // held back. Without the barrier the cleanup lands here, ahead of "dispatch_end".
+        std::unique_lock lk{m_};
+        EXPECT_FALSE(cv_.wait_for(lk, std::chrono::milliseconds(200), [this] { return !events_.empty(); }))
+                << "cleanup ran while a dispatch was still in flight";
+    }
+
+    release_dispatch();
+
+    std::unique_lock lk{m_};
+    EXPECT_TRUE(cv_.wait_for(lk, std::chrono::seconds(5), [this] { return events_.size() == 2; })) << "cleanup handler was not invoked";
+    EXPECT_EQ(events_, (std::vector<std::string>{"dispatch_end", "cleanup"}));
+}
+
+TEST_F(test_uds_local_endpoint_mt, holding_back_a_cleanup_does_not_park_an_io_thread) {
+
+    connect_and_settle();
+    block_in_on_message();
+
+    server_eps_.front()->register_cleanup_handler([](bool) {});
+
+    run_io(2);
+
+    std::vector<std::vector<byte_t>> send_messages;
+    add_offer_service_command(send_messages);
+    client_->send(&send_messages[0][0], static_cast<uint32_t>(send_messages[0].size()));
+
+    await_dispatch();
+
+    // One io thread is stuck inside on_message. The other has to pick the escalation up, hand the
+    // cleanup over to process() and stay available. Were it to wait for the dispatch to finish
+    // instead, both threads would be parked and nothing queued behind it could run.
+    server_eps_.front()->request_cleanup(true);
+
+    // shared_ptr, so that the promise outlives this test body: if the marker never runs, the task is
+    // still queued when the body returns and only executes during TearDown.
+    auto marker = std::make_shared<std::promise<void>>();
+    auto ran = marker->get_future();
+    boost::asio::post(io_, [marker] { marker->set_value(); });
+
+    EXPECT_EQ(ran.wait_for(std::chrono::seconds(5)), std::future_status::ready)
+            << "no io thread was left to run other work while the dispatch was blocked";
+}
+
+TEST_F(test_uds_local_endpoint_mt, a_flush_completing_during_a_dispatch_is_held_back) {
+
+    connect_and_settle();
+    block_in_on_message();
+
+    server_eps_.front()->register_cleanup_handler([this](bool _due_to_error) {
+        {
+            std::scoped_lock lk{m_};
+            events_.emplace_back(_due_to_error ? "cleanup_error" : "cleanup_flushed");
+        }
+        cv_.notify_all();
+    });
+
+    run_io(2);
+
+    std::vector<std::vector<byte_t>> send_messages;
+    add_offer_service_command(send_messages);
+    client_->send(&send_messages[0][0], static_cast<uint32_t>(send_messages[0].size()));
+
+    await_dispatch();
+    // The send queue is empty, so the flush completes immediately - on the second io thread, while
+    // the first is still inside on_message.
+    server_eps_.front()->start_flushing();
+
+    {
+        std::unique_lock lk{m_};
+        EXPECT_FALSE(cv_.wait_for(lk, std::chrono::milliseconds(200), [this] { return !events_.empty(); }))
+                << "flush cleanup ran while a dispatch was still in flight";
+    }
+
+    release_dispatch();
+
+    std::unique_lock lk{m_};
+    EXPECT_TRUE(cv_.wait_for(lk, std::chrono::seconds(5), [this] { return events_.size() == 2; })) << "cleanup handler was not invoked";
+    // A completed flush is a deliberate shutdown, so it must not be reported as an error.
+    EXPECT_EQ(events_, (std::vector<std::string>{"dispatch_end", "cleanup_flushed"}));
+}
+
+TEST_F(test_uds_local_endpoint, clean_endpoint_runs_on_io_context) {
+
+    auto server = create_server();
+    auto client = create_client_ep();
+    server->start([this](auto const& ep) {
+        server_eps_.push_back(ep);
+        ep->start();
+    });
+    client->start();
+    io_.poll();
+    auto config_msg = create_client_config_command();
+    client->send(&config_msg[0], static_cast<uint32_t>(config_msg.size()));
+    io_.poll();
+    ASSERT_FALSE(server_eps_.empty());
+
+    bool cleaned_up{false};
+    server_eps_.front()->register_cleanup_handler([&cleaned_up](bool) { cleaned_up = true; });
+
+    // Asking the endpoint to tear itself down is what every owner is expected to do instead. The
+    // handler lands posted, so the teardown is only complete once the io context ran it.
+    server_eps_.front()->request_cleanup(true);
+    EXPECT_FALSE(cleaned_up);
+    io_.poll();
+    EXPECT_TRUE(cleaned_up);
+    EXPECT_NO_THROW(server_eps_.front()->stop(true));
 }
 }

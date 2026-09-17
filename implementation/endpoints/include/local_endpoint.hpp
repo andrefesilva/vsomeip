@@ -23,6 +23,7 @@
 #include <boost/asio.hpp>
 
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <vector>
 #include <cstdint>
@@ -260,9 +261,20 @@ public:
     void start_flushing();
 
     /**
-     * @brief Triggers the cleanup_handler of the endpoint with an error.
+     * Asks the endpoint to tear itself down through its own cleanup handler.
+     * Keep in mind that an endpoint must only be stopped by its error
+     * handler, that will call the cleanup handler on the application.
+     * Also, the only way for an application to clear the data associated with
+     * an endpoint is by calling this function, which will call the cleanup handler.
+     * By doing the cleanup in a single place and with proper synchronization,
+     * we avoid concurrency between the application clearing the data and
+     * the endpoint error handler also clearing it, potentially clearing
+     * the state of a different endpoint.
+     *
+     * @param _due_to_error passed on to the cleanup handler: true is a failure the owner may react
+     *        to by reconnecting, false is a deliberate shutdown.
      */
-    void trigger_error();
+    void request_cleanup(bool _due_to_error);
 
 public:
     uint16_t get_local_port() const;
@@ -285,9 +297,10 @@ private:
 
     /**
      * @brief Internal part of escalate() with lock held
-     * @note `_lock` must be held, will be unlocked to invoke cleanup_handler with an error, then locked again
+     * @note `_lock` must be held, will be unlocked to invoke cleanup_handler, then locked again -
+     *       unless a dispatch is in flight, in which case the handler is parked for process().
      */
-    void escalate_internal(std::unique_lock<std::mutex>& _lock);
+    void escalate_internal(std::unique_lock<std::mutex>& _lock, bool _due_to_error = true);
 
     /**
      * @brief Validates peer credentials against security policy.
@@ -356,6 +369,9 @@ private:
     std::shared_ptr<timer> partial_message_timebox_;
 
     mutable std::mutex mutex_;
+
+    bool dispatching_{false};
+    std::optional<bool> pending_cleanup_due_to_error_{};
 };
 
 } // namespace vsomeip_v3

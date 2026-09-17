@@ -870,7 +870,7 @@ void routing_manager_stub::on_ping_timer_expired(boost::system::error_code const
                 // of the client is not racing with this timer.
                 if (auto ep = host_->get_endpoint_manager()->find_routing_endpoint(_entry.first); ep) {
                     VSOMEIP_WARNING_P << "Triggering a client error for: " << hex4(_entry.first);
-                    ep->trigger_error();
+                    ep->request_cleanup(true);
                 }
                 return true;
             }

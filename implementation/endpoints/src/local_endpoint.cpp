@@ -130,30 +130,27 @@ void local_endpoint::escalate() {
     escalate_internal(lock);
 }
 
-void local_endpoint::escalate_internal(std::unique_lock<std::mutex>& _lock) {
+void local_endpoint::escalate_internal(std::unique_lock<std::mutex>& _lock, bool _due_to_error) {
     if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
         return;
     }
     set_state_unlocked(state_e::FAILED);
 
-    // Note:
-    // There are two competing problems:
-    // 1. We should avoid locking any mutex when invoking the error handler,
-    //    as this has the potential of a lock inversion
-    // 2. The error handler needs to be called asap, to avoid cleaning up a "wrong"
-    //    endpoint, because the current error handlers are not guaranteed to identify this
-    //    endpoint uniquely, but only by the client identifier.
-    //
-    // While "1." can not be avoided, "2." is accidental complexity imposed on this class.
-    // In the future "2." should be rethought allowing to call "post"
-    // here. This would greatly ease reasoning about locking the class mutex, across
-    // functions.
-    cleanup_handler_t h = std::move(cleanup_handler_); // allowed to be invoked only once anyhow
-    if (h) {
-        _lock.unlock();
-        h(true);
-        _lock.lock();
+    // The handler must not be invoked with mutex_ held: it calls back into its owner, which locks in
+    // the opposite order. It must also not run concurrently with a dispatch this endpoint is
+    // driving, so while one is in flight it is parked for process() to drain as soon as on_message()
+    // returns - which also covers escalating from within that very dispatch.
+    if (!cleanup_handler_) {
+        return;
     }
+    if (dispatching_) {
+        pending_cleanup_due_to_error_ = _due_to_error;
+        return;
+    }
+    cleanup_handler_t h = std::move(cleanup_handler_);
+    _lock.unlock();
+    h(_due_to_error);
+    _lock.lock();
 }
 
 bool local_endpoint::send(byte_t const* _data, uint32_t _size) {
@@ -307,6 +304,9 @@ void local_endpoint::stop_internal(std::unique_lock<std::mutex>& lock, bool _due
     if (state_ == state_e::STOPPED) {
         return;
     }
+    if (cleanup_handler_) {
+        VSOMEIP_WARNING_P << "Endpoint was stopped outside its cleanup handler";
+    }
     if (connect_debounce_) {
         connect_debounce_->stop();
     }
@@ -382,7 +382,14 @@ void local_endpoint::send_buffer_unlock() {
                 // so that we will then close the socket due to our internal error anyhow
                 // -> there should be no error-handling race by moving the cleanup_handler out
                 // (and thereby guaranteeing that the cleanup code of this endpoint is executed exactly once)
-                boost::asio::post(io_, [handler = std::move(cleanup_handler_)] { handler(false); });
+                if (dispatching_) {
+                    // Same ordering as an escalation: send_cbk can complete the drain on one io
+                    // thread while another is still inside on_message(), so hand the cleanup to
+                    // process() rather than letting the two run against each other.
+                    pending_cleanup_due_to_error_ = false;
+                } else {
+                    boost::asio::post(io_, [handler = std::move(cleanup_handler_)] { handler(false); });
+                }
             }
         }
         return;
@@ -520,6 +527,11 @@ void local_endpoint::send_cbk(boost::system::error_code const& _ec, [[maybe_unus
         return false;
     }
 
+    if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
+        VSOMEIP_WARNING_P << "Discarding buffered data of a terminated endpoint, " << status_unlock();
+        return false;
+    }
+
     // avoid checking every incoming messages, if a client id was already received
     if (own_ == VSOMEIP_CLIENT_UNSET) {
         while (receive_buffer_->next_message(result)) {
@@ -541,15 +553,43 @@ void local_endpoint::send_cbk(boost::system::error_code const& _ec, [[maybe_unus
                     }
                 }
             }
+            dispatching_ = true;
             _lock.unlock(); // fine to unlock, because the caller needs to return, before we would schedule another read
             routing->on_message(result.message_data_, result.message_size_, peer_data_);
             _lock.lock(); // because next_message changes internal state -> lock
+            dispatching_ = false;
+            if (cleanup_handler_ && pending_cleanup_due_to_error_.has_value()) {
+                cleanup_handler_t its_handler = std::move(cleanup_handler_);
+                bool const its_due_to_error = pending_cleanup_due_to_error_.value();
+                pending_cleanup_due_to_error_.reset();
+                _lock.unlock();
+                its_handler(its_due_to_error);
+                _lock.lock();
+            }
+            if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
+                VSOMEIP_WARNING_P << "Stopping message processing, endpoint state: " << status_unlock();
+                return false;
+            }
         }
     } else {
         while (receive_buffer_->next_message(result)) {
+            dispatching_ = true;
             _lock.unlock(); // fine to unlock, because the caller needs to return, before we would schedule another read
             routing->on_message(result.message_data_, result.message_size_, peer_data_);
             _lock.lock(); // because next_message changes internal state -> lock
+            dispatching_ = false;
+            if (cleanup_handler_ && pending_cleanup_due_to_error_.has_value()) {
+                cleanup_handler_t its_handler = std::move(cleanup_handler_);
+                bool const its_due_to_error = pending_cleanup_due_to_error_.value();
+                pending_cleanup_due_to_error_.reset();
+                _lock.unlock();
+                its_handler(its_due_to_error);
+                _lock.lock();
+            }
+            if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
+                VSOMEIP_WARNING_P << "Stopping message processing, endpoint state: " << status_unlock();
+                return false;
+            }
         }
     }
     if (result.error_) {
@@ -678,12 +718,13 @@ void local_endpoint::start_flushing() {
     send_unlock();
 }
 
-void local_endpoint::trigger_error() {
+void local_endpoint::request_cleanup(bool _due_to_error) {
     // post to uphold the interface contract of the local_endpoint:
     // No public API call will lead to a callback invocation
-    boost::asio::post(io_, [weak_self = weak_from_this()] {
+    boost::asio::post(io_, [weak_self = weak_from_this(), _due_to_error] {
         if (auto self = weak_self.lock(); self) {
-            self->escalate();
+            std::unique_lock lock{self->mutex_};
+            self->escalate_internal(lock, _due_to_error);
         }
     });
 }

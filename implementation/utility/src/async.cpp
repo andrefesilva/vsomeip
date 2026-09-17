@@ -32,7 +32,7 @@ hook hook::then(std::function<void()> _on_ready) const {
     return t.get_hook();
 }
 
-hook hook::when_not_within(std::chrono::milliseconds _timeout, std::function<void()> _timeout_handler) const {
+hook hook::replace_after(std::chrono::milliseconds _timeout, std::function<void()> _timeout_handler) const {
     std::scoped_lock lock{state_->mtx_};
     assert(!state_->is_consumed_);
     assert(!state_->on_ready_);
@@ -63,6 +63,42 @@ hook hook::when_not_within(std::chrono::milliseconds _timeout, std::function<voi
         if (already_set) {
             return;
         }
+        timer->stop();
+        t.fire();
+    };
+    timer->start();
+
+    return t.get_hook();
+}
+
+hook hook::when_not_within(std::chrono::milliseconds _timeout, std::function<void()> _escalation_handler) const {
+    std::scoped_lock lock{state_->mtx_};
+    assert(!state_->is_consumed_);
+    assert(!state_->on_ready_);
+    if (state_->is_consumed_ || state_->on_ready_) {
+        return {};
+    }
+
+    auto t = trigger(state_->io_);
+    if (state_->is_ready_) {
+        state_->is_consumed_ = true;
+        t.fire();
+        return t.get_hook();
+    }
+
+    auto is_ready = std::make_shared<std::atomic<bool>>(false);
+    // unlike when_not_within, the timeout alone never fires t: the escalation only prods the
+    // awaited trigger along, and that trigger is still what completes the returned hook
+    auto timer = timer::create(state_->io_, _timeout, [is_ready, _escalation_handler] {
+        if (!is_ready->load()) {
+            _escalation_handler();
+        }
+        return false;
+    });
+
+    state_->on_ready_ = [is_ready, timer, t] {
+        // keeps a timer that has not expired yet from escalating
+        is_ready->store(true);
         timer->stop();
         t.fire();
     };
