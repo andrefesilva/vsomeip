@@ -72,6 +72,7 @@ set (TEST_SUITES
     test_api
     test_api_footguns
     test_api_routing_manager
+    test_api_availability_callbacks
 )
 
 foreach(TEST_SUITE ${TEST_SUITES})
