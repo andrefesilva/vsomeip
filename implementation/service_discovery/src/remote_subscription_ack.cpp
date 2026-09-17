@@ -10,17 +10,8 @@
 namespace vsomeip_v3 {
 namespace sd {
 
-remote_subscription_ack::remote_subscription_ack(const boost::asio::ip::address& _address) :
-    is_complete_(false), is_done_(false), target_address_(_address) {
+remote_subscription_ack::remote_subscription_ack(const boost::asio::ip::address& _address) : target_address_(_address), is_done_(false) {
     messages_.push_back(std::make_shared<message_impl>());
-}
-
-bool remote_subscription_ack::is_complete() const {
-    return is_complete_;
-}
-
-void remote_subscription_ack::complete() {
-    is_complete_ = true;
 }
 
 bool remote_subscription_ack::is_done() const {
@@ -66,14 +57,6 @@ std::set<std::shared_ptr<remote_subscription>> remote_subscription_ack::get_subs
 
 void remote_subscription_ack::add_subscription(const std::shared_ptr<remote_subscription>& _subscription) {
     subscriptions_.insert(_subscription);
-}
-
-bool remote_subscription_ack::has_subscription() const {
-    return (0 < subscriptions_.size());
-}
-
-std::mutex& remote_subscription_ack::get_mutex() {
-    return mutex_;
 }
 
 } // namespace sd

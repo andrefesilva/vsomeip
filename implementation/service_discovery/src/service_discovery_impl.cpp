@@ -192,12 +192,10 @@ void service_discovery_impl::stop() {
         std::scoped_lock its_lock(find_repetition_phase_timers_mutex_);
         find_repetition_phase_timers_.clear();
     }
-    {
-        std::scoped_lock its_lock(pending_remote_subscriptions_mutex_);
-        pending_remote_subscriptions_.clear();
-    }
+
     {
         std::scoped_lock its_lock(subscribed_mutex_);
+        pending_remote_subscriptions_.clear();
         subscribed_.clear();
     }
 }
@@ -530,12 +528,6 @@ void service_discovery_impl::unsubscribe_all_on_suspend() {
             VSOMEIP_WARNING_P << "Failed to send StopSubscribe to address: " << its_address.first.to_string();
         }
     }
-}
-
-void service_discovery_impl::remove_subscriptions(service_t _service, instance_t _instance) {
-
-    std::scoped_lock its_lock(subscribed_mutex_);
-    subscribed_.erase({_service, _instance});
 }
 
 std::pair<session_t, bool> service_discovery_impl::get_session(const boost::asio::ip::address& _address) {
@@ -876,14 +868,6 @@ void service_discovery_impl::insert_subscription_ack(const std::shared_ptr<remot
                                                      const std::shared_ptr<eventgroupinfo>& _info, ttl_t _ttl,
                                                      const std::shared_ptr<endpoint_definition>& _target,
                                                      const std::set<client_t>& _clients) {
-    std::scoped_lock its_lock(_acknowledgement->get_mutex());
-    insert_subscription_ack_unlocked(_acknowledgement, _info, _ttl, _target, _clients);
-}
-
-void service_discovery_impl::insert_subscription_ack_unlocked(const std::shared_ptr<remote_subscription_ack>& _acknowledgement,
-                                                              const std::shared_ptr<eventgroupinfo>& _info, ttl_t _ttl,
-                                                              const std::shared_ptr<endpoint_definition>& _target,
-                                                              const std::set<client_t>& _clients) {
     auto its_message = _acknowledgement->get_current_message();
 
     auto its_service = _info->get_service();
@@ -1136,18 +1120,7 @@ void service_discovery_impl::on_message(const byte_t* _data, length_t _length, c
             }
         }
 
-        {
-            std::scoped_lock its_lock_inner(its_acknowledgement->get_mutex());
-            its_acknowledgement->complete();
-            // TODO: Check the following logic...
-            if (its_acknowledgement->has_subscription()) {
-                update_acknowledgement(its_acknowledgement);
-            } else {
-                if (!its_acknowledgement->is_pending() && !its_acknowledgement->is_done()) {
-                    send_subscription_ack(its_acknowledgement);
-                }
-            }
-        }
+        send_subscription_ack(its_acknowledgement);
 
         // check resubscriptions for validity
         for (auto iter = its_resubscribes.begin(); iter != its_resubscribes.end();) {
@@ -1352,7 +1325,8 @@ void service_discovery_impl::process_serviceentry(std::shared_ptr<serviceentry_i
 
         remove_remote_offer_type(its_service, its_instance, its_reliable_address, its_reliable_port, its_unreliable_address,
                                  its_unreliable_port);
-        remove_subscriptions(its_service, its_instance);
+        // erase subscriptions
+        subscribed_.erase({its_service, its_instance});
         if (!is_suspended_) {
             host_->del_routing_info(its_service, its_instance, its_major, (its_reliable_port != ILLEGAL_PORT),
                                     (its_unreliable_port != ILLEGAL_PORT), true);
@@ -1705,7 +1679,7 @@ void service_discovery_impl::process_eventgroupentry(std::shared_ptr<eventgroupe
                                                      bool _is_stop_subscribe_subscribe, bool _force_initial_events,
                                                      const sd_acceptance_state_t& _sd_ac_state) {
 
-    std::set<client_t> its_clients({0}); // maybe overridden for selectives
+    std::set<client_t> its_clients({VSOMEIP_ROUTING_CLIENT}); // maybe overridden for selectives
 
     auto its_sender = _acknowledgement->get_target_address();
     auto its_session = _entry->get_owning_message()->get_session();
@@ -2184,7 +2158,6 @@ void service_discovery_impl::handle_eventgroup_subscription(
         if (_ttl == 0) { // --> unsubscribe
             its_subscription->set_ttl(0);
             if (!_is_stop_subscribe_subscribe) {
-                std::scoped_lock its_lock(_acknowledgement->get_mutex(), pending_remote_subscriptions_mutex_);
                 pending_remote_subscriptions_[its_subscription] = _acknowledgement;
                 _acknowledgement->add_subscription(its_subscription);
                 host_->on_remote_unsubscribe(its_subscription);
@@ -2197,15 +2170,10 @@ void service_discovery_impl::handle_eventgroup_subscription(
         }
         its_subscription->set_ttl(_ttl * get_ttl_factor(_service, _instance, ttl_factor_subscriptions_));
 
-        {
-            std::scoped_lock its_lock(_acknowledgement->get_mutex(), pending_remote_subscriptions_mutex_);
-            pending_remote_subscriptions_[its_subscription] = _acknowledgement;
-            _acknowledgement->add_subscription(its_subscription);
-        }
+        pending_remote_subscriptions_[its_subscription] = _acknowledgement;
+        _acknowledgement->add_subscription(its_subscription);
 
-        host_->on_remote_subscribe(
-                its_subscription,
-                std::bind(&service_discovery_impl::update_remote_subscription, shared_from_this(), std::placeholders::_1));
+        host_->on_remote_subscribe(its_subscription);
     }
 }
 
@@ -2213,7 +2181,6 @@ void service_discovery_impl::handle_eventgroup_subscription_nack(service_t _serv
                                                                  uint8_t _counter, const std::set<client_t>& _clients) {
     (void)_counter;
 
-    std::scoped_lock its_lock(subscribed_mutex_);
     if (auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
         if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
             auto its_subscription = found_eventgroup->second;
@@ -2239,7 +2206,6 @@ void service_discovery_impl::handle_eventgroup_subscription_ack(service_t _servi
     (void)_ttl;
     (void)_counter;
 
-    std::scoped_lock its_lock(subscribed_mutex_);
     if (auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
         if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
             for (const auto its_client : _clients) {
@@ -2904,35 +2870,16 @@ bool service_discovery_impl::check_source_address(const boost::asio::ip::address
 
 void service_discovery_impl::update_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription) {
 
+    std::scoped_lock its_lock(subscribed_mutex_);
+
     // check if parent subscription exists, if so use it to check for pending clients, otherwise use the subscription itself to check
     // for pending clients
     auto subscription_ = _subscription->get_parent_or_self();
     if (!subscription_->is_pending() || 0 == subscription_->get_answers()) {
-        std::shared_ptr<remote_subscription_ack> its_ack;
-        {
-            std::scoped_lock its_lock(pending_remote_subscriptions_mutex_);
-            auto found_ack = pending_remote_subscriptions_.find(_subscription);
-            if (found_ack != pending_remote_subscriptions_.end()) {
-                its_ack = found_ack->second;
-            }
-        }
-        if (its_ack) {
-            std::scoped_lock its_lock(its_ack->get_mutex());
-            update_acknowledgement(its_ack);
-        }
-    }
-}
-
-void service_discovery_impl::update_acknowledgement(const std::shared_ptr<remote_subscription_ack>& _acknowledgement) {
-
-    if (_acknowledgement->is_complete() && !_acknowledgement->is_pending() && !_acknowledgement->is_done()) {
-
-        send_subscription_ack(_acknowledgement);
-
-        const auto its_subscriptions = _acknowledgement->get_subscriptions();
-        std::scoped_lock its_lock(pending_remote_subscriptions_mutex_);
-        for (const auto& its_subscription : its_subscriptions) {
-            pending_remote_subscriptions_.erase(its_subscription);
+        auto found_ack = pending_remote_subscriptions_.find(_subscription);
+        if (found_ack != pending_remote_subscriptions_.end()) {
+            std::shared_ptr<remote_subscription_ack> its_ack = found_ack->second;
+            send_subscription_ack(its_ack); // might invalidate `found_ack`
         }
     }
 }
@@ -3310,8 +3257,9 @@ std::shared_ptr<subscription> service_discovery_impl::create_subscription(major_
 }
 
 void service_discovery_impl::send_subscription_ack(const std::shared_ptr<remote_subscription_ack>& _acknowledgement) {
+    // caller must be holding `subscribed_mutex_`
 
-    if (_acknowledgement->is_done()) {
+    if (_acknowledgement->is_pending() || _acknowledgement->is_done()) {
         return;
     }
 
@@ -3320,14 +3268,15 @@ void service_discovery_impl::send_subscription_ack(const std::shared_ptr<remote_
     uint32_t its_max_answers(1); // Must be 1 as "_acknowledgement" not
                                  // necessarily contains subscriptions
 
+    auto its_subscriptions = _acknowledgement->get_subscriptions();
     // Find highest number of necessary answers
-    for (const auto& its_subscription : _acknowledgement->get_subscriptions()) {
+    for (const auto& its_subscription : its_subscriptions) {
         its_max_answers = std::max(its_max_answers, its_subscription->get_answers());
     }
 
     // send messages
     for (uint32_t i = 0; i < its_max_answers; i++) {
-        for (const auto& its_subscription : _acknowledgement->get_subscriptions()) {
+        for (const auto& its_subscription : its_subscriptions) {
             if (i < its_subscription->get_answers()) {
                 if (its_subscription->get_ttl() > 0) {
                     auto its_info = its_subscription->get_eventgroupinfo();
@@ -3346,12 +3295,12 @@ void service_discovery_impl::send_subscription_ack(const std::shared_ptr<remote_
                         }
 
                         if (0 < its_acked.size()) {
-                            insert_subscription_ack_unlocked(_acknowledgement, its_info, its_subscription->get_ttl(),
-                                                             its_subscription->get_subscriber(), its_acked);
+                            insert_subscription_ack(_acknowledgement, its_info, its_subscription->get_ttl(),
+                                                    its_subscription->get_subscriber(), its_acked);
                         }
 
                         if (0 < its_nacked.size()) {
-                            insert_subscription_ack_unlocked(_acknowledgement, its_info, 0, its_subscription->get_subscriber(), its_nacked);
+                            insert_subscription_ack(_acknowledgement, its_info, 0, its_subscription->get_subscriber(), its_nacked);
                         }
                     }
                 }
@@ -3363,8 +3312,9 @@ void service_discovery_impl::send_subscription_ack(const std::shared_ptr<remote_
         update_subscription_expiration_timer(its_messages);
     }
 
-    // We might need to send initial events
-    for (const auto& its_subscription : _acknowledgement->get_subscriptions()) {
+    for (const auto& its_subscription : its_subscriptions) {
+        // initial events
+
         // Assumption: We do _NOT_ need to check whether this is a child
         // subscription, as this only applies to selective events, which
         // are owned by exclusive event groups.
@@ -3375,6 +3325,9 @@ void service_discovery_impl::send_subscription_ack(const std::shared_ptr<remote_
                 its_info->send_initial_events(its_subscription->get_reliable(), its_subscription->get_unreliable());
             }
         }
+
+        // and cleanup pending remote subscriptions
+        pending_remote_subscriptions_.erase(its_subscription);
     }
 }
 

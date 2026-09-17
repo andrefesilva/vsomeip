@@ -2095,8 +2095,7 @@ void routing_manager_impl::init_routing_info() {
     }
 }
 
-void routing_manager_impl::on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription,
-                                               const remote_subscription_callback_t& _callback) {
+void routing_manager_impl::on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription) {
 
     auto its_eventgroupinfo = _subscription->get_eventgroupinfo();
     if (!its_eventgroupinfo) {
@@ -2137,9 +2136,7 @@ void routing_manager_impl::on_remote_subscribe(std::shared_ptr<remote_subscripti
     auto its_result = its_eventgroupinfo->update_remote_subscription(_subscription, its_expiration, its_added, its_id, true);
     if (its_result) {
         if (!_subscription->is_pending()) { // resubscription without change
-            its_update_lock.unlock();
-            _callback(_subscription);
-            its_update_lock.lock();
+            // no-op
         } else if (!its_added.empty()) { // new clients for a selective subscription
             const client_t its_offering_client = find_local_client(its_service, its_instance);
             send_subscription(its_offering_client, its_service, its_instance, its_eventgroup, its_major, its_added,
@@ -2164,18 +2161,10 @@ void routing_manager_impl::on_remote_subscribe(std::shared_ptr<remote_subscripti
                 its_warning << "]";
             }
             VSOMEIP_WARNING_P << its_warning.str();
-
-            its_update_lock.unlock();
-            _callback(_subscription);
-            its_update_lock.lock();
         }
     } else { // new subscription
         if (its_eventgroupinfo->is_remote_subscription_limit_reached(_subscription)) {
             _subscription->set_all_client_states(remote_subscription_state_e::SUBSCRIPTION_NACKED);
-
-            its_update_lock.unlock();
-            _callback(_subscription);
-            its_update_lock.lock();
             _subscription->clear_destiny();
             return;
         }
@@ -2223,7 +2212,7 @@ void routing_manager_impl::on_subscribe_ack(client_t _client, service_t _service
     // have to lock event_registration_mutex_ to prevent parallel execution with subscribe
     // as to not miss any acknowledgement for a subscription that is currently being processed
     // (insert_subscription/handle_subscription_state)
-    std::scoped_lock its_lock{event_registration_mutex_};
+    std::unique_lock its_lock{event_registration_mutex_};
     auto its_eventgroup = find_eventgroup(_service, _instance, _eventgroup);
     if (its_eventgroup) {
         auto its_subscription = its_eventgroup->get_remote_subscription(_id);
@@ -2239,14 +2228,15 @@ void routing_manager_impl::on_subscribe_ack(client_t _client, service_t _service
             }
 
             if (discovery_) {
-                discovery_->update_remote_subscription(its_subscription);
-
                 VSOMEIP_INFO << "REMOTE SUBSCRIBE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "."
                              << hex4(_eventgroup) << "] from " << its_subscription->get_subscriber()->get_address() << ":"
                              << its_subscription->get_subscriber()->get_port()
                              << (its_subscription->get_subscriber()->is_reliable() ? " reliable" : " unreliable")
                              << " was accepted. id=" << hex4(_id);
 
+                // NOTE: sd can call back into rmi, so cannot be holding `event_registration_mutex_`
+                its_lock.unlock();
+                discovery_->update_remote_subscription(its_subscription);
                 return;
             }
         } else {

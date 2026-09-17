@@ -162,8 +162,8 @@ public:
                                  const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
                                  endpoint_manager_impl::remote_offer_state& _state);
 
-    // Handle remote subscriptions / subscription acks
-    void on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription, const remote_subscription_callback_t& _callback);
+    // Handle remote subscriptions
+    void on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription);
     void on_remote_unsubscribe(std::shared_ptr<remote_subscription>& _subscription);
 
     void expire_subscriptions(const boost::asio::ip::address& _address);

@@ -32,7 +32,6 @@ public:
 
     bool operator==(const remote_subscription& _other) const;
     bool equals(const std::shared_ptr<remote_subscription>& _other) const;
-    bool address_equals(const std::shared_ptr<remote_subscription>& _other) const;
 
     void reset(const std::set<client_t>& _clients);
 

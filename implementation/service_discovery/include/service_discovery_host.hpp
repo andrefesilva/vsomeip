@@ -13,7 +13,6 @@
 #include <boost/asio/io_context.hpp>
 
 #include "../../endpoints/include/endpoint_manager_impl.hpp"
-#include "../../routing/include/function_types.hpp"
 #include "../../routing/include/types.hpp"
 
 #include <vsomeip/message.hpp>
@@ -23,6 +22,7 @@ namespace vsomeip_v3 {
 class configuration;
 class boardnet_endpoint;
 class endpoint_definition;
+class remote_subscription;
 
 namespace sd {
 
@@ -73,8 +73,7 @@ public:
     virtual void expire_subscriptions(const boost::asio::ip::address& _address) = 0;
     virtual void expire_services(const boost::asio::ip::address& _address) = 0;
 
-    virtual void on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription,
-                                     const remote_subscription_callback_t& _callback) = 0;
+    virtual void on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
 
     virtual void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, bool _remove,
                                    remote_subscription_id_t _subscription_id) = 0;
