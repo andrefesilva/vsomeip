@@ -47,7 +47,24 @@ public:
     /// Whichever wins cancels the other.
     /// Guarantees the returned hook completes even if this hook never fires.
     /// Mutually exclusive with then().
-    hook when_not_within(std::chrono::milliseconds _timeout, std::function<void()> _timeout_handler) const;
+    hook replace_after(std::chrono::milliseconds _timeout, std::function<void()> _timeout_handler) const;
+
+    /// Like replace_after(), except that the timeout does not complete the returned hook - this
+    /// hook still does.
+    /// If this hook fires within _timeout, the returned hook completes and the timer is cancelled.
+    /// If _timeout expires first, _escalation_handler runs - to prod whatever this hook awaits into
+    /// finishing - and the returned hook completes once this hook fires afterwards. The escalation
+    /// may therefore be asynchronous itself: all it has to do is make the trigger this hook came
+    /// from eventually fire, which is exactly what it asked for.
+    /// Note that _escalation_handler is not serialized against the returned hook completing: once
+    /// the escalation makes the trigger fire, the continuation of the returned hook can run before
+    /// the handler returned. A caller whose escalation and completion touch the same data has to
+    /// lock them against each other itself.
+    /// Because the timeout alone never completes the returned hook, an escalation that fails to
+    /// bring the trigger about leaves it hanging: chain a replace_after() onto the result to
+    /// bound the escalation itself.
+    /// Mutually exclusive with then().
+    hook when_not_within(std::chrono::milliseconds _timeout, std::function<void()> _escalation_handler) const;
 
 private:
     std::shared_ptr<shared_trigger_state> state_;

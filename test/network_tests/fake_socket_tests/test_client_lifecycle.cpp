@@ -1832,6 +1832,15 @@ TEST_F(test_provider_consumer_error_isolation, provider_socket_failure_does_not_
 // been taken over by a new, live client (here C, which only consumes our S1, so A keeps no consumer
 // entry for it). A new routing_info at address:port must drop ONLY the stale consumer entry and
 // MUST NOT tear down the live provider connection of the new client.
+//
+// The whole sequence is driven by the real system, because what leaves A stale is subtle:
+//  - A requests S2 from B but never sends to it, so A's consumer entry for B has NO endpoint, and
+//    therefore no cleanup handler that could ever retire it.
+//  - When B goes down, the routing host notices and sends the RIE_DELETE for S2. That retires S2's
+//    availability.
+//    B's address:port mapping stays behind in A's consumer_ table.
+//  - C then binds the port B freed (get_local_server_port hands out the lowest free port of the
+//    guest range), so A's leftover mapping now collides with a live client.
 TEST_F(test_provider_consumer_error_isolation, stale_consumer_does_not_tear_down_live_provider_of_new_client) {
 
     rm_ = start_client(routingmanager_name_);
@@ -1843,11 +1852,35 @@ TEST_F(test_provider_consumer_error_isolation, stale_consumer_does_not_tear_down
     a_->offer_event(ev1_.si_, ev1_.to_event_spec());
     a_->offer(s1_);
 
-    // C is the new, live client: it only CONSUMES S1 (offers nothing), so A holds no consumer_
-    // entry for C — only its accepted provider endpoint C -> A at (127.0.0.1, C_port + 1).
+    // B offers S2 and A requests it, so A takes a consumer entry for B carrying B's address:port.
+    // A never sends to B, so that entry never gets an endpoint.
+    b_ = start_client(b_name_);
+    ASSERT_NE(b_, nullptr);
+    ASSERT_TRUE(b_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    b_->offer(s2_);
+    b_->offer_event(ev2_.si_, ev2_.to_event_spec());
+    a_->request_service(s2_);
+    ASSERT_TRUE(a_->availability_record_.wait_for_last(service_availability::available(s2_)))
+            << "A never saw B's S2: " << a_->availability_record_;
+
+    auto const stale_port = server_port(b_name_);
+    ASSERT_TRUE(stale_port.has_value()) << "could not resolve B's server port";
+    auto const old_client = b_->get_client_id();
+
+    // B goes down. The routing host detects it and tells A, which retires S2 — but B's
+    // address:port mapping survives in A's consumer_ table, with no endpoint behind it.
+    stop_client(b_name_);
+    ASSERT_TRUE(a_->availability_record_.wait_for_any(service_availability::unavailable(s2_)))
+            << "A was not told that B's S2 is gone: " << a_->availability_record_;
+
+    // C is the new, live client. It binds the port B just freed and only CONSUMES S1, so A holds
+    // no consumer entry for it — only its accepted provider endpoint C -> A at (address, port + 1).
     c_ = start_client(c_name_);
     ASSERT_NE(c_, nullptr);
     ASSERT_TRUE(c_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    ASSERT_EQ(server_port(c_name_), stale_port) << "C did not reuse B's port, so there is no address collision to exercise";
+    ASSERT_NE(c_->get_client_id(), old_client) << "C reused B's client id, which resolves the collision without this path";
+
     c_->request_service(s1_);
     ASSERT_TRUE(c_->availability_record_.wait_for_last(service_availability::available(s1_)));
     c_->subscribe_event(ev1_);
@@ -1858,38 +1891,23 @@ TEST_F(test_provider_consumer_error_isolation, stale_consumer_does_not_tear_down
     ASSERT_TRUE(c_->message_record_.wait_for(notification_checker(s1_, ev1_.event_id_, s1_payload_)))
             << "baseline S1 notification not received by C: " << c_->message_record_;
 
-    auto const c_port = server_port(c_name_);
-    ASSERT_TRUE(c_port.has_value()) << "could not resolve C's server port";
-    auto const localhost = boost::asio::ip::make_address_v4("127.0.0.1");
-
-    // Fabricated stale old client and the new client; keep both distinct from C's real id.
-    client_t const old_client = 0x6001;
-    client_t const new_client = 0x7777;
-    ASSERT_NE(c_->get_client_id(), old_client);
-    ASSERT_NE(c_->get_client_id(), new_client);
-    service_instance const stale_service{.service_ = 0x7A01, .instance_ = 0x1, .major_ = 1, .minor_ = 0};
-    service_instance const new_service{.service_ = 0x7A02, .instance_ = 0x1, .major_ = 1, .minor_ = 0};
-    a_->request_service(stale_service);
-
-    // 1. Plant a STALE consumer mapping on A: the old client "offers" S_STALE at (127.0.0.1, C_port).
-    //    C offers nothing, so this is the only consumer_ entry at that address:port -> unambiguous.
-    ASSERT_TRUE(inject_routing_info_add(a_name_, old_client, stale_service, localhost, *c_port));
-    ASSERT_TRUE(a_->availability_record_.wait_for_any(service_availability::available(stale_service)))
-            << "stale consumer mapping was not installed on A: " << a_->availability_record_;
-
     // Only observe post-trigger effects.
     c_->availability_record_.clear();
     c_->message_record_.clear();
     a_->availability_record_.clear();
 
-    // 2. A new client id shows up at that same address:port. get_client_by_address resolves the OLD
-    //    stale client => its consumer entry is dropped; but the provider endpoint at C_port + 1 is
-    //    bound to C (a different, live client) => it must survive.
-    ASSERT_TRUE(inject_routing_info_add(a_name_, new_client, new_service, localhost, *c_port));
+    // C offers a service A requests, so the routing host announces C at the very address:port A
+    // still maps to the departed B. This is A's first routing_info about C, so
+    // get_client_by_address resolves the OLD client and its leftover consumer entry is dropped;
+    // but the provider endpoint at (port + 1) is bound to C (a different, live client) => it must
+    // survive.
+    service_instance const new_service{.service_ = 0x7A02, .instance_ = 0x1, .major_ = 1, .minor_ = 0};
+    a_->request_service(new_service);
+    c_->offer(new_service);
 
-    // Barrier: the stale consumer mapping is gone => the old-client cleanup ran.
-    ASSERT_TRUE(a_->availability_record_.wait_for_any(service_availability::unavailable(stale_service)))
-            << "old-client consumer cleanup barrier not reached on A: " << a_->availability_record_;
+    // Barrier: A processed the routing_info that carries the collision.
+    ASSERT_TRUE(a_->availability_record_.wait_for_any(service_availability::available(new_service)))
+            << "A never saw C's new service, so the takeover routing_info was not processed: " << a_->availability_record_;
 
     // The live provider connection C -> A must be untouched: C must NOT see S1 go unavailable.
     EXPECT_FALSE(c_->availability_record_.wait_for_any(service_availability::unavailable(s1_),

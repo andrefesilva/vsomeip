@@ -239,8 +239,10 @@ private:
      */
     void clear_remote_subscriptions(std::scoped_lock<std::mutex> const& _provider_lock);
 
-    void restart_sender(std::scoped_lock<std::mutex> const& _lock);
-    void debounce_restart_sender_done();
+    /// Creates and starts a sender, unless one is already in place.
+    void create_sender(std::scoped_lock<std::mutex> const& _lock);
+
+    void debounce_create_sender_done();
 
     /// @brief Provider-side cleanup for a failing/closing accepted local server endpoint.
     ///
@@ -263,9 +265,18 @@ private:
     /// @param _requested_services what services were requested by us and offered by client;
     void remove_local_consumer(client_t _client, bool _due_to_error, local_service_table& _requested_services);
 
-    void cleanup_consumer();
-    void clear_provider_endpoints(std::scoped_lock<std::mutex> const& _provider_lock);
     void cleanup_subscriber(std::scoped_lock<std::mutex> const& _provider_lock);
+
+    // Ask every endpoint of the collection to tear itself down through its own cleanup handler, and
+    // return a hook that completes once the last of them is gone. Nothing is dropped behind a
+    // handler's back, so the returned hook is the only way to learn the teardown is done
+    // This functions are currently only called by the reconnect.
+    // If in the future this changes, change its logs accordingly.
+    async::hook reconnect_request_cleanup_consumer();
+    async::hook reconnect_request_cleanup_provider();
+
+    // Continuation of reconnect(), once every endpoint has been torn down.
+    void finish_reconnect();
 
     client_t find_local_client(service_t _service, instance_t _instance) const;
     bool send_event(client_t _client, std::shared_ptr<message> _message, bool _force) override;
@@ -392,8 +403,6 @@ private:
 
     std::shared_ptr<local_endpoint> find_or_create_consumer_ep(client_t _client);
     std::shared_ptr<local_endpoint> find_consumer_ep(client_t _client);
-
-    void remove_consumer(client_t _client, bool _due_to_error, std::scoped_lock<std::mutex> const& _consumer_lock);
 
     async::hook flush_consumer();
     async::hook flush_provider();
@@ -529,9 +538,14 @@ private:
     // Consumed registrations of a not-yet-requested service. Membership here - not ANY_MAJOR, a legitimate request - marks them unresolved.
     std::vector<protocol::register_event_data> pending_consumed_event_registrations_;
 
+    // Armed by the flushes of stop(), fired once the last endpoint of the collection is gone.
     async::trigger on_sender_stopped_;
-    async::trigger on_consumer_flushed_;
-    async::trigger on_provider_flushed_;
+
+    // The same, for the cleanup requests of reconnect(). Separate triggers, as a stop() may be in
+    // flight while reconnect() is still awaiting its own teardown. The sender needs no counterpart:
+    // its cleanup handler continues the reconnect itself, so nobody awaits it here.
+    async::trigger on_consumer_cleaned_;
+    async::trigger on_provider_cleaned_;
 };
 
 } // namespace vsomeip_v3
