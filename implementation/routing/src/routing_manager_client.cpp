@@ -1016,10 +1016,22 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         }
 
         case protocol::id_e::ASSIGN_CLIENT_ACK_ID: {
-            if (client_t new_id; protocol::deserialize(new_id, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                on_client_assign_ack(new_id, !_peer_data.routing_address_.is_unspecified());
+            if (is_from_routing) {
+                if (protocol::assign_client_ack_data its_data;
+                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+                    on_client_assign_ack(its_data.assigned_, !_peer_data.routing_address_.is_unspecified(), its_data.policies_);
+                } else {
+                    VSOMEIP_ERROR_P << "Assign client ack command deserialization failed memory: " << utility::dump(_data, _size);
+                    // If it fails early, tear the
+                    // sender down so it restarts registration
+                    std::scoped_lock lock{mutex_};
+                    if (sender_) {
+                        sender_->request_cleanup(true);
+                    }
+                }
             } else {
-                VSOMEIP_ERROR_P << "Assign client ack command deserialization failed memory: " << utility::dump(_data, _size);
+                VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received assign_client_ack from client 0x" << hex4(its_client)
+                                << " which is not the router!";
             }
             break;
         }
@@ -1367,39 +1379,23 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
             if (is_from_routing) {
                 if (protocol::update_security_policy_data its_data;
                     protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                    auto its_policy = std::make_shared<policy>();
-                    const byte_t* ptr = its_data.policy_.data();
-                    uint32_t size = static_cast<uint32_t>(its_data.policy_.size());
-                    if (its_data.policy_.size() == 0 || !its_policy->deserialize(ptr, size)) {
-                        VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed: " << utility::dump(_data, _size);
-                        break;
-                    }
-
-                    uid_t its_uid;
-                    gid_t its_gid;
-                    if (its_policy->get_uid_gid(its_uid, its_gid)) {
-                        if (is_internal_policy_update || get_policy_manager()->is_policy_update_allowed(its_uid, its_policy)) {
-                            get_policy_manager()->update_security_policy(its_uid, its_gid, its_policy);
-                            std::scoped_lock lock{mutex_};
-                            if (sender_) {
-                                if (!sender_->send(protocol::create_update_security_policy_response_cmd(state_machine_->client(),
-                                                                                                        its_data.update_id_))) {
-                                    VSOMEIP_ERROR_P << "Failed to send UPDATE_SECURITY_POLICY_RESPONSE for uid/gid " << its_uid << "/"
-                                                    << its_gid;
-                                }
-                            } else {
-                                VSOMEIP_ERROR_P << "Failed due to a missing sender";
+                    if (apply_security_policy_update(its_data, is_internal_policy_update)) {
+                        std::scoped_lock lock{mutex_};
+                        if (sender_) {
+                            if (!sender_->send(protocol::create_update_security_policy_response_cmd(state_machine_->client(),
+                                                                                                    its_data.update_id_))) {
+                                VSOMEIP_ERROR_P << "Failed to send UPDATE_SECURITY_POLICY_RESPONSE for update id " << its_data.update_id_;
                             }
+                        } else {
+                            VSOMEIP_ERROR_P << "Failed due to a missing sender";
                         }
-                    } else {
-                        VSOMEIP_ERROR << "vSomeIP Security: Policy has no valid uid/gid!";
                     }
                 } else {
                     VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed: " << utility::dump(_data, _size);
                 }
             } else {
-                VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a policy update from client 0x" << hex4(its_client)
-                                << " which is not the router!";
+                VSOMEIP_ERROR_P << "Client 0x" << hex4(state_machine_->client()) << " received a policy update from client 0x"
+                                << hex4(state_machine_->client()) << " which is not the router!";
             }
             break;
         }
@@ -2228,9 +2224,37 @@ void routing_manager_client::on_update_security_credentials(std::vector<std::pai
         get_policy_manager()->add_security_credentials(its_uid, its_gid, its_policy, get_client());
     }
 }
+
+bool routing_manager_client::apply_security_policy_update(protocol::update_security_policy_data const& _data, bool _is_internal) {
+    auto its_policy = std::make_shared<policy>();
+    const byte_t* ptr = _data.policy_.data();
+    auto size = static_cast<uint32_t>(_data.policy_.size());
+    if (size == 0 || !its_policy->deserialize(ptr, size)) {
+        VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed: "
+                      << utility::dump(_data.policy_.data(), static_cast<uint32_t>(_data.policy_.size()));
+        return false;
+    }
+
+    uid_t its_uid;
+    gid_t its_gid;
+    if (!its_policy->get_uid_gid(its_uid, its_gid)) {
+        VSOMEIP_ERROR << "vSomeIP Security: Policy has no valid uid/gid!";
+        return false;
+    }
+
+    if (!_is_internal && !get_policy_manager()->is_policy_update_allowed(its_uid, its_policy)) {
+        VSOMEIP_ERROR << "vSomeIP Security: Update not allowed for uid " << its_uid;
+        return false;
+    }
+
+    get_policy_manager()->update_security_policy(its_uid, its_gid, its_policy);
+    return true;
+}
 #endif
 
-void routing_manager_client::on_client_assign_ack(const client_t& _client, bool _is_tcp) {
+void routing_manager_client::on_client_assign_ack(
+        const client_t& _client, bool _is_tcp,
+        [[maybe_unused]] std::vector<protocol::update_security_policy_data> const& _requester_policy_updates) {
 
     if (_client == VSOMEIP_CLIENT_UNSET) {
         VSOMEIP_ERROR_P << "(" << host_->get_name() << ":" << hex4(_client) << ") Invalid clientID";
@@ -2238,6 +2262,15 @@ void routing_manager_client::on_client_assign_ack(const client_t& _client, bool 
     }
 
     host_->set_client(_client);
+
+#ifndef VSOMEIP_DISABLE_SECURITY
+    // Bundled with the ack (rather than sent separately beforehand as UPDATE_SECURITY_POLICY_INT_ID)
+    // so the client's id is already assigned by the time it applies them. No response is sent back
+    // for these: this is the client's own initial state
+    for (auto const& its_update : _requester_policy_updates) {
+        apply_security_policy_update(its_update, true);
+    }
+#endif // !VSOMEIP_DISABLE_SECURITY
 
     {
         std::scoped_lock its_cp_lock{consumer_mutex_, provider_mutex_};

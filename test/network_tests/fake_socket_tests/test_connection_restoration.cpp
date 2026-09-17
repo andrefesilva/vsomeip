@@ -1391,7 +1391,7 @@ TEST_F(test_connection_restoration, double_assign_client_ack_id_diff_ids) {
     EXPECT_TRUE(router_to_server_gate->wait_for_blocked());
 
     // Inject the old client id, different from the one host assigned to server
-    auto assign_client_ack_cmd = protocol::create_assign_client_ack_cmd(0, 0xcafe);
+    auto assign_client_ack_cmd = protocol::create_assign_client_ack_cmd(0, 0xcafe, {});
     std::vector<unsigned char> old_client_id_payload(protocol::wire_size(assign_client_ack_cmd));
     protocol::serialize(assign_client_ack_cmd, old_client_id_payload.data());
     inject_command_tcp(server_name_, routingmanager_name_, old_client_id_payload, socket_role::client);

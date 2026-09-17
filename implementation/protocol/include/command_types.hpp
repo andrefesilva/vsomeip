@@ -49,6 +49,20 @@ struct command_header {
     uint32_t length_; // Payload length (bytes following the header).
 };
 
+// Best-effort command_header read directly off the wire: usable for logging even when a command
+// could not be fully parsed. Fields that _data is too short to contain stay at an obviously-bogus
+// sentinel (rather than a plausible-looking 0) so a truncated read is never mistaken for real data.
+inline command_header read_command_header(byte_t const* _data, size_t _size) {
+    command_header its_header{.id_ = id_e::UNKNOWN_ID, .version_ = 0xff, .client_ = static_cast<client_t>(0xffff), .length_ = 0};
+    its_header.id_ = read_command_id(_data, _size);
+    its_header.client_ = read_command_client(_data, _size);
+    if (_size >= COMMAND_POSITION_PAYLOAD) {
+        std::memcpy(&its_header.version_, _data + COMMAND_POSITION_VERSION, sizeof(its_header.version_));
+        std::memcpy(&its_header.length_, _data + COMMAND_POSITION_SIZE, sizeof(its_header.length_));
+    }
+    return its_header;
+}
+
 struct simple_command_data {
     auto operator<=>(simple_command_data const&) const = default;
 
@@ -346,6 +360,25 @@ struct update_security_policy_command_data {
     update_security_policy_view payload_;
 };
 
+// Requester policies bundled with an ASSIGN_CLIENT_ACK_ID: sent together with the assigned client
+// id so the client always has its real id by the time it acks one of these
+// used for serialization and the compound command
+struct assign_client_ack_view {
+    client_t assigned_;
+    std::vector<update_security_policy_view> policies_;
+};
+
+struct assign_client_ack_command_data {
+    command_header header_;
+    assign_client_ack_view payload_;
+};
+
+// used for deserialization
+struct assign_client_ack_data {
+    client_t assigned_{};
+    std::vector<update_security_policy_data> policies_;
+};
+
 struct distribute_security_policies_data {
     command_header header_;
     std::vector<std::span<byte_t const>> payload_;
@@ -441,6 +474,19 @@ inline uint32_t wire_size(config_command_data const& _d) {
     return static_cast<uint32_t>(size);
 }
 
+inline uint32_t wire_size(update_security_policy_view const& _v) {
+    return sizeof(uint32_t) + static_cast<uint32_t>(_v.policy_.size());
+}
+
+inline uint32_t wire_size(assign_client_ack_view const& _d) {
+    // count prefix + per-entry length prefix, in addition to each entry's own wire size
+    size_t size = sizeof(client_t) + sizeof(uint32_t);
+    for (auto const& p : _d.policies_) {
+        size += sizeof(uint32_t) + wire_size(p);
+    }
+    return static_cast<uint32_t>(size);
+}
+
 inline uint32_t wire_size(assign_client_data const& _d) {
     size_t size = sizeof(uint32_t) + _d.name_.size() + sizeof(uint8_t);
     if (_d.has_address_) {
@@ -483,8 +529,11 @@ inline auto create_resend_provided_events_cmd(client_t _client, pending_remote_o
     return single_field_command_data<pending_remote_offer_id_t>::create(id_e::RESEND_PROVIDED_EVENTS_ID, _client, _id);
 }
 
-inline auto create_assign_client_ack_cmd(client_t _client, client_t _assigned_id) {
-    return single_field_command_data<client_t>::create(id_e::ASSIGN_CLIENT_ACK_ID, _client, _assigned_id);
+inline auto create_assign_client_ack_cmd(client_t _client, client_t _assigned_id, std::vector<update_security_policy_view> _policies) {
+    assign_client_ack_view payload{.assigned_ = _assigned_id, .policies_ = std::move(_policies)};
+    uint32_t const length = wire_size(payload);
+    return assign_client_ack_command_data{.header_ = command_header::create(id_e::ASSIGN_CLIENT_ACK_ID, length, _client),
+                                          .payload_ = std::move(payload)};
 }
 
 inline auto create_update_security_policy_response_cmd(client_t _client, uint32_t _update_id) {

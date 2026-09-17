@@ -14,6 +14,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -62,6 +63,15 @@ struct test_security_policy_distribution : public base_fake_socket_fixture {
                     return false; // never drop a message
                 },
                 socket_role::server);
+        // full command_message (not just the id) recorded here: the client id in its header is
+        // exactly what routing_manager_stub::on_message checks against the bound connection.
+        set_custom_command_handler(
+                client_name_, routingmanager_name_,
+                [this](command_message const& _msg) {
+                    commands_from_client_.record(_msg);
+                    return false; // never drop a message
+                },
+                socket_role::client);
     }
 
     /// Starts the routing manager and gives the client a configuration of its own, allowing only
@@ -84,9 +94,10 @@ struct test_security_policy_distribution : public base_fake_socket_fixture {
 
     // Declared before ecu_ so it is destroyed after it: ecu_'s apps (and their background IO
     // threads, which invoke the custom command handler that records into this) must be fully
-    // stopped before commands_to_client_ is torn down, otherwise a still-running app thread can
-    // race with the destructor of its underlying vector.
+    // stopped before commands_to_client_/commands_from_client_ are torn down, otherwise a
+    // still-running app thread can race with the destructor of its underlying vector.
     attribute_recorder<protocol::id_e> commands_to_client_;
+    attribute_recorder<command_message> commands_from_client_;
 
     /// peer_credentials_ to accept the incoming local connections, own_credentials() because the
     /// routing manager host registers itself through a routing_manager_client as well.
@@ -112,6 +123,86 @@ TEST_F(test_security_policy_distribution, distributed_policy_arrives_after_the_c
     EXPECT_FALSE(its_drop.wait());
 }
 
+TEST_F(test_security_policy_distribution, requester_policy_is_bundled_into_the_assign_client_ack) {
+    // the sequence of vsomeip messages being tested is the following:
+    // 1. the client registers with the routing manager (ASSIGN_CLIENT_ID)
+    // 2. the routing manager responds with ASSIGN_CLIENT_ACK_ID, which carries the assigned client
+    //    id together with any requester policy for that client, bundled directly into the ack
+    //    (rather than sent separately beforehand as UPDATE_SECURITY_POLICY_INT_ID) precisely so
+    //    that the client already has its real id by the time it applies one
+    // 3. the client applies the bundled policy directly and does NOT send a response back: this is
+    //    the client's own initial state, not a runtime update, and nothing external ever waits on
+    //    whether a freshly-registering client applied its own initial policies
+
+    // start client_name_ without client_id_ in the config, so it gets a dynamically assigned client id
+    ecu_.add_app(client_name_);
+    ecu_.prepare();
+    ecu_.start_router();
+    ASSERT_NE(ecu_.router_, nullptr);
+    ASSERT_TRUE(ecu_.router_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+    service_instance const si{0x1234, 0x5678};
+    security_credentials const some_requester{peer_credentials_.uid_ + 1, peer_credentials_.gid_ + 1};
+
+    // a requester is needed to populate any_client_policies_ so a match can be found
+    ecu_.router_->allow_requesting(some_requester.uid_, some_requester.gid_, si);
+
+    // the client's uid/gid (peer_credentials_) is allowed to offer the
+    // service, so the client can register and receive a policy for it.
+    ecu_.router_->allow_offering(peer_credentials_.uid_, peer_credentials_.gid_, si);
+
+    // capture the actual ASSIGN_CLIENT_ACK_ID sent to the client, so its bundled content can be
+    // inspected below - commands_to_client_ (installed by the fixture) only records the message id
+    attribute_recorder<command_message> ack_to_client;
+    set_custom_command_handler(
+            client_name_, routingmanager_name_,
+            [&ack_to_client](command_message const& _msg) {
+                if (_msg.id_ == protocol::id_e::ASSIGN_CLIENT_ACK_ID) {
+                    ack_to_client.record(_msg);
+                }
+                return false; // never drop a message
+            },
+            socket_role::server);
+
+    auto* its_client = ecu_.start_one(client_name_);
+    ASSERT_NE(its_client, nullptr);
+    // registration completing at all proves the bundled policy round-tripped and was applied
+    // without upsetting the registration handshake
+    ASSERT_TRUE(its_client->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+    // no UPDATE_SECURITY_POLICY_RESPONSE_ID is ever sent for a bundled, initial policy
+    EXPECT_FALSE(commands_from_client_.wait_for(
+            [](auto const& _record) {
+                return std::any_of(_record.begin(), _record.end(),
+                                   [](command_message const& _m) { return _m.id_ == protocol::id_e::UPDATE_SECURITY_POLICY_RESPONSE_ID; });
+            },
+            std::chrono::milliseconds(200)));
+
+    // the ack must actually carry a requester policy for some_requester
+    auto const its_ack = ack_to_client.last();
+    ASSERT_TRUE(its_ack.has_value());
+    auto const* its_ack_data = its_ack->payload_.get_if<protocol::assign_client_ack_data>();
+    ASSERT_NE(its_ack_data, nullptr);
+    ASSERT_FALSE(its_ack_data->policies_.empty());
+
+    bool found_matching_requester = false;
+    for (auto const& its_update : its_ack_data->policies_) {
+        auto its_policy = std::make_shared<vsomeip::policy>();
+        byte_t const* ptr = its_update.policy_.data();
+        uint32_t size = static_cast<uint32_t>(its_update.policy_.size());
+        if (!its_policy->deserialize(ptr, size)) {
+            continue;
+        }
+        uid_t its_uid;
+        gid_t its_gid;
+        if (its_policy->get_uid_gid(its_uid, its_gid) && its_uid == some_requester.uid_ && its_gid == some_requester.gid_) {
+            EXPECT_FALSE(its_policy->requests_.empty()) << "bundled requester policy has no request grants for si";
+            found_matching_requester = true;
+        }
+    }
+    EXPECT_TRUE(found_matching_requester) << "no bundled policy matched some_requester's uid/gid";
+}
+
 TEST_F(test_security_policy_distribution, policy_in_the_static_configuration_allows_registration) {
     // same setup, but the client does not depend on the distributed policy
     start_router({own_credentials()});
@@ -121,5 +212,38 @@ TEST_F(test_security_policy_distribution, policy_in_the_static_configuration_all
     ASSERT_NE(its_client, nullptr);
     EXPECT_TRUE(its_client->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
     EXPECT_EQ(1u, connection_count(client_name_, routingmanager_name_));
+}
+
+TEST_F(test_security_policy_distribution, corrupted_assign_client_ack_does_not_leave_the_client_stuck) {
+    // ASSIGN_CLIENT_ACK_ID is deals with a client registration. If it ever arrives corrupted,
+    // nothing else would retry it on its own, so we should ensure
+    // the client can recover from a corrupted ack.
+
+    ecu_.add_app(client_name_);
+    ecu_.prepare();
+    ecu_.start_router();
+    ASSERT_NE(ecu_.router_, nullptr);
+    ASSERT_TRUE(ecu_.router_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+    // Drop the real ack once, then inject a corrupted one
+    auto its_drop = drop_command_once(client_name_, routingmanager_name_, protocol::id_e::ASSIGN_CLIENT_ACK_ID);
+
+    auto* its_client = ecu_.start_one(client_name_);
+    ASSERT_NE(its_client, nullptr);
+
+    ASSERT_TRUE(its_drop.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+
+    auto corrupted_ack = construct_basic_raw_command(protocol::id_e::ASSIGN_CLIENT_ACK_ID, // command
+                                                     static_cast<uint16_t>(0), // version
+                                                     static_cast<client_t>(routingmanager_id_), // sender
+                                                     static_cast<uint32_t>(6), // payload size: assigned_(2) + element_count(4)
+                                                     static_cast<client_t>(0x4711), // assigned_ client id
+                                                     static_cast<uint32_t>(5) // policies_ element_count: claims 5, supplies none
+    );
+    ASSERT_TRUE(inject_command_tcp(client_name_, routingmanager_name_, corrupted_ack, socket_role::client));
+
+    // The client must recover on its own: reconnect, get a fresh (this time valid) ack, and
+    // register
+    EXPECT_TRUE(its_client->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED, std::chrono::seconds(2)));
 }
 }

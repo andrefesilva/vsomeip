@@ -78,6 +78,16 @@ auto roundtrip(Cmd const& _input) {
         }
         deserialize(out.second, buf.data() + hdr_size, size - hdr_size);
         return out;
+    } else if constexpr (std::is_same_v<assign_client_ack_command_data, Cmd>) {
+        std::pair<command_header, assign_client_ack_data> out;
+        auto buf = send(_input);
+        auto const size = static_cast<uint32_t>(buf.size());
+        auto const hdr_size = deserialize(out.first, buf.data(), size);
+        if (hdr_size == 0) {
+            return out;
+        }
+        deserialize(out.second, buf.data() + hdr_size, size - hdr_size);
+        return out;
     } else if constexpr (std::is_same_v<distribute_security_policies_data, Cmd>) {
         std::pair<command_header, std::vector<std::shared_ptr<policy>>> out;
         auto buf = send(_input);
@@ -131,8 +141,28 @@ TEST(ut_commands_roundtrip, stop_offer_service_roundtrip) {
 // --- Single-field commands ---
 
 TEST(ut_commands_roundtrip, assign_client_ack_roundtrip) {
-    auto cmd = create_assign_client_ack_cmd(0x0000, 0x04CF);
-    EXPECT_EQ(roundtrip(cmd), cmd);
+    auto cmd = create_assign_client_ack_cmd(0x0000, 0x04CF, {});
+    auto [header, data] = roundtrip(cmd);
+    EXPECT_EQ(header, cmd.header_);
+    EXPECT_EQ(data.assigned_, cmd.payload_.assigned_);
+    EXPECT_TRUE(data.policies_.empty());
+}
+
+TEST(ut_commands_roundtrip, assign_client_ack_with_bundled_policies_roundtrip) {
+    std::vector<unsigned char> policy_one{0x01, 0x02, 0x03};
+    std::vector<unsigned char> policy_two{0x04, 0x05, 0x06, 0x07};
+    std::vector<update_security_policy_view> policies{{.update_id_ = 0x11, .policy_ = policy_one},
+                                                      {.update_id_ = 0x22, .policy_ = policy_two}};
+
+    auto cmd = create_assign_client_ack_cmd(0x0000, 0x04CF, policies);
+    auto [header, data] = roundtrip(cmd);
+    EXPECT_EQ(header, cmd.header_);
+    EXPECT_EQ(data.assigned_, cmd.payload_.assigned_);
+    ASSERT_EQ(data.policies_.size(), 2u);
+    EXPECT_EQ(data.policies_[0].update_id_, 0x11u);
+    EXPECT_EQ(data.policies_[0].policy_, policy_one);
+    EXPECT_EQ(data.policies_[1].update_id_, 0x22u);
+    EXPECT_EQ(data.policies_[1].policy_, policy_two);
 }
 
 TEST(ut_commands_roundtrip, offered_services_request_roundtrip) {

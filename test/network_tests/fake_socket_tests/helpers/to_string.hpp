@@ -34,6 +34,8 @@ std::string to_string(vsomeip_v3::protocol::unsubscribe_ack_data const& s);
 std::string to_string(vsomeip_v3::protocol::command_header const& e);
 std::string to_string(vsomeip_v3::protocol::routing_info_entry_data const& e);
 std::string to_string(vsomeip_v3::protocol::routing_info_command_data const& c);
+std::string to_string(vsomeip_v3::protocol::update_security_policy_data const& u);
+std::string to_string(vsomeip_v3::protocol::assign_client_ack_data const& a);
 char const* to_string(vsomeip_v3::return_code_e const& e);
 char const* to_string(vsomeip_v3::sd::entry_type_e const& e);
 std::string to_string(vsomeip_v3::payload const& p);

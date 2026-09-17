@@ -270,6 +270,60 @@ void app::update_security_policy_configuration(uid_t _uid, gid_t _gid) {
                                                [](vsomeip_v3::security_update_state_e /*_status*/) { /* no reaction required*/ });
 }
 
+void app::allow_offering(uid_t _uid, gid_t _gid, service_instance const& _si) {
+    auto its_policy = std::make_shared<vsomeip::policy>();
+    boost::icl::interval_set<gid_t> its_gids;
+    its_gids.insert(boost::icl::interval<gid_t>::closed(_gid, _gid));
+    its_policy->credentials_ += std::make_pair(boost::icl::interval<uid_t>::closed(_uid, _uid), its_gids);
+    its_policy->allow_who_ = true;
+    its_policy->allow_what_ = true;
+
+    boost::icl::interval_set<vsomeip::instance_t> its_instances;
+    its_instances.insert(boost::icl::interval<vsomeip::instance_t>::closed(_si.instance_, _si.instance_));
+    its_policy->offers_ += std::make_pair(boost::icl::interval<vsomeip::service_t>::closed(_si.service_, _si.service_), its_instances);
+
+    std::vector<byte_t> its_data;
+    auto its_payload = vsomeip::runtime::get()->create_payload();
+    if (its_policy->serialize(its_data)) {
+        its_payload->set_data(its_data);
+    } else {
+        TEST_LOG << "[app] \"" << app_->get_name() << "\" could not serialize the offering policy for " << _uid << "/" << _gid;
+    }
+
+    app_->update_security_policy_configuration(_uid, _gid, its_policy, its_payload,
+                                               [](vsomeip_v3::security_update_state_e /*_status*/) { /* no reaction required*/ });
+}
+
+void app::allow_requesting(uid_t _uid, gid_t _gid, service_instance const& _si) {
+    auto its_policy = std::make_shared<vsomeip::policy>();
+    boost::icl::interval_set<gid_t> its_gids;
+    its_gids.insert(boost::icl::interval<gid_t>::closed(_gid, _gid));
+    its_policy->credentials_ += std::make_pair(boost::icl::interval<uid_t>::closed(_uid, _uid), its_gids);
+    its_policy->allow_who_ = true;
+    its_policy->allow_what_ = true;
+
+    // policy::deserialize_id_item() rejects any range starting at 0 and special-cases a single point
+    // at ANY_METHOD as "any method" (remapping it to method id 1 internally) -- a [0, 0xFFFF] range
+    // fails to round-trip.
+    boost::icl::interval_set<vsomeip::method_t> its_methods;
+    its_methods.insert(boost::icl::interval<vsomeip::method_t>::closed(vsomeip::ANY_METHOD, vsomeip::ANY_METHOD));
+    boost::icl::interval_map<vsomeip::instance_t, boost::icl::interval_set<vsomeip::method_t>> its_instance_methods;
+    its_instance_methods += std::make_pair(boost::icl::interval<vsomeip::instance_t>::closed(_si.instance_, _si.instance_), its_methods);
+    its_policy->requests_ +=
+            std::make_pair(boost::icl::interval<vsomeip::service_t>::closed(_si.service_, _si.service_), its_instance_methods);
+
+    std::vector<byte_t> its_data;
+    auto its_payload = vsomeip::runtime::get()->create_payload();
+    if (its_policy->serialize(its_data)) {
+        its_payload->set_data(its_data);
+    } else {
+        TEST_LOG << "[app] \"" << app_->get_name() << "\" could not serialize the requesting policy for " << _uid << "/" << _gid;
+    }
+
+    app_->update_security_policy_configuration(_uid, _gid, its_policy, its_payload,
+                                               [](vsomeip_v3::security_update_state_e /*_status*/) { /* no reaction required*/ });
+}
+
 void app::on_state(vsomeip::state_type_e _state) {
     TEST_LOG << "[app] \"" << app_->get_name() << "\" is "
              << (_state == vsomeip::state_type_e::ST_REGISTERED ? "registered." : "deregistered.");

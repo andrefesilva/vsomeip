@@ -243,8 +243,14 @@ private:
     void log_version();
 #ifndef VSOMEIP_DISABLE_SECURITY
     void on_update_security_credentials(std::vector<std::pair<uid_t, gid_t>> const& _credentials);
+
+    // Deserializes and applies a single policy update. Returns true if it was
+    // applied (deserialized, had a valid uid/gid, and passed the allowed check
+    // unless _is_internal).
+    bool apply_security_policy_update(protocol::update_security_policy_data const& _data, bool _is_internal);
 #endif
-    void on_client_assign_ack(const client_t& _client, bool _is_tcp);
+    void on_client_assign_ack(const client_t& _client, bool _is_tcp,
+                              std::vector<protocol::update_security_policy_data> const& _requester_policy_updates);
 
     /**
      * @brief Remove all remote subscriptions.

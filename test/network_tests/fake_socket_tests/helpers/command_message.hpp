@@ -32,10 +32,9 @@ public:
 
     friend std::string to_string(command_payload const& _payload) { return _payload.data_->to_string_impl(); }
 
-    /**
-     * Typed access to the stored payload; nullptr when the payload holds a different type
-     * (or none). Lets a test assert on individual command fields instead of the string form.
-     **/
+    /// Returns the underlying payload if it was actually stored as a T (i.e. command_message::parse
+    /// recognized this command id and deserialized into T), nullptr otherwise (e.g. a command id
+    /// that parse() only captured as raw bytes).
     template<typename T>
     [[nodiscard]] T const* get_if() const {
         auto const* its_derived = dynamic_cast<derived<T> const*>(data_.get());

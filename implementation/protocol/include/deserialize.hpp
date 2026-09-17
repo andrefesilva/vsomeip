@@ -276,18 +276,78 @@ inline uint32_t deserialize(subscribe_with_filter_data& _out, unsigned char cons
     return parsed + deserialize(_out.filter_, _mem + parsed, _size - parsed);
 }
 
+// Shared by both wire shapes below, which only differ in how they each determine length
+// the ASSIGN_CLIENT_ACK_ID array has its own explicit length prefix whereas UPDATE_SECURITY_POLICY_INT_ID does not
+inline void fill_update_security_policy_data(update_security_policy_data& _out, uint32_t _update_id, unsigned char const* _policy_mem,
+                                             uint32_t _policy_size) {
+    _out.update_id_ = _update_id;
+    if (_policy_size > 0) {
+        _out.policy_.reserve(_policy_size);
+        _out.policy_.insert(_out.policy_.end(), _policy_mem, _policy_mem + _policy_size);
+    }
+}
+
+// Deserializes a single update_security_policy_data entry, as sent in UPDATE_SECURITY_POLICY_INT_ID.
+// Returns bytes parsed (0 on error)
 inline uint32_t deserialize(update_security_policy_data& _out, unsigned char const* _mem, uint32_t _size) {
-    uint32_t const parsed = deserialize(_out.update_id_, _mem, _size);
+    uint32_t update_id{0};
+    uint32_t const parsed = deserialize(update_id, _mem, _size);
     if (parsed == 0) {
         return 0;
     }
-    auto const left = _size - parsed;
-    if (left > 0) {
-        _out.policy_.reserve(left);
-        _out.policy_.insert(_out.policy_.end(), _mem + parsed, _mem + _size);
-    }
+    fill_update_security_policy_data(_out, update_id, _mem + parsed, _size - parsed);
     return _size;
 }
+
+// Deserializes a sequence of length-prefixed (update_id, policy bytes) entries, as bundled into
+// ASSIGN_CLIENT_ACK_ID. Returns bytes parsed (0 on error)
+inline uint32_t deserialize(std::vector<update_security_policy_data>& _out, unsigned char const* _mem, uint32_t _size) {
+    static constexpr uint32_t su32 = sizeof(uint32_t);
+    if (_size < su32) {
+        return 0;
+    }
+    uint32_t const total_size = _size;
+    uint32_t element_count{0};
+    deserialize(element_count, _mem, _size);
+    _size -= su32;
+    _mem += su32;
+
+    for (uint32_t i = 0; i < element_count; ++i) {
+        if (_size < su32) {
+            _out.clear();
+            return 0;
+        }
+        uint32_t update_id{0};
+        deserialize(update_id, _mem, _size);
+        _size -= su32;
+        _mem += su32;
+
+        if (_size < su32) {
+            _out.clear();
+            return 0;
+        }
+        uint32_t policy_length{0};
+        deserialize(policy_length, _mem, _size);
+        _size -= su32;
+        _mem += su32;
+
+        if (_size < policy_length) {
+            _out.clear();
+            return 0;
+        }
+        update_security_policy_data entry;
+        fill_update_security_policy_data(entry, update_id, _mem, policy_length);
+        _out.push_back(std::move(entry));
+        _mem += policy_length;
+        _size -= policy_length;
+    }
+    return total_size - _size;
+}
+
+inline uint32_t deserialize(assign_client_ack_data& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.assigned_, _out.policies_);
+}
+
 inline uint32_t deserialize(std::vector<std::pair<uid_t, gid_t>>& _out, unsigned char const* _mem, uint32_t _size) {
     static constexpr uint32_t const element_size = sizeof(uid_t) + sizeof(gid_t);
     uint32_t const elems = _size / element_size;

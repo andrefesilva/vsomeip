@@ -586,27 +586,45 @@ void routing_manager_stub::on_register_application(client_t _client, const boost
         std::scoped_lock its_lock{routing_info_mutex_};
         routing_info_[_client]; // ensure entry exists
     }
+    std::vector<protocol::update_security_policy_view> its_requester_policy_updates;
 #ifndef VSOMEIP_DISABLE_SECURITY
     // distribute updated security config to new clients
     send_cached_security_policies(_client);
+
+    // Serialized policy buffers backing its_requester_policy_updates: kept alive (and never
+    // reallocated, see the reserve() below) until the ack referencing their spans is sent.
+    std::vector<std::vector<byte_t>> its_requester_policy_buffers;
     if (configuration_->is_local_routing()) {
         std::set<std::shared_ptr<policy>> its_policies;
         if (auto const its_sec_client = find_sec_client(_client); its_sec_client) {
             if (its_sec_client->port == VSOMEIP_SEC_PORT_UNUSED) {
                 get_requester_policies(its_sec_client->user, its_sec_client->group, its_policies);
             }
+        }
 
-            if (!its_policies.empty()) {
-                send_requester_policies({_client}, its_policies);
+        its_requester_policy_buffers.reserve(its_policies.size());
+        for (auto const& p : its_policies) {
+            std::vector<byte_t> its_policy_data;
+            if (p->serialize(its_policy_data)) {
+                // No need for pending_security_update_add(), policies are bundled into the ASSIGN_CLIENT without requiring separate
+                // tracking.
+                its_requester_policy_buffers.push_back(std::move(its_policy_data));
+                its_requester_policy_updates.push_back({.update_id_ = 0, .policy_ = its_requester_policy_buffers.back()});
             }
         }
     }
 #endif // !VSOMEIP_DISABLE_SECURITY
 
-    // Must be sent after the security credentials, so the client only checks
-    // security policies after it has received its credentials.
+    // Requester policies are bundled with the ack (instead of being sent beforehand via
+    // UPDATE_SECURITY_POLICY_INT_ID) so the client's id is already assigned
+    auto its_ack_command = protocol::create_assign_client_ack_cmd(VSOMEIP_ROUTING_CLIENT, _client, std::move(its_requester_policy_updates));
     if (auto ep = find_local_routing_endpoint(_client); ep) {
-        ep->send(protocol::create_assign_client_ack_cmd(VSOMEIP_ROUTING_CLIENT, _client));
+        if (!ep->send(its_ack_command)) {
+            // send() already logged why (queue full, oversized message, ...). It can drop the ack
+            // without the connection itself failing, leaving the client waiting forever with no
+            // id and no trigger to retry, so force the connection down here instead.
+            ep->request_cleanup(true);
+        }
     } else {
         VSOMEIP_ERROR_P << "Failed to send ASSIGN_CLIENT_ACK to client 0x" << hex4(_client) << ", as no routing connection was given";
     }
@@ -1235,6 +1253,9 @@ bool routing_manager_stub::send_requester_policies(const std::unordered_set<clie
             its_message.insert(its_message.end(), new_its_policy_size, new_its_policy_size + sizeof(new_its_policy_size));
 
             its_policy_id = pending_security_update_add(_clients);
+            // A client is expected to respond here, add a timer waiting for a response
+            // protecting against a client that disconnects before acking.
+            add_pending_security_update_timer(its_policy_id);
             uint8_t new_its_policy_id[4] = {0};
             bithelper::write_uint32_le(its_policy_id, new_its_policy_id);
             its_message.insert(its_message.end(), new_its_policy_id, new_its_policy_id + sizeof(new_its_policy_id));

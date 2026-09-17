@@ -55,8 +55,14 @@
     Command            01
     Version            xx xx
     Client             xx xx
-    Size               02 00 00 00
+    Size               xx xx xx xx
     Assigned           xx xx
+    PolicyCount        xx xx xx xx
+    Policies                        ; dynamically-registered requester policies for the assigned client
+                                    ; (only policies added via update_security_policy_configuration; 0 if none were)
+        UpdateId       xx xx xx xx
+        PolicyLength   xx xx xx xx
+        Policy         xx ... xx    ; PolicyLength bytes
 
 ## VSOMEIP_REGISTER_APPLICATION (0x02) (Deprecated since 3.7.1)
 

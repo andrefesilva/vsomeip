@@ -92,4 +92,7 @@ std::ostream& operator<<(std::ostream& _out, event_key const& _data) {
     return _out << hex4(_data.key_.service_) << "." << hex4(_data.key_.instance_) << "." << hex4(_data.event_) << ":"
                 << static_cast<int>(_data.key_.major_);
 }
+std::ostream& operator<<(std::ostream& _out, command_header const& _header) {
+    return _out << _header.id_ << " for client 0x" << hex4(_header.client_);
+}
 }
