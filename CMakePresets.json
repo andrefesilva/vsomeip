@@ -37,6 +37,10 @@
             "generator": "Ninja",
             "binaryDir": "/home/build",
             "cacheVariables": {
+                "CMAKE_BUILD_TYPE": {
+                    "type": "STRING",
+                    "value": "Debug"
+                },
                 "DISABLE_DLT": {
                     "type": "BOOL",
                     "value": "ON"
