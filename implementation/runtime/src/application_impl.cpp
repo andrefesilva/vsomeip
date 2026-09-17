@@ -728,35 +728,27 @@ void application_impl::register_availability_handler_internal(service_t _service
                                                               const availability_state_handler_t& _handler, major_version_t _major,
                                                               minor_version_t _minor) {
 
-    // Register the handler atomically with the availability state it is initialized against the routing manager reads the state under
-    // consumer_mutex_ and calls back to register the handler.
-    auto its_register = [&](bool _is_available) {
+    // Seeded under the routing manager's consumer_mutex_, so registration cannot race an availability change.
+    auto its_register = [this, &_handler, _service, _instance, _major, _minor](bool _is_available, const available_t& _replay) {
         std::scoped_lock availability_lock{availability_mutex_};
-        register_availability_handler_unlocked(_service, _instance, _handler, _major, _minor, _is_available);
+        register_availability_handler_unlocked(_service, _instance, _handler, _major, _minor, _is_available, _replay);
     };
 
     if (routing_) {
-        // The routing manager owns the availability table: under consumer_mutex_ it registers the handler against
-        // the current state and, for wildcard registrations, decides on its own to replay the available instances.
-        routing_->register_availability_handler(_service, _instance, _major, _minor, its_register);
+        routing_->resolve_availability(_service, _instance, _major, _minor, its_register);
     } else {
         // No routing manager yet: register as not-available; a later on_availability() will update the handler.
-        its_register(false);
+        its_register(false, {});
     }
 }
 
 void application_impl::register_availability_handler_unlocked(service_t _service, instance_t _instance,
                                                               const availability_state_handler_t& _handler, major_version_t _major,
-                                                              minor_version_t _minor, bool _is_available) {
-    const availability_state_e its_state = _is_available ? availability_state_e::AS_AVAILABLE : availability_state_e::AS_UNKNOWN;
+                                                              minor_version_t _minor, bool _is_available, const available_t& _replay) {
+    availability_[{_service, _instance}][_major][_minor] = _handler;
 
-    availability_state_t its_availability_state;
-    set_availability_state(its_availability_state, _service, _instance, _major, _minor, its_state);
-
-    availability_[{_service, _instance}][_major][_minor] = std::make_pair(_handler, its_availability_state);
-
-    auto add_sync_handler = [&](service_t _srvc, instance_t _nstnc, const availability_state_handler_t& _hndlr, availability_state_e _stt) {
-        auto its_sync_handler = std::make_shared<sync_handler>([_hndlr, _srvc, _nstnc, _stt]() { _hndlr(_srvc, _nstnc, _stt); });
+    auto add_sync_handler = [&](service_t _srvc, instance_t _nstnc, availability_state_e _stt) {
+        auto its_sync_handler = std::make_shared<sync_handler>([_handler, _srvc, _nstnc, _stt]() { _handler(_srvc, _nstnc, _stt); });
         its_sync_handler->handler_type_ = handler_type_e::AVAILABILITY;
         its_sync_handler->service_id_ = _srvc;
         its_sync_handler->instance_id_ = _nstnc;
@@ -765,7 +757,19 @@ void application_impl::register_availability_handler_unlocked(service_t _service
 
     std::scoped_lock handlers_lock(handlers_mutex_);
     if (_service != ANY_SERVICE && _instance != ANY_INSTANCE) {
-        add_sync_handler(_service, _instance, _handler, its_state);
+        add_sync_handler(_service, _instance, _is_available ? availability_state_e::AS_AVAILABLE : availability_state_e::AS_UNKNOWN);
+    } else {
+        // Replay to *this* handler only; on_availability() would reach every matching handler. The version
+        // filter mirrors on_availability()'s, which is stricter than the routing manager's.
+        for (const auto& [its_service, its_instances] : _replay) {
+            for (const auto& [its_instance, its_majors] : its_instances) {
+                for (const auto& [its_major, its_minor] : its_majors) {
+                    if ((_major == ANY_MAJOR || _major == its_major) && (_minor == ANY_MINOR || _minor <= its_minor)) {
+                        add_sync_handler(its_service, its_instance, availability_state_e::AS_AVAILABLE);
+                    }
+                }
+            }
+        }
     }
     dispatcher_condition_.notify_all();
 }
@@ -1191,28 +1195,6 @@ void application_impl::on_state(state_type_e _state) {
     }
 }
 
-availability_state_e application_impl::get_availability_state(const availability_state_t& _availability_state, service_t _service,
-                                                              instance_t _instance, major_version_t _major, minor_version_t _minor) const {
-    availability_state_e its_state{availability_state_e::AS_UNKNOWN};
-
-    if (auto found_service = _availability_state.find(_service); found_service != _availability_state.end()) {
-        if (auto found_instance = found_service->second.find(_instance); found_instance != found_service->second.end()) {
-            if (auto found_major = found_instance->second.find(_major); found_major != found_instance->second.end()) {
-                if (auto found_minor = found_major->second.find(_minor); found_minor != found_major->second.end()) {
-                    its_state = found_minor->second;
-                }
-            }
-        }
-    }
-
-    return its_state;
-}
-
-void application_impl::set_availability_state(availability_state_t& _availability_state, service_t _service, instance_t _instance,
-                                              major_version_t _major, minor_version_t _minor, availability_state_e _state) const {
-    _availability_state[_service][_instance][_major][_minor] = _state;
-}
-
 void application_impl::on_availability(service_t _service, instance_t _instance, availability_state_e _state, major_version_t _major,
                                        minor_version_t _minor) {
 
@@ -1220,51 +1202,31 @@ void application_impl::on_availability(service_t _service, instance_t _instance,
     {
         std::scoped_lock availability_lock{availability_mutex_};
 
-        auto find_matching_handler = [&](availability_major_minor_t& _av_ma_mi_it) {
-            auto found_major = _av_ma_mi_it.find(_major);
-            if (found_major != _av_ma_mi_it.end()) {
-                for (int32_t mi = static_cast<int32_t>(_minor); mi >= 0; mi--) {
-                    auto found_minor = found_major->second.find(static_cast<minor_version_t>(mi));
-                    if (found_minor != found_major->second.end()) {
-                        if (get_availability_state(found_minor->second.second, _service, _instance, _major, _minor) != _state) {
-                            its_handlers.push_back(found_minor->second.first);
-                            set_availability_state(found_minor->second.second, _service, _instance, _major, _minor, _state);
-                        }
-                    }
-                }
-                auto found_any_minor = found_major->second.find(ANY_MINOR);
-                if (found_any_minor != found_major->second.end()) {
-                    if (get_availability_state(found_any_minor->second.second, _service, _instance, _major, _minor) != _state) {
-                        its_handlers.push_back(found_any_minor->second.first);
-                        set_availability_state(found_any_minor->second.second, _service, _instance, _major, _minor, _state);
-                    }
+        // The routing manager client only calls in on a real transition, so every match is notified.
+        auto collect_handlers = [&](availability_major_minor_t& _av_ma_mi_it, major_version_t _match_major) {
+            auto found_major = _av_ma_mi_it.find(_match_major);
+            if (found_major == _av_ma_mi_it.end()) {
+                return;
+            }
+            for (int32_t mi = static_cast<int32_t>(_minor); mi >= 0; mi--) {
+                auto found_minor = found_major->second.find(static_cast<minor_version_t>(mi));
+                if (found_minor != found_major->second.end()) {
+                    its_handlers.push_back(found_minor->second);
                 }
             }
-            found_major = _av_ma_mi_it.find(ANY_MAJOR);
-            if (found_major != _av_ma_mi_it.end()) {
-                for (int32_t mi = static_cast<int32_t>(_minor); mi >= 0; mi--) {
-                    auto found_minor = found_major->second.find(static_cast<minor_version_t>(mi));
-                    if (found_minor != found_major->second.end()) {
-                        if (get_availability_state(found_minor->second.second, _service, _instance, _major, _minor) != _state) {
-                            its_handlers.push_back(found_minor->second.first);
-                            set_availability_state(found_minor->second.second, _service, _instance, _major, _minor, _state);
-                        }
-                    }
-                }
-                auto found_any_minor = found_major->second.find(ANY_MINOR);
-                if (found_any_minor != found_major->second.end()) {
-                    if (get_availability_state(found_any_minor->second.second, _service, _instance, _major, _minor) != _state) {
-                        its_handlers.push_back(found_any_minor->second.first);
-                        set_availability_state(found_any_minor->second.second, _service, _instance, _major, _minor, _state);
-                    }
-                }
+            if (auto found_any_minor = found_major->second.find(ANY_MINOR); found_any_minor != found_major->second.end()) {
+                its_handlers.push_back(found_any_minor->second);
             }
         };
 
         for (const service_instance_t si : {service_instance_t{_service, _instance}, service_instance_t{_service, ANY_INSTANCE},
                                             service_instance_t{ANY_SERVICE, _instance}, service_instance_t{ANY_SERVICE, ANY_INSTANCE}}) {
             if (auto found = availability_.find(si); found != availability_.end()) {
-                find_matching_handler(found->second);
+                collect_handlers(found->second, _major);
+                if (_major != ANY_MAJOR) {
+                    // find(_major) already covered this bucket when the event major is ANY_MAJOR.
+                    collect_handlers(found->second, ANY_MAJOR);
+                }
             }
         }
         {
@@ -1283,50 +1245,6 @@ void application_impl::on_availability(service_t _service, instance_t _instance,
     if (its_handlers.size()) {
         std::scoped_lock handlers_lock{handlers_mutex_};
         dispatcher_condition_.notify_all();
-    }
-}
-
-void application_impl::reset_availability_state(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor) {
-    std::scoped_lock availability_lock{availability_mutex_};
-
-    auto reset_availability_states = [this, _service, _instance, _major, _minor](availability_major_minor_t& _av_ma_mi_it) {
-        auto found_major = _av_ma_mi_it.find(_major);
-        if (found_major != _av_ma_mi_it.end()) {
-            for (int32_t mi = static_cast<int32_t>(_minor); mi >= 0; mi--) {
-                auto found_minor = found_major->second.find(static_cast<minor_version_t>(mi));
-                if (found_minor != found_major->second.end()) {
-                    set_availability_state(found_minor->second.second, _service, _instance, _major, _minor,
-                                           availability_state_e::AS_UNKNOWN);
-                }
-            }
-            auto found_any_minor = found_major->second.find(ANY_MINOR);
-            if (found_any_minor != found_major->second.end()) {
-                set_availability_state(found_any_minor->second.second, _service, _instance, _major, _minor,
-                                       availability_state_e::AS_UNKNOWN);
-            }
-        }
-        found_major = _av_ma_mi_it.find(ANY_MAJOR);
-        if (found_major != _av_ma_mi_it.end()) {
-            for (int32_t mi = static_cast<int32_t>(_minor); mi >= 0; mi--) {
-                auto found_minor = found_major->second.find(static_cast<minor_version_t>(mi));
-                if (found_minor != found_major->second.end()) {
-                    set_availability_state(found_minor->second.second, _service, _instance, _major, _minor,
-                                           availability_state_e::AS_UNKNOWN);
-                }
-            }
-            auto found_any_minor = found_major->second.find(ANY_MINOR);
-            if (found_any_minor != found_major->second.end()) {
-                set_availability_state(found_any_minor->second.second, _service, _instance, _major, _minor,
-                                       availability_state_e::AS_UNKNOWN);
-            }
-        }
-    };
-
-    for (const service_instance_t si : {service_instance_t{_service, _instance}, service_instance_t{_service, ANY_INSTANCE},
-                                        service_instance_t{ANY_SERVICE, _instance}, service_instance_t{ANY_SERVICE, ANY_INSTANCE}}) {
-        if (auto found = availability_.find(si); found != availability_.end()) {
-            reset_availability_states(found->second);
-        }
     }
 }
 

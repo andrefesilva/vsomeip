@@ -130,7 +130,6 @@ public:
     void on_state(state_type_e _state);
     void on_availability(service_t _service, instance_t _instance, availability_state_e _state, major_version_t _major,
                          minor_version_t _minor);
-    void reset_availability_state(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
     void on_message(std::shared_ptr<message>&& _message);
     void on_subscription(service_t _service, instance_t _instance, eventgroup_t _eventgroup, client_t _client,
                          const vsomeip_sec_client_t* _sec_client, const std::string& _env, bool _subscribed,
@@ -269,8 +268,10 @@ private:
     void register_availability_handler_internal(service_t _service, instance_t _instance, const availability_state_handler_t& _handler,
                                                 major_version_t _major, minor_version_t _minor);
     // NOTE: must only be called under the routing_manager_client's consumer_mutex_.
+    // `_is_available` applies to a concrete registration, `_replay` to a wildcard one; only one is meaningful.
     void register_availability_handler_unlocked(service_t _service, instance_t _instance, const availability_state_handler_t& _handler,
-                                                major_version_t _major, minor_version_t _minor, bool _is_available);
+                                                major_version_t _major, minor_version_t _minor, bool _is_available,
+                                                const available_t& _replay);
 
     // Emit an error log that "_what" (e.g. "Subscription handler") is being registered too late, i.e.
     // after the related service was already offered/requested or the eventgroup subscribed to.
@@ -317,14 +318,6 @@ private:
     bool determine_routing_host();
 
     const std::deque<message_handler_t>& find_handlers(service_t _service, instance_t _instance, method_t _method) const;
-
-    using availability_state_t =
-            std::map<service_t, std::map<instance_t, std::map<major_version_t, std::map<minor_version_t, availability_state_e>>>>;
-
-    availability_state_e get_availability_state(const availability_state_t& _availability_state, service_t _service, instance_t _instance,
-                                                major_version_t _major, minor_version_t _minor) const;
-    void set_availability_state(availability_state_t& _availability_state, service_t _service, instance_t _instance, major_version_t _major,
-                                minor_version_t _minor, availability_state_e _state) const;
 
     //
     // Attributes
@@ -380,8 +373,7 @@ private:
     mutable std::mutex members_mutex_;
 
     // Availability handlers
-    using stateful_availability_t = std::pair<availability_state_handler_t, availability_state_t>;
-    using availability_major_minor_t = std::map<major_version_t, std::map<minor_version_t, stateful_availability_t>>;
+    using availability_major_minor_t = std::map<major_version_t, std::map<minor_version_t, availability_state_handler_t>>;
     service_instance_map<availability_major_minor_t> availability_;
     mutable std::mutex availability_mutex_;
 
