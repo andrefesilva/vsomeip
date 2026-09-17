@@ -400,7 +400,8 @@ bool endpoint_manager_impl::remove_server_endpoint(uint16_t _port, bool _reliabl
     return false;
 }
 
-void endpoint_manager_impl::clear_client_endpoints(service_t _service, instance_t _instance, major_version_t _major, bool _reliable) {
+void endpoint_manager_impl::clear_client_endpoints(service_t _service, instance_t _instance, major_version_t _major, bool _reliable,
+                                                   std::optional<disconnect_reason_e> _disconnect) {
 
     std::shared_ptr<boardnet_endpoint> its_endpoint;
 
@@ -504,7 +505,7 @@ void endpoint_manager_impl::clear_client_endpoints(service_t _service, instance_
     if (!other_services_reachable_through_endpoint && its_endpoint) {
         release_used_client_port(its_remote_address, its_remote_port, _reliable, its_local_port);
 
-        its_endpoint->stop(false);
+        its_endpoint->stop(_disconnect == disconnect_reason_e::CONNECTION_LOST);
     }
 }
 
@@ -904,7 +905,7 @@ void endpoint_manager_impl::on_connect(std::shared_ptr<boardnet_endpoint> _endpo
     }
 }
 
-void endpoint_manager_impl::on_disconnect(std::shared_ptr<boardnet_endpoint> _endpoint) {
+void endpoint_manager_impl::on_disconnect(std::shared_ptr<boardnet_endpoint> _endpoint, disconnect_reason_e _reason) {
     // Called when a remote connection is lost (connect failure, or send/sent-wait failure).
     std::vector<serviceinfo> services_to_report_;
 
@@ -925,7 +926,7 @@ void endpoint_manager_impl::on_disconnect(std::shared_ptr<boardnet_endpoint> _en
         }
     }
     for (const auto& s : services_to_report_) {
-        router_->service_endpoint_disconnected(s.get_service(), s.get_instance(), s.get_major(), s.get_minor());
+        router_->service_endpoint_disconnected(s.get_service(), s.get_instance(), s.get_major(), s.get_minor(), _endpoint, _reason);
     }
 }
 

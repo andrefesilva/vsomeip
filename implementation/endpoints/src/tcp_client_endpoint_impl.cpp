@@ -61,6 +61,11 @@ void tcp_client_endpoint_impl::start() {
 void tcp_client_endpoint_impl::restart(bool _force) {
     auto self = std::dynamic_pointer_cast<tcp_client_endpoint_impl>(shared_from_this());
     auto restart_func = [self, _force] {
+        if (self->sending_blocked_) {
+            VSOMEIP_INFO_P << "Not restarting stopped endpoint, remote: " << self->get_address_port_remote() << ", endpoint > "
+                           << self.get();
+            return;
+        }
         if (!_force && self->state_ == cei_state_e::CONNECTING) {
             std::chrono::steady_clock::time_point its_current = std::chrono::steady_clock::now();
             std::int64_t its_connect_duration =
@@ -274,7 +279,7 @@ void tcp_client_endpoint_impl::receive(message_buffer_ptr_t _recv_buffer, size_t
                     VSOMEIP_ERROR << "Missing receive buffer capacity exceeds allowed maximum: " << _missing_capacity
                                   << " local: " << get_address_port_local() << " remote: " << get_address_port_remote();
                     its_lock.unlock();
-                    wait_until_sent(boost::asio::error::operation_aborted);
+                    wait_until_sent(boost::asio::error::operation_aborted, disconnect_reason_e::RESTART);
                     return;
                 }
                 const size_t its_required_capacity(_recv_buffer_size + _missing_capacity);
@@ -296,7 +301,7 @@ void tcp_client_endpoint_impl::receive(message_buffer_ptr_t _recv_buffer, size_t
         } catch (const std::exception& e) {
             handle_recv_buffer_exception(e, _recv_buffer, _recv_buffer_size);
             its_lock.unlock();
-            wait_until_sent(boost::asio::error::operation_aborted);
+            wait_until_sent(boost::asio::error::operation_aborted, disconnect_reason_e::RESTART);
             return;
         }
         auto self = std::dynamic_pointer_cast<tcp_client_endpoint_impl>(shared_from_this());
@@ -445,7 +450,7 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
                                                         current_message_size, _recv_buffer_size, &(*_recv_buffer)[its_iteration_gap],
                                                         _recv_buffer_size);
                     its_lock.unlock();
-                    wait_until_sent(boost::asio::error::operation_aborted);
+                    wait_until_sent(boost::asio::error::operation_aborted, disconnect_reason_e::RESTART);
                     return;
                 }
                 has_full_message = (current_message_size > VSOMEIP_RETURN_CODE_POS && current_message_size <= _recv_buffer_size);
@@ -539,7 +544,7 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
 
                             // wait_until_sent interprets "no error" as timeout.
                             // Therefore call it with an error.
-                            wait_until_sent(boost::asio::error::operation_aborted);
+                            wait_until_sent(boost::asio::error::operation_aborted, disconnect_reason_e::RESTART);
                             return;
                         }
                     }
@@ -560,7 +565,7 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
 
                             // wait_until_sent interprets "no error" as timeout.
                             // Therefore call it with an error.
-                            wait_until_sent(boost::asio::error::operation_aborted);
+                            wait_until_sent(boost::asio::error::operation_aborted, disconnect_reason_e::RESTART);
                             return;
                         }
                     } else if (current_message_size > _recv_buffer_size) {
@@ -588,7 +593,7 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
 
                         // wait_until_sent interprets "no error" as timeout.
                         // Therefore call it with an error.
-                        wait_until_sent(boost::asio::error::operation_aborted);
+                        wait_until_sent(boost::asio::error::operation_aborted, disconnect_reason_e::RESTART);
                         return;
                     }
                 }
@@ -622,7 +627,7 @@ void tcp_client_endpoint_impl::receive_cbk(boost::system::error_code const& _err
 
                     // wait_until_sent interprets "no error" as timeout.
                     // Therefore call it with an error.
-                    wait_until_sent(boost::asio::error::operation_aborted);
+                    wait_until_sent(boost::asio::error::operation_aborted, disconnect_reason_e::CONNECTION_LOST);
                 }
             } else {
                 its_lock.unlock();
@@ -768,7 +773,7 @@ void tcp_client_endpoint_impl::send_cbk(boost::system::error_code const& _error,
             } else {
                 // Release mutex_ before notify_disconnect() to avoid lock-order-inversion
                 its_lock.unlock();
-                notify_disconnect();
+                notify_disconnect(disconnect_reason_e::CONNECTION_LOST);
                 restart(true);
             }
             VSOMEIP_WARNING_P << "Received error: " << _error.message() << " (" << _error.value() << ") " << get_remote_information() << " "
@@ -786,7 +791,7 @@ void tcp_client_endpoint_impl::max_allowed_reconnects_reached() {
     return;
 }
 
-void tcp_client_endpoint_impl::wait_until_sent(const boost::system::error_code& _error) {
+void tcp_client_endpoint_impl::wait_until_sent(const boost::system::error_code& _error, disconnect_reason_e _reason) {
     if (_error && _error != boost::asio::error::operation_aborted) {
         // This Function is usually called with boost::asio::error::operation_aborted
         // and therefore its part of its normal execution path.
@@ -799,13 +804,15 @@ void tcp_client_endpoint_impl::wait_until_sent(const boost::system::error_code& 
             VSOMEIP_WARNING_P << "Maximum wait time for send operation exceeded for tce.";
         }
 
-        notify_disconnect();
+        // A send that never completes means the remote is gone, whatever brought us here.
+        notify_disconnect(!_error ? disconnect_reason_e::CONNECTION_LOST : _reason);
         restart(true);
     } else {
         std::chrono::milliseconds its_timeout(VSOMEIP_MAX_TCP_SENT_WAIT_TIME);
         sent_timer_.expires_after(its_timeout);
         sent_timer_.async_wait(std::bind(&tcp_client_endpoint_impl::wait_until_sent,
-                                         std::dynamic_pointer_cast<tcp_client_endpoint_impl>(shared_from_this()), std::placeholders::_1));
+                                         std::dynamic_pointer_cast<tcp_client_endpoint_impl>(shared_from_this()), std::placeholders::_1,
+                                         _reason));
     }
 }
 

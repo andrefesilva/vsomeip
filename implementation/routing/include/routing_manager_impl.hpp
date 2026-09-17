@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <queue>
 #include <vector>
@@ -155,7 +156,7 @@ public:
                           const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
                           const endpoint_manager_impl::remote_offer_state& _state);
     void del_routing_info(service_t _service, instance_t _instance, major_version_t _major, bool _has_reliable, bool _has_unreliable,
-                          bool _trigger_availability);
+                          bool _trigger_availability, std::optional<disconnect_reason_e> _reason = std::nullopt);
     void update_routing_info(std::chrono::milliseconds _elapsed);
     void is_remote_service_known(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
                                  const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
@@ -190,7 +191,8 @@ public:
                     boardnet_endpoint* const _receiver, const boost::asio::ip::address& _remote_address, uint16_t _remote_port);
     void service_endpoint_connected(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
                                     const std::shared_ptr<boardnet_endpoint>& _endpoint);
-    void service_endpoint_disconnected(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
+    void service_endpoint_disconnected(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
+                                       const std::shared_ptr<boardnet_endpoint>& _endpoint, disconnect_reason_e _reason);
 
     void register_sd_acceptance_handler(const sd_acceptance_handler_t& _handler) const;
     void register_reboot_notification_handler(const reboot_notification_handler_t& _handler) const;

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <optional>
 #include <unordered_map>
 
 #include "../include/boardnet_endpoint_host.hpp"
@@ -62,7 +63,14 @@ public:
                                                                       instance_t _instance, bool& _is_found, bool _is_multicast = false);
     bool remove_server_endpoint(uint16_t _port, bool _reliable);
 
-    void clear_client_endpoints(service_t _service, instance_t _instance, major_version_t _major, bool _reliable);
+    /**
+     * @brief Stop and drop the client endpoints of a remote service that no other service still uses.
+     *
+     * @param _disconnect the endpoint disconnect that triggered the removal, if any. A lost connection stops the
+     *        endpoint as erroneous; a plain removal (stop offer, TTL expiry, suspend) stops it gracefully.
+     */
+    void clear_client_endpoints(service_t _service, instance_t _instance, major_version_t _major, bool _reliable,
+                                std::optional<disconnect_reason_e> _disconnect = std::nullopt);
     void find_or_create_multicast_endpoint(service_t _service, instance_t _instance, const boost::asio::ip::address& _sender,
                                            const boost::asio::ip::address& _address, uint16_t _port);
     void clear_multicast_endpoints(service_t _service, instance_t _instance);
@@ -82,7 +90,7 @@ public:
 
     // boardnet_endpoint_host interface
     void on_connect(std::shared_ptr<boardnet_endpoint> _endpoint);
-    void on_disconnect(std::shared_ptr<boardnet_endpoint> _endpoint);
+    void on_disconnect(std::shared_ptr<boardnet_endpoint> _endpoint, disconnect_reason_e _reason);
     bool on_bind_error(std::shared_ptr<boardnet_endpoint> _endpoint, const boost::asio::ip::address& _remote_address, uint16_t _remote_port,
                        uint16_t& _local_port);
 
