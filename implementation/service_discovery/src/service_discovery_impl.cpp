@@ -59,11 +59,9 @@ service_discovery_impl::service_discovery_impl(service_discovery_host* _host, co
     offer_debounce_timer_(io_), find_initial_debounce_time_(VSOMEIP_SD_INITIAL_FIND_DEBOUNCE_TIME),
     remaining_find_initial_debounce_reps_(VSOMEIP_SD_INITIAL_FIND_DEBOUNCE_REPS),
     find_debounce_time_(VSOMEIP_SD_DEFAULT_FIND_DEBOUNCE_TIME), find_debounce_timer_(io_), main_phase_timer_(io_), is_suspended_(false),
-    must_start_last_msg_received_timer_(true), last_msg_received_timer_(io_),
-    last_msg_received_timer_timeout_(VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY + (VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY / 10)),
     suspend_stop_offer_watchdog_{io_}, stop_offer_watchdog_time_{VSOMEIP_SD_STOP_OFFER_WATCHDOG_TIME}, offers_watchdog_{io_},
     offers_watchdog_time_{VSOMEIP_SD_OFFERS_WATCHDOG_TIME}, offers_received_after_last_resume_{0}, offers_received_{0},
-    offer_entries_sent_{0}, offer_entries_sent_after_last_resume_{0}, last_multicast_processed_{std::chrono::steady_clock::time_point{}} {
+    offer_entries_sent_{0}, offer_entries_sent_after_last_resume_{0}, last_multicast_processed_{std::chrono::steady_clock::now()} {
 
     next_subscription_expiration_ = std::chrono::steady_clock::now() + std::chrono::hours(24);
 }
@@ -94,7 +92,6 @@ void service_discovery_impl::init() {
 
     ttl_factor_offers_ = configuration_->get_ttl_factor_offers();
     ttl_factor_subscriptions_ = configuration_->get_ttl_factor_subscribes();
-    last_msg_received_timer_timeout_ = cyclic_offer_delay_ + (cyclic_offer_delay_ / 10);
     stop_offer_watchdog_time_ = std::chrono::milliseconds(configuration_->get_sd_stop_offer_watchdog_time());
     if (stop_offer_watchdog_time_ != std::chrono::milliseconds::zero()) {
         VSOMEIP_INFO << "Service Discovery Stop Offer watchdog enabled.";
@@ -132,16 +129,6 @@ void service_discovery_impl::start() {
                 req->set_sent_counter(0);
             }
         }
-
-        // rejoin multicast group
-        if (endpoint_ && !reliable_) {
-            auto its_server_endpoint = std::dynamic_pointer_cast<udp_server_endpoint_impl>(endpoint_);
-            if (its_server_endpoint && !its_server_endpoint->is_joined(sd_multicast_)) {
-                VSOMEIP_INFO_P << "Calling its_server_endpoint->join(" << sd_multicast_
-                               << ")  its_server_endpoint = " << its_server_endpoint;
-                its_server_endpoint->join(sd_multicast_);
-            }
-        }
     }
     is_suspended_ = false;
     if (stop_offer_watchdog_time_ != std::chrono::milliseconds::zero()) {
@@ -163,12 +150,10 @@ void service_discovery_impl::start() {
     start_offer_debounce_timer(initial_delay);
     start_find_debounce_timer(initial_delay);
     start_ttl_timer();
-    start_last_msg_received_timer();
 }
 
 void service_discovery_impl::suspend() {
     is_suspended_ = true;
-    stop_last_msg_received_timer();
     stop_ttl_timer();
     stop_find_debounce_timer();
     stop_offer_debounce_timer();
@@ -950,25 +935,6 @@ void service_discovery_impl::insert_subscription_ack(const std::shared_ptr<remot
     add_entry_data_to_remote_subscription_ack_msg(_acknowledgement, its_data);
 }
 
-bool service_discovery_impl::send(bool _is_announcing) {
-    std::vector<std::shared_ptr<message_impl>> its_messages;
-    std::shared_ptr<message_impl> its_message;
-
-    if (_is_announcing) {
-        its_message = std::make_shared<message_impl>();
-        its_messages.push_back(its_message);
-
-        std::scoped_lock its_lock(offer_mutex_);
-        services_t its_offers = host_->get_offered_services();
-        insert_offer_entries(its_messages, its_offers, false);
-
-        // Serialize and send
-        return send(its_messages);
-    }
-
-    return false;
-}
-
 // Interface boardnet_endpoint_host
 void service_discovery_impl::on_message(const byte_t* _data, length_t _length, const boost::asio::ip::address& _sender,
                                         bool _is_multicast) {
@@ -993,13 +959,6 @@ void service_discovery_impl::on_message(const byte_t* _data, length_t _length, c
 
     if (_is_multicast) {
         last_multicast_processed_ = std::chrono::steady_clock::now();
-        std::scoped_lock its_last_msg_lock{last_msg_received_timer_mutex_};
-        if (0 < last_msg_received_timer_.cancel() || must_start_last_msg_received_timer_) {
-            must_start_last_msg_received_timer_ = false;
-            last_msg_received_timer_.expires_after(last_msg_received_timer_timeout_);
-            last_msg_received_timer_.async_wait(
-                    std::bind(&service_discovery_impl::on_last_msg_received_timer_expired, shared_from_this(), std::placeholders::_1));
-        }
     }
 
     current_remote_address_ = _sender;
@@ -2825,7 +2784,38 @@ void service_discovery_impl::on_main_phase_timer_expired(const boost::system::er
     if (_error) {
         return;
     }
-    send(true);
+
+    // send offers
+    {
+        std::scoped_lock its_lock(offer_mutex_);
+        std::vector<std::shared_ptr<message_impl>> its_messages = {std::make_shared<message_impl>()};
+        services_t its_offers = host_->get_offered_services();
+        insert_offer_entries(its_messages, its_offers, false);
+        send(its_messages);
+    }
+
+    // sanity multicast check
+    // if we've been many, many, many SD cycles without "hearing from anyone", something might be up
+    auto now = std::chrono::steady_clock::now();
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_multicast_processed_);
+    if (diff > cyclic_offer_delay_ * 10) {
+        VSOMEIP_ERROR << "Didn't receive a multicast SD message for " << diff.count() << "ms.";
+
+        // because we can, log sessions; it is a good summary of the known state of the network
+        for (auto [sender, state] : sessions_received_) {
+            VSOMEIP_INFO << "Sessions of " << sender.to_string() << ": 0x" << hex4(std::get<0>(state)) << " (multicast), 0x"
+                         << hex4(std::get<1>(state)) << " (unicast)";
+        }
+
+        // rejoin multicast group
+        if (endpoint_ && !reliable_) {
+            if (auto its_server_endpoint = std::dynamic_pointer_cast<udp_server_endpoint_impl>(endpoint_); its_server_endpoint) {
+                its_server_endpoint->leave(sd_multicast_);
+                its_server_endpoint->join(sd_multicast_);
+            }
+        }
+    }
+
     start_main_phase_timer();
 }
 
@@ -2997,36 +2987,6 @@ configuration::ttl_factor_t service_discovery_impl::get_ttl_factor(service_t _se
         }
     }
     return its_ttl_factor;
-}
-
-void service_discovery_impl::on_last_msg_received_timer_expired(const boost::system::error_code& _error) {
-
-    if (!_error) {
-        // We didn't receive a multicast message within 110% of the cyclic_offer_delay_
-        VSOMEIP_WARNING << "Didn't receive a multicast SD message for " << last_msg_received_timer_timeout_.count() << "ms.";
-
-        // Rejoin multicast group
-        if (endpoint_ && !reliable_) {
-            auto its_server_endpoint = std::dynamic_pointer_cast<udp_server_endpoint_impl>(endpoint_);
-            if (its_server_endpoint) {
-                its_server_endpoint->leave(sd_multicast_);
-                its_server_endpoint->join(sd_multicast_);
-            }
-        }
-        start_last_msg_received_timer();
-    }
-}
-
-void service_discovery_impl::start_last_msg_received_timer() {
-    std::scoped_lock its_lock{last_msg_received_timer_mutex_};
-    last_msg_received_timer_.expires_after(last_msg_received_timer_timeout_);
-    last_msg_received_timer_.async_wait(
-            std::bind(&service_discovery_impl::on_last_msg_received_timer_expired, shared_from_this(), std::placeholders::_1));
-}
-
-void service_discovery_impl::stop_last_msg_received_timer() {
-    std::scoped_lock its_lock{last_msg_received_timer_mutex_};
-    last_msg_received_timer_.cancel();
 }
 
 reliability_type_e service_discovery_impl::get_remote_offer_type(service_t _service, instance_t _instance) const {
@@ -3414,6 +3374,7 @@ void service_discovery_impl::check_stopped_services_on_suspend(const boost::syst
 }
 
 void service_discovery_impl::check_offer_services(const boost::system::error_code& error, uint32_t _faulty_value) {
+    std::scoped_lock its_lock(subscribed_mutex_);
     if (error && error.value() != boost::asio::error::operation_aborted) {
         VSOMEIP_ERROR_P << "Suspend offer watchdog error " << error.message();
     } else if (!error) { // and there are offers being made
@@ -3433,14 +3394,10 @@ void service_discovery_impl::log_offer_watchdog_state() const {
         its_own_multicast = its_endpoint->get_own_multicast_received();
     }
 
-    const auto its_last_multicast = last_multicast_processed_.load();
-    std::string its_age{"never"};
-    if (its_last_multicast != std::chrono::steady_clock::time_point{}) {
-        its_age =
-                std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - its_last_multicast)
-                                       .count())
-                + "ms ago";
-    }
+    std::string its_age = std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
+                                                                                               - last_multicast_processed_)
+                                                 .count())
+            + "ms ago";
 
     VSOMEIP_ERROR_P << "Offer watchdog expired after " << offers_watchdog_time_.count() << "ms: offers_received=" << offers_received_.load()
                     << " (" << offers_received_after_last_resume_.load()

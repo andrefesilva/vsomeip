@@ -76,8 +76,6 @@ public:
     void unsubscribe_all_on_suspend();
     void reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major);
 
-    bool send(bool _is_announcing);
-
     void on_message(const byte_t* _data, length_t _length, const boost::asio::ip::address& _sender, bool _is_multicast);
 
     void sent_messages(const byte_t* _data, length_t _size, const boost::asio::ip::address& _remote_address = boost::asio::ip::address());
@@ -232,9 +230,6 @@ private:
     bool is_subscribed(const std::shared_ptr<eventgroupentry_impl>& _entry, const message_impl::options_t& _options) const;
 
     configuration::ttl_factor_t get_ttl_factor(service_t _service, instance_t _instance, const configuration::ttl_map_t& _ttl_map) const;
-    void on_last_msg_received_timer_expired(const boost::system::error_code& _error);
-    void start_last_msg_received_timer();
-    void stop_last_msg_received_timer();
 
     reliability_type_e get_remote_offer_type(service_t _service, instance_t _instance) const;
     reliability_type_e get_remote_offer_type(const std::shared_ptr<subscription>& _subscription) const;
@@ -367,11 +362,6 @@ private:
     configuration::ttl_map_t ttl_factor_offers_;
     configuration::ttl_map_t ttl_factor_subscriptions_;
 
-    std::mutex last_msg_received_timer_mutex_;
-    bool must_start_last_msg_received_timer_;
-    boost::asio::steady_timer last_msg_received_timer_;
-    std::chrono::milliseconds last_msg_received_timer_timeout_;
-
     mutable std::mutex remote_offer_types_mutex_;
     std::map<std::pair<service_t, instance_t>, reliability_type_e> remote_offer_types_;
 
@@ -415,7 +405,7 @@ private:
     std::atomic<uint32_t> offer_entries_sent_;
     std::atomic<uint32_t> offer_entries_sent_after_last_resume_;
 
-    std::atomic<std::chrono::steady_clock::time_point> last_multicast_processed_;
+    std::chrono::steady_clock::time_point last_multicast_processed_;
 
     // Tracks from which network hosts we have received messages.
     observer observed_hosts_;
