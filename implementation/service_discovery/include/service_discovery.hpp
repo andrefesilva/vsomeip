@@ -40,8 +40,6 @@ public:
     virtual void unsubscribe_all_on_suspend() = 0;
     virtual void reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major) = 0;
 
-    virtual bool send(bool _is_announcing) = 0;
-
     virtual void on_message(const byte_t* _data, length_t _length, const boost::asio::ip::address& _sender, bool _is_multicast) = 0;
 
     virtual void sent_messages(const byte_t* _data, length_t _size,
