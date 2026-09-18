@@ -43,7 +43,7 @@ template<typename Protocol>
 void vsomeip_v3::endpoint_impl<Protocol>::remove_default_target(service_t) { }
 
 template<typename Protocol>
-vsomeip_v3::instance_t vsomeip_v3::endpoint_impl<Protocol>::get_instance(service_t /*_service*/) {
+vsomeip_v3::instance_t vsomeip_v3::endpoint_impl<Protocol>::get_instance(service_t /*_service*/, major_version_t /*_major*/) {
     return ANY_INSTANCE;
 }
 
@@ -237,8 +237,9 @@ struct mock_endpoint_host : public vsomeip_v3::boardnet_endpoint_host {
                       const boost::asio::ip::address& _remote_address, uint16_t _remote_port));
     MOCK_METHOD2(release_port, void(uint16_t _port, bool _reliable));
     MOCK_CONST_METHOD0(get_client, vsomeip_v3::client_t());
-    MOCK_CONST_METHOD2(find_instance,
-                       vsomeip_v3::instance_t(vsomeip_v3::service_t _service, vsomeip_v3::boardnet_endpoint* const _endpoint));
+    MOCK_CONST_METHOD3(find_instance,
+                       vsomeip_v3::instance_t(vsomeip_v3::service_t _service, vsomeip_v3::major_version_t _major,
+                                              vsomeip_v3::boardnet_endpoint* const _endpoint));
 };
 
 struct mock_boardnet_routing_host : public vsomeip_v3::boardnet_routing_host {

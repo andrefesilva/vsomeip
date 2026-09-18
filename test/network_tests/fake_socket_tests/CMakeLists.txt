@@ -66,6 +66,7 @@ set (TEST_SUITES
     test_remote_host_restart
     test_remote_offer_endpoint_change
     test_sd_protocol
+    test_someip_protocol
     test_someip_tp
     test_uds_communication
     test_security_policy_distribution

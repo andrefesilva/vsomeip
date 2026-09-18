@@ -353,7 +353,9 @@ typename endpoint_impl<Protocol>::cms_ret_e server_endpoint_impl<Protocol>::segm
     if (endpoint_impl<Protocol>::is_supporting_someip_tp_ && _data != nullptr) {
         const service_t its_service = bithelper::read_uint16_be(&_data[VSOMEIP_SERVICE_POS_MIN]);
         const method_t its_method = bithelper::read_uint16_be(&_data[VSOMEIP_METHOD_POS_MIN]);
-        instance_t its_instance = this->get_instance(its_service);
+        assert(VSOMEIP_INTERFACE_VERSION_POS < _size);
+        const major_version_t its_major = _data[VSOMEIP_INTERFACE_VERSION_POS];
+        instance_t its_instance = this->get_instance(its_service, its_major);
 
         if (its_instance != ANY_INSTANCE) {
             if (tp_segmentation_enabled({its_service, its_instance}, its_method)) {

@@ -105,7 +105,8 @@ private:
                                    session_t& _missing_session);
 
     void insert_find_entries(std::vector<std::shared_ptr<message_impl>>& _messages, const requests_t& _requests);
-    void insert_offer_entries(std::vector<std::shared_ptr<message_impl>>& _messages, const services_t& _services, bool _ignore_phase);
+    void insert_offer_entries(std::vector<std::shared_ptr<message_impl>>& _messages, const versioned_services_t& _services,
+                              bool _ignore_phase);
     void insert_offer_service(std::vector<std::shared_ptr<message_impl>>& _messages, const std::shared_ptr<const serviceinfo>& _info);
 
     entry_data_t create_eventgroup_entry(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
@@ -329,7 +330,7 @@ private:
     boost::asio::steady_timer offer_debounce_timer_;
     // this map is used to collect offers while for offer debouncing
     std::mutex collected_offers_mutex_;
-    services_t collected_offers_;
+    versioned_services_t collected_offers_;
 
     // interval between debounces during the initial debounce phase of the finds
     std::chrono::milliseconds find_initial_debounce_time_;
@@ -341,7 +342,7 @@ private:
 
     // this map contains the offers and their timers currently in repetition phase
     std::mutex repetition_phase_timers_mutex_;
-    std::map<std::shared_ptr<boost::asio::steady_timer>, services_t> repetition_phase_timers_;
+    std::map<std::shared_ptr<boost::asio::steady_timer>, versioned_services_t> repetition_phase_timers_;
 
     // this map contains the finds and their timers currently in repetition phase
     std::mutex find_repetition_phase_timers_mutex_;

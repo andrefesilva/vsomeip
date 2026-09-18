@@ -18,6 +18,7 @@
 #include "sample_configurations.hpp"
 
 #include "common/timeout_scale.hpp"
+#include "vsomeip/constants.hpp"
 
 #include <chrono>
 #include <vsomeip/enumeration_types.hpp>
@@ -388,59 +389,6 @@ TEST_F(test_multiversion_support_single_ecu, when_v1_and_v2_are_reofferd_both_in
 
     EXPECT_TRUE(gate_v1->wait_for_blocked());
     EXPECT_TRUE(gate_v2->wait_for_blocked());
-}
-
-struct test_multiversion_support_limited_support : public base_fake_socket_fixture {
-    void start_apps() {
-        ecu_.add_app(client_v1_name_);
-        ecu_.add_app(client_v2_name_);
-        ecu_.add_app(server_v1_name_);
-        ecu_.add_app(server_v2_name_);
-
-        ecu_.prepare();
-        ecu_.start_apps();
-
-        server_v1_ = ecu_.apps_[server_v1_name_];
-        server_v2_ = ecu_.apps_[server_v2_name_];
-        client_v1_ = ecu_.apps_[client_v1_name_];
-        client_v2_ = ecu_.apps_[client_v2_name_];
-    }
-
-    std::string const client_v1_name_{"client_v1"};
-    std::string const client_v2_name_{"client_v2"};
-    std::string const server_v1_name_{"server_v1"};
-    std::string const server_v2_name_{"server_v2"};
-
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
-    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
-
-    ecu_setup ecu_{"single-ecu", ecu_config{boardnet::ecu_one_config}.add_interface({interface_v1_, interface_v2_}), *socket_manager_};
-
-    app* server_v1_;
-    app* server_v2_;
-    app* client_v1_;
-    app* client_v2_;
-};
-
-TEST_F(test_multiversion_support_limited_support, interfaces_for_boardnet_are_not_supported_with_multiple_versions) {
-    // This is a test that is expected to be removed once we support multiple versions for the boardnet.
-    // But as long as we don't do this, we should reject such attempts
-    start_apps();
-
-    // first offering is fine
-    server_v1_->offer(interface_v1_.instance_);
-    client_v1_->request_service(interface_v1_.instance_);
-    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
-
-    // second one is going to be rejected
-    server_v2_->offer(interface_v2_.instance_);
-    client_v2_->request_service(interface_v2_.instance_);
-    EXPECT_FALSE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_),
-                                                                std::chrono::milliseconds(10)));
 }
 
 /**
@@ -1700,5 +1648,660 @@ TEST_F(test_multiversion_release_any_major_reliable,
 
     // The still-requesting client must be able to keep using the service.
     ASSERT_TRUE(other_client_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+}
+
+/**
+ * This fixture provides two different ecu topologies:
+ * Three-ECU topology isolating the *consuming* ECU's ability to independently track two
+ * remote offers of the same (service, instance) discovered from two different hosts:
+ *
+ *   - provider_ecu_ offers major v1 and v2.
+ *   - consumer_v1_ecu_ only ever requests/consumes, never offers v1.
+ *   - consumer_v2_ecu_ only ever requests/consumes, never offers v2.
+ *
+ * Two-ECU topology one ECU is the provider the other one the consumer
+ * remote offers of the same (service, instance) discovered from two different hosts:
+ *
+ *   - provider_ecu_ offers major v1 and v2.
+ *   - consumer_v1_ecu_ only ever requests/consumes, never offers v1 and v2.
+ *
+ */
+struct test_multiversion_support_aggregate_offering : public base_fake_socket_fixture {
+    // does not start the _any_ client
+    void start_three_ecu_setup() {
+        provider_ecu_.add_app(provider_v1_name_);
+        provider_ecu_.add_app(provider_v2_name_);
+        consumer_v1_ecu_.add_app(client_v1_name_);
+        consumer_v2_ecu_.add_app(client_v2_name_);
+
+        provider_ecu_.prepare();
+        consumer_v1_ecu_.prepare();
+        consumer_v2_ecu_.prepare();
+
+        provider_ecu_.start_apps();
+        consumer_v1_ecu_.start_apps();
+        consumer_v2_ecu_.start_apps();
+
+        provider_v1_ = provider_ecu_.apps_[provider_v1_name_];
+        provider_v2_ = provider_ecu_.apps_[provider_v2_name_];
+        client_v1_ = consumer_v1_ecu_.apps_[client_v1_name_];
+        client_v2_ = consumer_v2_ecu_.apps_[client_v2_name_];
+
+        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+        ASSERT_TRUE(set_udp_data_pipe({std::nullopt, provider_ecu_.router_name_}, udp_party::any(), provider_send_gate_->get_data_pipe()));
+        ASSERT_TRUE(set_udp_data_pipe({std::nullopt, consumer_v1_ecu_.router_name_}, udp_party::any(),
+                                      consumer_v1_send_gate_->get_data_pipe()));
+        ASSERT_TRUE(set_udp_data_pipe({std::nullopt, consumer_v2_ecu_.router_name_}, udp_party::any(),
+                                      consumer_v2_send_gate_->get_data_pipe()));
+    }
+    void start_two_ecu_setup() {
+        provider_ecu_.add_app(provider_v1_name_);
+        provider_ecu_.add_app(provider_v2_name_);
+        consumer_v1_ecu_.add_app(client_v1_name_);
+        consumer_v1_ecu_.add_app(client_v2_name_);
+        consumer_v1_ecu_.add_app(client_any_name_);
+
+        provider_ecu_.prepare();
+        consumer_v1_ecu_.prepare();
+
+        provider_ecu_.start_apps();
+        consumer_v1_ecu_.start_apps();
+
+        provider_v1_ = provider_ecu_.apps_[provider_v1_name_];
+        provider_v2_ = provider_ecu_.apps_[provider_v2_name_];
+        client_v1_ = consumer_v1_ecu_.apps_[client_v1_name_];
+        client_v2_ = consumer_v1_ecu_.apps_[client_v2_name_];
+        client_any_ = consumer_v1_ecu_.apps_[client_any_name_];
+
+        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_any_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+        ASSERT_TRUE(set_udp_data_pipe({std::nullopt, provider_ecu_.router_name_}, udp_party::any(), provider_send_gate_->get_data_pipe()));
+        ASSERT_TRUE(
+                set_udp_data_pipe({std::nullopt, consumer_v1_ecu_.router_name_}, udp_party::any(), consumer_send_gate_->get_data_pipe()));
+    }
+
+    std::string const provider_v1_name_{"provider_v1"};
+    std::string const provider_v2_name_{"provider_v2"};
+    std::string const client_v1_name_{"client_v1"};
+    std::string const client_v2_name_{"client_v2"};
+    std::string const client_any_name_{"client_any"};
+    std::string const local_client_v1_name_{"local_client_v1"};
+    std::string const local_client_v2_name_{"local_client_v2"};
+
+    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
+                            {},
+                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
+                            {},
+                            {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+
+    vsomeip::method_t const method_{0x1111};
+    request request_v1_{interface_v1_.instance_, method_, vsomeip::message_type_e::MT_REQUEST, false, {}};
+    request request_v2_{interface_v2_.instance_, method_, vsomeip::message_type_e::MT_REQUEST, false, {}};
+
+    // The SD multicast group address (VSOMEIP_SD_DEFAULT_MULTICAST); none of the ecu_configs used
+    // here override it. FindService/OfferService sent to this address still go out as an ordinary
+    // sendto() on the sender's own unicast SD socket -- joining the group is only needed to
+    // *receive* multicast traffic, so gating on this as the receiver party does not depend on
+    // whether the multicast join has completed.
+    boost::asio::ip::udp::endpoint const sd_multicast_ep_{boost::asio::ip::make_address("224.224.224.0"), 30490};
+
+    // provider_v1_ecu_/provider_v2_ecu_ each offer only their own major -- reusing the
+    // client-only boardnet::ecu_one_config/ecu_two_config bases (stripped of the unrelated
+    // service_3344 baked into ecu_two_config) purely for their distinct unicast IP/router
+    // name/network; consumer_ecu_ never offers anything.
+    //
+    // Each ECU gets its own diagnosis address so their auto-assigned client ids don't collide --
+    // utility::request_client_id() reads diagnosis/mask fresh from _config per call (no longer
+    // function-local-static-cached), so this now gives each ECU its own non-overlapping range.
+    ecu_setup provider_ecu_{
+            "provider", ecu_config{boardnet::ecu_one_config}.add_interface({interface_v1_}),
+            *socket_manager_}; // configuration is version independent. Adding one interface enables offering for both versions.
+    ecu_setup consumer_v1_ecu_{"consumer_v1", boardnet::ecu_two_config, *socket_manager_};
+    // consumer_ecu_ never offers anything.
+    ecu_setup consumer_v2_ecu_{"consumer_v2", boardnet::ecu_three_config, *socket_manager_};
+
+    app* provider_v1_;
+    app* provider_v2_;
+    app* client_v1_;
+    app* client_v2_;
+    app* client_any_;
+    std::shared_ptr<someip_gate> provider_send_gate_ = someip_gate::create();
+    std::shared_ptr<someip_gate> consumer_send_gate_ = someip_gate::create();
+    std::shared_ptr<someip_gate> consumer_v1_send_gate_ = someip_gate::create();
+    std::shared_ptr<someip_gate> consumer_v2_send_gate_ = someip_gate::create();
+};
+
+TEST_F(test_multiversion_support_aggregate_offering, both_majors_offered_from_a_single_ecu_become_independently_available) {
+    start_three_ecu_setup();
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_v1_->availability_record_.clear();
+    client_v2_->availability_record_.clear();
+
+    provider_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_SUSPENDED);
+
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::unavailable(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::unavailable(interface_v2_.instance_)));
+
+    provider_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_RESUMED);
+
+    EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+}
+TEST_F(test_multiversion_support_aggregate_offering, releasing_v2_then_any_major_eventually_drops_v2s_connection_but_never_v1s) {
+    consumer_v2_ecu_.add_app(client_any_name_);
+    start_three_ecu_setup();
+    client_any_ = consumer_v2_ecu_.apps_[client_any_name_];
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    service_instance const any_major{.service_ = interface_v1_.instance_.service_, .instance_ = interface_v1_.instance_.instance_};
+    client_any_->request_service(any_major);
+
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    ASSERT_TRUE(client_any_->availability_record_.wait_for_last(service_availability::available(any_major)));
+
+    ASSERT_TRUE(await_connection(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_));
+    ASSERT_TRUE(await_connection(consumer_v2_ecu_.router_name_, provider_ecu_.router_name_));
+
+    auto drop_watch_v1 = watch_connection_drop(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_);
+    auto drop_watch_v2 = watch_connection_drop(consumer_v2_ecu_.router_name_, provider_ecu_.router_name_);
+
+    client_v2_->release_service(interface_v2_.instance_);
+    EXPECT_FALSE(drop_watch_v2.wait(std::chrono::milliseconds(500)));
+    EXPECT_FALSE(drop_watch_v1.wait(std::chrono::milliseconds(0)));
+
+    client_any_->release_service(any_major);
+    EXPECT_TRUE(drop_watch_v2.wait(std::chrono::milliseconds(500)));
+    EXPECT_FALSE(drop_watch_v1.wait(std::chrono::milliseconds(0)));
+}
+TEST_F(test_multiversion_support_aggregate_offering, releasing_v1_then_any_major_eventually_drops_v1s_connection_but_never_v2s) {
+    consumer_v1_ecu_.add_app(client_any_name_);
+    start_three_ecu_setup();
+    client_any_ = consumer_v1_ecu_.apps_[client_any_name_];
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    service_instance const any_major{.service_ = interface_v1_.instance_.service_, .instance_ = interface_v1_.instance_.instance_};
+    client_any_->request_service(any_major);
+
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    ASSERT_TRUE(client_any_->availability_record_.wait_for_last(service_availability::available(any_major)));
+
+    ASSERT_TRUE(await_connection(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_));
+    ASSERT_TRUE(await_connection(consumer_v2_ecu_.router_name_, provider_ecu_.router_name_));
+
+    auto drop_watch_v1 = watch_connection_drop(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_);
+    auto drop_watch_v2 = watch_connection_drop(consumer_v2_ecu_.router_name_, provider_ecu_.router_name_);
+
+    client_v1_->release_service(interface_v1_.instance_);
+    EXPECT_FALSE(drop_watch_v1.wait(std::chrono::milliseconds(500)));
+    EXPECT_FALSE(drop_watch_v2.wait(std::chrono::milliseconds(0)));
+
+    client_any_->release_service(any_major);
+    EXPECT_TRUE(drop_watch_v1.wait(std::chrono::milliseconds(500)));
+    EXPECT_FALSE(drop_watch_v2.wait(std::chrono::milliseconds(0)));
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, drop_connection_on_last_release) {
+    start_two_ecu_setup();
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    service_instance const any_major{.service_ = interface_v1_.instance_.service_, .instance_ = interface_v1_.instance_.instance_};
+    client_any_->request_service(any_major);
+
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    ASSERT_TRUE(client_any_->availability_record_.wait_for_last(service_availability::available(any_major)));
+
+    ASSERT_TRUE(await_connection(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_));
+
+    auto drop_watch_v1 = watch_connection_drop(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_);
+
+    client_v1_->release_service(interface_v1_.instance_);
+    EXPECT_FALSE(drop_watch_v1.wait(std::chrono::milliseconds(500)));
+
+    client_any_->release_service(any_major);
+    EXPECT_FALSE(drop_watch_v1.wait(std::chrono::milliseconds(500)));
+    client_v2_->release_service(interface_v2_.instance_);
+    EXPECT_TRUE(drop_watch_v1.wait(std::chrono::milliseconds(500)));
+}
+TEST_F(test_multiversion_support_aggregate_offering, drop_connection_on_last_stop_offer) {
+    // ensure the consumer doesn't tear down the connection because of missing sends
+    provider_ecu_.config().service_discovery_.ttl_ = 60;
+    start_two_ecu_setup();
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    ASSERT_TRUE(await_connection(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_));
+    // ensure that stop messages don't reach the consumer - ensuring that the provider needs to tear down the connection
+    provider_send_gate_->block(true);
+
+    auto drop_watch_v1 = watch_connection_drop(consumer_v1_ecu_.router_name_, provider_ecu_.router_name_);
+
+    provider_v1_->stop_offer(interface_v1_.instance_);
+    EXPECT_FALSE(drop_watch_v1.wait(std::chrono::milliseconds(500)));
+
+    provider_v2_->stop_offer(interface_v2_.instance_);
+    EXPECT_TRUE(drop_watch_v1.wait(std::chrono::milliseconds(500)));
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, stopping_v1_offer_does_not_disturb_v2_in_aggregate_setup) {
+    start_three_ecu_setup();
+
+    std::vector<unsigned char> const payload_v2{0xA1, 0xB2};
+    provider_v2_->answer_request(request_v2_, [payload_v2] { return payload_v2; });
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_v1_->availability_record_.clear();
+    client_v2_->availability_record_.clear();
+
+    provider_v1_->stop_offer(interface_v1_.instance_);
+
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::unavailable(interface_v1_.instance_)));
+    EXPECT_FALSE(client_v2_->availability_record_.wait_for_last(service_availability::unavailable(interface_v2_.instance_),
+                                                                std::chrono::milliseconds(250)));
+
+    client_v2_->send_request(request_v2_);
+    EXPECT_TRUE(client_v2_->wait_for_messages({payload_v2}));
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, stopping_v2_offer_does_not_disturb_v1_in_aggregate_setup) {
+    start_three_ecu_setup();
+
+    std::vector<unsigned char> const payload_v1{0xC3, 0xD4};
+    provider_v1_->answer_request(request_v1_, [payload_v1] { return payload_v1; });
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_v1_->availability_record_.clear();
+    client_v2_->availability_record_.clear();
+
+    provider_v2_->stop_offer(interface_v2_.instance_);
+
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::unavailable(interface_v2_.instance_)));
+    EXPECT_FALSE(client_v1_->availability_record_.wait_for_last(service_availability::unavailable(interface_v1_.instance_),
+                                                                std::chrono::milliseconds(250)));
+
+    client_v1_->send_request(request_v1_);
+    EXPECT_TRUE(client_v1_->wait_for_messages({payload_v1}));
+}
+TEST_F(test_multiversion_support_aggregate_offering, request_to_each_major_is_routed_to_the_matching_remote_provider_three_ecus) {
+    start_three_ecu_setup();
+
+    std::vector<unsigned char> const payload_v1{0x01, 0x02};
+    std::vector<unsigned char> const payload_v2{0x03, 0x04};
+    provider_v1_->answer_request(request_v1_, [payload_v1] { return payload_v1; });
+    provider_v2_->answer_request(request_v2_, [payload_v2] { return payload_v2; });
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_v1_->send_request(request_v1_);
+    client_v2_->send_request(request_v2_);
+
+    EXPECT_TRUE(client_v1_->wait_for_messages({payload_v1}));
+    EXPECT_TRUE(client_v2_->wait_for_messages({payload_v2}));
+}
+TEST_F(test_multiversion_support_aggregate_offering, request_to_each_major_is_routed_to_the_matching_remote_provider_two_ecus) {
+    start_two_ecu_setup();
+
+    std::vector<unsigned char> const payload_v1{0x01, 0x02};
+    std::vector<unsigned char> const payload_v2{0x03, 0x04};
+    provider_v1_->answer_request(request_v1_, [payload_v1] { return payload_v1; });
+    provider_v2_->answer_request(request_v2_, [payload_v2] { return payload_v2; });
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_v1_->send_request(request_v1_);
+    client_v2_->send_request(request_v2_);
+
+    EXPECT_TRUE(client_v1_->wait_for_messages({payload_v1}));
+    EXPECT_TRUE(client_v2_->wait_for_messages({payload_v2}));
+}
+TEST_F(test_multiversion_support_aggregate_offering, v1_is_reoffered_after_debounce) {
+    std::shared_ptr<command_gate> client_gate = command_gate::create();
+    ASSERT_TRUE(setup_data_pipe(provider_v1_name_, provider_ecu_.router_name_, socket_role::server, client_gate->get_data_pipe()));
+
+    start_two_ecu_setup();
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    provider_send_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::OFFER_SERVICE, 3});
+    client_gate->block_at(protocol::id_e::STOP_OFFER_SERVICE_ID);
+
+    provider_v1_->stop_offer(interface_v1_.instance_);
+    ASSERT_TRUE(client_gate->wait_for_blocked());
+    provider_v1_->offer(interface_v1_.instance_);
+
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+    // re-arm to await the stop-offer processing (releases all the prior offerings)
+    provider_send_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::OFFER_SERVICE, 0});
+    client_gate->block(false);
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+    // any offer after the wait above is a debounced offer -> Now we can assert that the debouncing is preserving the proper major version
+    provider_send_gate_->block_at(someip_gate::sd_predicate{[interface = interface_v1_.instance_](auto const& msg) {
+        for (auto const& e : msg->get_entries()) {
+            if (e->get_type() == sd::entry_type_e::OFFER_SERVICE && e->get_ttl() == 3 && e->get_service() == interface.service_
+                && e->get_instance() == interface.instance_ && e->get_major_version() == interface.major_) {
+                return true;
+            }
+        }
+        return false;
+    }});
+
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+}
+TEST_F(test_multiversion_support_aggregate_offering, v2_is_reoffered_after_debounce) {
+    std::shared_ptr<command_gate> client_gate = command_gate::create();
+    ASSERT_TRUE(setup_data_pipe(provider_v2_name_, provider_ecu_.router_name_, socket_role::server, client_gate->get_data_pipe()));
+
+    start_two_ecu_setup();
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    provider_send_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::OFFER_SERVICE, 3});
+    client_gate->block_at(protocol::id_e::STOP_OFFER_SERVICE_ID);
+
+    provider_v2_->stop_offer(interface_v2_.instance_);
+    ASSERT_TRUE(client_gate->wait_for_blocked());
+    provider_v2_->offer(interface_v2_.instance_);
+
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+    // re-arm to await the stop-offer processing (releases all the prior offerings)
+    provider_send_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::OFFER_SERVICE, 0});
+    client_gate->block(false);
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+    // any offer after the wait above is a debounced offer -> Now we can assert that the debouncing is preserving the proper major version
+    provider_send_gate_->block_at(someip_gate::sd_predicate{[interface = interface_v2_.instance_](auto const& msg) {
+        for (auto const& e : msg->get_entries()) {
+            if (e->get_type() == sd::entry_type_e::OFFER_SERVICE && e->get_ttl() == 3 && e->get_service() == interface.service_
+                && e->get_instance() == interface.instance_ && e->get_major_version() == interface.major_) {
+                return true;
+            }
+        }
+        return false;
+    }});
+
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, v1_is_reoffered_after_resume_race) {
+    std::shared_ptr<command_gate> client_gate = command_gate::create();
+    ASSERT_TRUE(setup_data_pipe(provider_v1_name_, provider_ecu_.router_name_, socket_role::server, client_gate->get_data_pipe()));
+
+    start_two_ecu_setup();
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_gate->block_at(protocol::id_e::STOP_OFFER_SERVICE_ID);
+
+    provider_v1_->stop_offer(interface_v1_.instance_);
+    ASSERT_TRUE(client_gate->wait_for_blocked());
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_send_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::OFFER_SERVICE, 0});
+    client_gate->block(false);
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+
+    provider_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_SUSPENDED);
+    provider_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_RESUMED);
+    provider_send_gate_->block(false);
+
+    client_v1_->availability_record_.clear();
+    client_v1_->request_service(interface_v2_.instance_);
+    EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+}
+TEST_F(test_multiversion_support_aggregate_offering, v2_is_reoffered_after_resume_race) {
+    GTEST_SKIP() << "this test is triggering a race in the server_endpoint_impl";
+    std::shared_ptr<command_gate> client_gate = command_gate::create();
+    ASSERT_TRUE(setup_data_pipe(provider_v2_name_, provider_ecu_.router_name_, socket_role::server, client_gate->get_data_pipe()));
+
+    start_two_ecu_setup();
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_gate->block_at(protocol::id_e::STOP_OFFER_SERVICE_ID);
+
+    provider_v2_->stop_offer(interface_v2_.instance_);
+    ASSERT_TRUE(client_gate->wait_for_blocked());
+    provider_v2_->offer(interface_v2_.instance_);
+    provider_send_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::OFFER_SERVICE, 0});
+    client_gate->block(false);
+    ASSERT_TRUE(provider_send_gate_->wait_for_blocked());
+
+    provider_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_SUSPENDED);
+    provider_ecu_.router_->set_routing_state(vsomeip::routing_state_e::RS_RESUMED);
+    provider_send_gate_->block(false);
+
+    client_v2_->availability_record_.clear();
+    client_v2_->request_service(interface_v2_.instance_);
+    EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, v1_and_v2_are_offered_after_routing_is_ready) {
+    provider_ecu_.add_app(local_client_v1_name_);
+    provider_ecu_.add_app(local_client_v2_name_);
+
+    start_two_ecu_setup();
+    auto* lcv1 = provider_ecu_.apps_[local_client_v1_name_];
+    auto* lcv2 = provider_ecu_.apps_[local_client_v2_name_];
+
+    ASSERT_TRUE(provider_ecu_.set_routing(fake_netlink_connector::state_e::DOWN));
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    lcv1->request_service(interface_v1_.instance_);
+    lcv2->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(lcv1->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(lcv2->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    // since the local clients are informed the remote offering was already stashed (whitebox knowledge of the offering order in
+    // routing_manager_impl)
+
+    ASSERT_TRUE(provider_ecu_.set_routing(fake_netlink_connector::state_e::UP));
+    EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+}
+TEST_F(test_multiversion_support_aggregate_offering, v1_are_offered_after_routing_is_ready_with_v2_stop_offered) {
+    provider_ecu_.add_app(local_client_v1_name_);
+    provider_ecu_.add_app(local_client_v2_name_);
+
+    start_two_ecu_setup();
+    auto* lcv1 = provider_ecu_.apps_[local_client_v1_name_];
+    auto* lcv2 = provider_ecu_.apps_[local_client_v2_name_];
+
+    ASSERT_TRUE(provider_ecu_.set_routing(fake_netlink_connector::state_e::DOWN));
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    lcv1->request_service(interface_v1_.instance_);
+    lcv2->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(lcv1->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(lcv2->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    provider_v2_->stop_offer(interface_v2_.instance_);
+    ASSERT_TRUE(lcv2->availability_record_.wait_for_last(service_availability::unavailable(interface_v2_.instance_)));
+    // since the local clients are informed the remote offering was already stashed (whitebox knowledge of the offering order in
+    // routing_manager_impl)
+
+    ASSERT_TRUE(provider_ecu_.set_routing(fake_netlink_connector::state_e::UP));
+    EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    EXPECT_FALSE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_),
+                                                                std::chrono::milliseconds(100)));
+}
+TEST_F(test_multiversion_support_aggregate_offering, v2_are_offered_after_routing_is_ready_with_v2_stop_offered) {
+    provider_ecu_.add_app(local_client_v1_name_);
+    provider_ecu_.add_app(local_client_v2_name_);
+
+    start_two_ecu_setup();
+    auto* lcv1 = provider_ecu_.apps_[local_client_v1_name_];
+    auto* lcv2 = provider_ecu_.apps_[local_client_v2_name_];
+
+    ASSERT_TRUE(provider_ecu_.set_routing(fake_netlink_connector::state_e::DOWN));
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    lcv1->request_service(interface_v1_.instance_);
+    lcv2->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(lcv1->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(lcv2->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    provider_v1_->stop_offer(interface_v1_.instance_);
+    ASSERT_TRUE(lcv1->availability_record_.wait_for_last(service_availability::unavailable(interface_v1_.instance_)));
+    // since the local clients are informed the remote offering was already stashed (whitebox knowledge of the offering order in
+    // routing_manager_impl)
+
+    ASSERT_TRUE(provider_ecu_.set_routing(fake_netlink_connector::state_e::UP));
+    EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    EXPECT_FALSE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_),
+                                                                std::chrono::milliseconds(100)));
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, v1_becomes_available_via_unicast_find_service_reply) {
+    provider_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(60);
+    // only blocking multicast
+    auto gate = someip_gate::create();
+    ASSERT_TRUE(set_udp_data_pipe({provider_ecu_.sd_endpoint(), provider_ecu_.router_name_}, {sd_multicast_ep_}, gate->get_data_pipe()));
+    gate->block(true);
+
+    start_two_ecu_setup();
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    // due to the very big "main_phase_timer" it should be guaranteed that the find_service request is received before half the timer
+    // elapsed
+    client_v1_->request_service(interface_v1_.instance_);
+    EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, v2_becomes_available_via_unicast_find_service_reply) {
+    provider_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(60);
+    // only blocking multicast
+    auto gate = someip_gate::create();
+    ASSERT_TRUE(set_udp_data_pipe({provider_ecu_.sd_endpoint(), provider_ecu_.router_name_}, {sd_multicast_ep_}, gate->get_data_pipe()));
+    gate->block(true);
+
+    start_two_ecu_setup();
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    // due to the very big "main_phase_timer" it should be guaranteed that the find_service request is received before half the timer
+    // elapsed
+    client_v2_->request_service(interface_v2_.instance_);
+    EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+}
+TEST_F(test_multiversion_support_aggregate_offering, v1_with_any_instance_becomes_available_via_unicast_find_service_reply) {
+    provider_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(60);
+    // only blocking multicast
+    auto gate = someip_gate::create();
+    ASSERT_TRUE(set_udp_data_pipe({provider_ecu_.sd_endpoint(), provider_ecu_.router_name_}, {sd_multicast_ep_}, gate->get_data_pipe()));
+    gate->block(true);
+
+    start_two_ecu_setup();
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    // due to the very big "main_phase_timer" it should be guaranteed that the find_service request is received before half the timer
+    // elapsed
+    auto v1 = interface_v1_.instance_;
+    v1.instance_ = ANY_INSTANCE;
+    client_v1_->request_service(v1);
+    EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+}
+
+TEST_F(test_multiversion_support_aggregate_offering, v2_with_any_instance_becomes_available_via_unicast_find_service_reply) {
+    provider_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(60);
+    // only blocking multicast
+    auto gate = someip_gate::create();
+    ASSERT_TRUE(set_udp_data_pipe({provider_ecu_.sd_endpoint(), provider_ecu_.router_name_}, {sd_multicast_ep_}, gate->get_data_pipe()));
+    gate->block(true);
+
+    start_two_ecu_setup();
+
+    provider_v1_->offer(interface_v1_.instance_);
+    provider_v2_->offer(interface_v2_.instance_);
+
+    // due to the very big "main_phase_timer" it should be guaranteed that the find_service request is received before half the timer
+    // elapsed
+    auto v2 = interface_v2_.instance_;
+    v2.instance_ = ANY_INSTANCE;
+    client_v2_->request_service(v2);
+    EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
 }
 }

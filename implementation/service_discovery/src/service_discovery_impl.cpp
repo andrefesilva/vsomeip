@@ -42,6 +42,7 @@
 #include "../../utility/include/bithelper.hpp"
 #include "../../utility/include/blocking_guard.hpp"
 #include "../../utility/include/utility.hpp"
+#include "vsomeip/primitive_types.hpp"
 
 namespace vsomeip_v3 {
 
@@ -659,15 +660,18 @@ void service_discovery_impl::insert_find_entries(std::vector<std::shared_ptr<mes
     }
 }
 
-void service_discovery_impl::insert_offer_entries(std::vector<std::shared_ptr<message_impl>>& _messages, const services_t& _services,
-                                                  bool _ignore_phase) {
-    for (const auto& its_service : _services) {
-        for (const auto& its_instance : its_service.second) {
-            if (!is_suspended_) {
+void service_discovery_impl::insert_offer_entries(std::vector<std::shared_ptr<message_impl>>& _messages,
+                                                  const versioned_services_t& _services, bool _ignore_phase) {
+    if (is_suspended_) {
+        return;
+    }
+    for (const auto& services : _services) {
+        for (const auto& instances : services.second) {
+            for (auto const& majors : instances.second) {
                 // Only insert services that are ready to be offered. A service configured with both
                 // reliable and unreliable endpoints is withheld until BOTH endpoints are up.
-                if ((_ignore_phase || its_instance.second->is_in_mainphase()) && its_instance.second->is_ready_to_offer()) {
-                    insert_offer_service(_messages, its_instance.second);
+                if ((_ignore_phase || majors.second->is_in_mainphase()) && majors.second->is_ready_to_offer()) {
+                    insert_offer_service(_messages, majors.second);
                 }
             }
         }
@@ -1157,6 +1161,7 @@ void service_discovery_impl::check_sent_offers(const message_impl::entries_t& _e
             auto its_instance = (*iter)->get_instance();
             if ((*iter)->get_ttl() > 0) {
                 // Offer service.
+                // TODO major version
                 std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(its_service, its_instance);
                 if (its_info) {
                     offers_received_++;
@@ -1461,24 +1466,16 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
 void service_discovery_impl::process_findservice_serviceentry(service_t _service, instance_t _instance, major_version_t _major,
                                                               minor_version_t _minor, bool _unicast_flag) {
 
-    if (_instance != ANY_INSTANCE) {
-        std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(_service, _instance);
-        if (its_info && its_info->is_ready_to_offer()) {
-            if (_major == ANY_MAJOR || _major == its_info->get_major()) {
-                if (_minor == 0xFFFFFFFF || _minor <= its_info->get_minor()) {
-                    send_uni_or_multicast_offerservice(its_info, _unicast_flag);
-                }
-            }
-        }
-    } else {
-        std::map<instance_t, std::shared_ptr<serviceinfo>> offered_instances = host_->get_offered_service_instances(_service);
-        // send back all available instances
-        for (const auto& found_instance : offered_instances) {
-            auto its_info = found_instance.second;
-            if (its_info->is_ready_to_offer()) {
-                if (_major == ANY_MAJOR || _major == its_info->get_major()) {
-                    if (_minor == 0xFFFFFFFF || _minor <= its_info->get_minor()) {
-                        send_uni_or_multicast_offerservice(its_info, _unicast_flag);
+    auto offered_instances = host_->get_offered_service_instances(_service);
+    // send back all available instances
+    for (const auto& info : offered_instances) {
+        auto const instance = info->get_instance();
+        auto const major = info->get_major();
+        if (_instance == ANY_INSTANCE || _instance == instance) {
+            if (info->is_ready_to_offer()) {
+                if (_major == ANY_MAJOR || _major == major) {
+                    if (_minor == 0xFFFFFFFF || _minor <= info->get_minor()) {
+                        send_uni_or_multicast_offerservice(info, _unicast_flag);
                     }
                 }
             }
@@ -2024,6 +2021,7 @@ void service_discovery_impl::handle_eventgroup_subscription(
     }
 
     if (_ttl > 0) {
+        // TODO major version
         std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(_service, _instance);
         bool send_nack = false;
         if (!its_info) {
@@ -2187,6 +2185,7 @@ void service_discovery_impl::handle_eventgroup_subscription_ack(service_t _servi
 bool service_discovery_impl::is_tcp_connected(service_t _service, instance_t _instance,
                                               const std::shared_ptr<endpoint_definition>& its_endpoint) {
     bool is_connected = false;
+    // TODO major version
     std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(_service, _instance);
     if (its_info) {
         // get reliable server endpoint
@@ -2401,21 +2400,23 @@ bool service_discovery_impl::check_ipv4_address(const boost::asio::ip::address& 
 }
 
 void service_discovery_impl::offer_service(const std::shared_ptr<serviceinfo>& _info) {
-    service_t its_service = _info->get_service();
-    service_t its_instance = _info->get_instance();
+    service_t service = _info->get_service();
+    instance_t instance = _info->get_instance();
+    major_version_t major_version = _info->get_major();
 
     std::scoped_lock its_lock(collected_offers_mutex_);
     // check if offer is in map
     bool found(false);
-    const auto its_service_it = collected_offers_.find(its_service);
-    if (its_service_it != collected_offers_.end()) {
-        const auto its_instance_it = its_service_it->second.find(its_instance);
-        if (its_instance_it != its_service_it->second.end()) {
-            found = true;
+    if (auto const service_it = collected_offers_.find(service); service_it != collected_offers_.end()) {
+
+        if (auto const instance_it = service_it->second.find(instance); instance_it != service_it->second.end()) {
+            if (auto const major_it = instance_it->second.find(major_version); major_it != instance_it->second.end()) {
+                found = true;
+            }
         }
     }
     if (!found) {
-        collected_offers_[its_service][its_instance] = _info;
+        collected_offers_[service][instance][major_version] = _info;
     }
 }
 
@@ -2512,7 +2513,7 @@ void service_discovery_impl::on_offer_debounce_timer_expired(const boost::system
     }
 
     // Copy the accumulated offers of the initial wait phase
-    services_t repetition_phase_offers;
+    versioned_services_t repetition_phase_offers;
     bool new_offers(false);
     {
         std::vector<services_t::iterator> non_someip_services;
@@ -2658,11 +2659,12 @@ void service_discovery_impl::move_offers_into_main_phase(const std::shared_ptr<b
     // HINT: make sure to lock the repetition_phase_timers_mutex_ before calling
     // this function set flag on all serviceinfos bound to this timer that they
     // will be included in the cyclic offers from now on
-    const auto its_timer = repetition_phase_timers_.find(_timer);
-    if (its_timer != repetition_phase_timers_.end()) {
-        for (const auto& its_service : its_timer->second) {
-            for (const auto& its_instance : its_service.second) {
-                its_instance.second->set_is_in_mainphase(true);
+    if (const auto timer = repetition_phase_timers_.find(_timer); timer != repetition_phase_timers_.end()) {
+        for (const auto& services : timer->second) {
+            for (const auto& instances : services.second) {
+                for (const auto& majors : instances.second) {
+                    majors.second->set_is_in_mainphase(true);
+                }
             }
         }
         repetition_phase_timers_.erase(_timer);
@@ -2670,48 +2672,41 @@ void service_discovery_impl::move_offers_into_main_phase(const std::shared_ptr<b
 }
 
 void service_discovery_impl::stop_offer_service(const std::shared_ptr<serviceinfo>& _info) {
-    std::scoped_lock its_lock(offer_mutex_);
+    std::scoped_lock offer_lock(offer_mutex_);
     _info->set_ttl(0);
-    const service_t its_service = _info->get_service();
-    const instance_t its_instance = _info->get_instance();
+    service_t const service = _info->get_service();
+    instance_t const instance = _info->get_instance();
+    major_version_t const major = _info->get_major();
     bool stop_offer_required(false);
-    // Delete from initial phase offers
-    {
-        std::scoped_lock its_lock_inner(collected_offers_mutex_);
-        if (collected_offers_.size()) {
-            auto its_service_it = collected_offers_.find(its_service);
-            if (its_service_it != collected_offers_.end()) {
-                auto its_instance_it = its_service_it->second.find(its_instance);
-                if (its_instance_it != its_service_it->second.end()) {
-                    if (its_instance_it->second == _info) {
-                        its_service_it->second.erase(its_instance_it);
+    auto remove_from_container = [service, instance, major, &stop_offer_required, &_info](auto& container) {
+        if (auto service_it = container.find(service); service_it != container.end()) {
+            if (auto instance_it = service_it->second.find(instance); instance_it != service_it->second.end()) {
+                if (auto major_it = instance_it->second.find(major); major_it != instance_it->second.end()) {
+                    if (major_it->second == _info) {
                         stop_offer_required = true;
-                        if (!collected_offers_[its_service].size()) {
-                            collected_offers_.erase(its_service_it);
+                        instance_it->second.erase(major_it);
+                        if (instance_it->second.empty()) {
+                            service_it->second.erase(instance_it);
+                            if (service_it->second.empty()) {
+                                container.erase(service_it);
+                            }
                         }
                     }
                 }
             }
         }
+    };
+    // Delete from initial phase offers
+    {
+        std::scoped_lock collected_offers_lock(collected_offers_mutex_);
+        remove_from_container(collected_offers_);
     }
 
     // Delete from repetition phase offers
     {
-        std::scoped_lock its_lock_inner(repetition_phase_timers_mutex_);
+        std::scoped_lock repetition_phase_lock(repetition_phase_timers_mutex_);
         for (auto rpt = repetition_phase_timers_.begin(); rpt != repetition_phase_timers_.end();) {
-            auto its_service_it = rpt->second.find(its_service);
-            if (its_service_it != rpt->second.end()) {
-                auto its_instance_it = its_service_it->second.find(its_instance);
-                if (its_instance_it != its_service_it->second.end()) {
-                    if (its_instance_it->second == _info) {
-                        its_service_it->second.erase(its_instance_it);
-                        stop_offer_required = true;
-                        if (!rpt->second[its_service].size()) {
-                            rpt->second.erase(its_service);
-                        }
-                    }
-                }
-            }
+            remove_from_container(rpt->second);
             if (!rpt->second.size()) {
                 rpt = repetition_phase_timers_.erase(rpt);
             } else {
@@ -2731,7 +2726,7 @@ void service_discovery_impl::stop_offer_service(const std::shared_ptr<serviceinf
     }
 
     // sent out NACKs for all pending subscriptions
-    // TODO: remote_subscription_not_acknowledge_all(its_service, its_instance);
+    // TODO: remote_subscription_not_acknowledge_all(service, instance);
 }
 
 bool service_discovery_impl::send_stop_offer(const std::shared_ptr<serviceinfo>& _info) {
@@ -2795,7 +2790,7 @@ void service_discovery_impl::on_main_phase_timer_expired(const boost::system::er
     {
         std::scoped_lock its_lock(offer_mutex_);
         std::vector<std::shared_ptr<message_impl>> its_messages = {std::make_shared<message_impl>()};
-        services_t its_offers = host_->get_offered_services();
+        versioned_services_t its_offers = host_->get_offered_services();
         insert_offer_entries(its_messages, its_offers, false);
         send(its_messages);
     }

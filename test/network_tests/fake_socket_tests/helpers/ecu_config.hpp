@@ -11,6 +11,7 @@
 
 #include <boost/asio/ip/address.hpp>
 #include <sys/types.h>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <variant>
@@ -98,6 +99,13 @@ struct service_discovery_config {
     // Unset -> omitted from the JSON, so vsomeip's own VSOMEIP_SD_DEFAULT_REPETITIONS_BASE_DELAY
     // applies; only set this when a test actually depends on the repetition-phase cadence.
     std::optional<uint32_t> repetitions_base_delay_;
+    // Unset -> omitted from the JSON, so vsomeip's own VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY (1000ms)
+    // applies. Set this to something large when a test needs a FindService reply to reliably go out
+    // unicast rather than racing send_uni_or_multicast_offerservice()'s main_phase_timer_ check
+    // (last_offer_shorter_half_offer_delay_ago(), service_discovery_impl.cpp) into a multicast reply.
+    // vsomeip's own config parsing/usage (configuration_impl.cpp, service_discovery_impl.cpp) treats
+    // the raw JSON number as milliseconds with no other unit conversion -- matching that here.
+    std::optional<std::chrono::milliseconds> cyclic_offer_delay_;
 };
 
 struct security_credentials {

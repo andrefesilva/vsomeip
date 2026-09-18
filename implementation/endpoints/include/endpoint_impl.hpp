@@ -15,6 +15,7 @@
 #include "buffer.hpp"
 #include "boardnet_endpoint.hpp"
 #include "../../configuration/include/configuration.hpp"
+#include "vsomeip/primitive_types.hpp"
 
 namespace vsomeip_v3 {
 
@@ -54,7 +55,7 @@ public:
 
 protected:
     uint32_t find_magic_cookie(byte_t* _buffer, size_t _size);
-    instance_t get_instance(service_t _service);
+    instance_t get_instance(service_t _service, major_version_t _major);
 
 protected:
     enum class cms_ret_e : uint8_t { MSG_TOO_BIG, MSG_OK, MSG_WAS_SPLIT };

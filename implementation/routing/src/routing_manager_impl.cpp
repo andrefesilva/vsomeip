@@ -288,10 +288,10 @@ bool routing_manager_impl::offer_service(client_t _client, service_t _service, i
     if (configuration_->is_offered_remote(_service, _instance)) {
         // mutex_ locked.
         // Search the time-point-keyed map for an entry matching this service instance.
-        const service_instance_t si{_service, _instance};
+        const versioned_service_instance_t si{_service, _instance, _major};
         auto it = std::find_if(last_stop_offer_.begin(), last_stop_offer_.end(), [&si](const auto& kv) { return kv.second.first == si; });
         if (it == last_stop_offer_.end()) {
-            offer_remote_service(_service, _instance, is_external_routing_ready());
+            offer_remote_service(_service, _instance, _major, is_external_routing_ready());
         } else {
             /// Offering a service that has been stopped within milliseconds, can lead to a protocol race scenario in which combined with
             /// high CPU contention, the daemon could processes incoming subscriptions out of order i.e., associated with offers sent
@@ -320,15 +320,9 @@ void routing_manager_impl::stop_offer_service(client_t _client, service_t _servi
     if (its_info && its_info->is_local()) {
         {
             std::scoped_lock its_lock(pending_sd_offers_mutex_);
-            for (auto it = pending_sd_offers_.begin(); it != pending_sd_offers_.end();) {
-                if (it->first == _service && it->second == _instance) {
-                    it = pending_sd_offers_.erase(it);
-                    VSOMEIP_INFO_P << "Removed service 0x" << hex4(_service) << " from pending_sd_offers[" << pending_sd_offers_.size()
-                                   << "]";
-                    break;
-                } else {
-                    ++it;
-                }
+            versioned_service_instance_t key{_service, _instance, _major};
+            if (pending_sd_offers_.erase(key) != 0) {
+                VSOMEIP_INFO_P << "Removed service [" << key << "] from pending_sd_offers[" << pending_sd_offers_.size() << "]";
             }
         }
 
@@ -463,8 +457,8 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
                 if (discovery_) {
                     discovery_->unsubscribe_all(_service, _instance);
                 }
-                ep_mgr_impl_->clear_client_endpoints(_service, _instance, its_major, true);
-                ep_mgr_impl_->clear_client_endpoints(_service, _instance, its_major, false);
+                ep_mgr_impl_->clear_client_endpoints(_service, _instance, its_major, true, std::nullopt);
+                ep_mgr_impl_->clear_client_endpoints(_service, _instance, its_major, false, std::nullopt);
                 its_info->set_endpoint(nullptr, true);
                 its_info->set_endpoint(nullptr, false);
                 unset_all_eventpayloads(_service, _instance);
@@ -997,7 +991,7 @@ void routing_manager_impl::notify_one(service_t _service, instance_t _instance, 
 bool routing_manager_impl::offer_service_remotely(service_t _service, instance_t _instance, uint16_t _port, bool _reliable,
                                                   bool _magic_cookies_enabled) {
     bool ret = true;
-
+    // TODO major version - router public API -> out of scope
     if (!is_locally_available(_service, _instance, ANY_MAJOR)) {
         VSOMEIP_ERROR_P << "Service [" << hex4(_service) << "." << hex4(_instance) << "] is not offered locally! Won't offer it remotely.";
         ret = false;
@@ -1035,7 +1029,7 @@ bool routing_manager_impl::stop_offer_service_remotely(service_t _service, insta
                         << "] from configuration";
         ret = false;
     }
-    // TODO major version
+    // TODO major version - router public API -> out of scope
     std::shared_ptr<serviceinfo> its_info = find_service(_service, _instance, ANY_MAJOR);
     std::shared_ptr<boardnet_endpoint> its_server_endpoint;
     if (its_info) {
@@ -1104,6 +1098,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
     const method_t its_method = bithelper::read_uint16_be(&_data[VSOMEIP_METHOD_POS_MIN]);
     const client_t its_client = bithelper::read_uint16_be(&_data[VSOMEIP_CLIENT_POS_MIN]);
     const session_t its_session = bithelper::read_uint16_be(&_data[VSOMEIP_SESSION_POS_MIN]);
+    const major_version_t its_major = _data[VSOMEIP_INTERFACE_VERSION_POS];
 
     auto message_str = [&remote_str, &its_service, &its_method, &its_client, &its_session]() {
         // e.g., "160.48.199.99:30490 [multicast], len 128, [1020.8001:6101.0001]"
@@ -1162,7 +1157,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
         if (_is_multicast) {
             its_instance = ep_mgr_impl_->find_instance_multicast(its_service, _remote_address);
         } else {
-            its_instance = ep_mgr_impl_->find_instance(its_service, _receiver);
+            its_instance = ep_mgr_impl_->find_instance(its_service, its_major, _receiver);
         }
 
         return_code_e return_code = check_error(_data, _length, its_instance);
@@ -1328,7 +1323,7 @@ void routing_manager_impl::on_stop_offer_service_unlocked(client_t _client, serv
                 continue;
             }
 
-            if (ep_mgr_impl_->remove_instance(_service, ep.get())
+            if (ep_mgr_impl_->remove_instance(_service, _major, ep.get())
                 && ep_mgr_impl_->remove_server_endpoint(ep->get_local_port(), ep->is_reliable())) {
                 ep->stop(false);
             }
@@ -1340,7 +1335,7 @@ void routing_manager_impl::on_stop_offer_service_unlocked(client_t _client, serv
             if (its_info->get_major() == _major && its_info->get_minor() == _minor
                 && configuration_->is_offered_remote(_service, _instance)) {
                 if (!is_suspended()) {
-                    service_instance_t si{_service, _instance};
+                    versioned_service_instance_t si{_service, _instance, _major};
                     // Remove any existing entry for this service (stale window from a prior stop-offer).
                     auto existing = std::find_if(last_stop_offer_.begin(), last_stop_offer_.end(),
                                                  [&si](const auto& kv) { return kv.second.first == si; });
@@ -1554,15 +1549,14 @@ std::shared_ptr<boardnet_endpoint> routing_manager_impl::create_service_discover
     return its_service_endpoint;
 }
 
-services_t routing_manager_impl::get_offered_services() const {
-    // TODO major version this should be a versioned_services_t
-    services_t its_services;
+versioned_services_t routing_manager_impl::get_offered_services() const {
+    versioned_services_t its_services;
     for (const auto& [service, instances] : get_services()) {
         for (const auto& [instance, versions] : instances) {
             for (auto const& [version, info] : versions) {
                 if (info) {
                     if (info->is_local()) {
-                        its_services[service][instance] = info;
+                        its_services[service][instance][version] = info;
                     }
                 } else {
                     VSOMEIP_ERROR_P << "Found instance with NULL ServiceInfo [" << hex4(service) << ":" << hex4(instance) << "]";
@@ -1580,21 +1574,20 @@ std::shared_ptr<serviceinfo> routing_manager_impl::get_offered_service(service_t
     return find_local_service(_service, _instance);
 }
 
-std::map<instance_t, std::shared_ptr<serviceinfo>> routing_manager_impl::get_offered_service_instances(service_t _service) const {
-    // TODO major version: How do we need to adapt here?
-    std::map<instance_t, std::shared_ptr<serviceinfo>> its_instances;
+std::vector<std::shared_ptr<serviceinfo>> routing_manager_impl::get_offered_service_instances(service_t _service) const {
+    std::vector<std::shared_ptr<serviceinfo>> instances;
     auto its_services(get_services());
     const auto found_service = its_services.find(_service);
     if (found_service != its_services.end()) {
-        for (const auto& [instance, versions] : found_service->second) {
-            for (auto const& [version, info] : versions) {
+        for (const auto& [instance, majors] : found_service->second) {
+            for (auto const& [major, info] : majors) {
                 if (info->is_local()) {
-                    its_instances[instance] = info;
+                    instances.push_back(info);
                 }
             }
         }
     }
-    return its_instances;
+    return instances;
 }
 
 bool routing_manager_impl::is_acl_message_allowed(boardnet_endpoint* _receiver, service_t _service, instance_t _instance,
@@ -1621,14 +1614,11 @@ bool routing_manager_impl::is_acl_message_allowed(boardnet_endpoint* _receiver, 
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE
 ///////////////////////////////////////////////////////////////////////////////
-void routing_manager_impl::init_service_info(service_t _service, instance_t _instance, bool _is_local_service) {
-    // find_local_service(), not find_service(..., ANY_MAJOR): same reasoning as
-    // get_offered_service() -- this must find the entry this host itself is initializing,
-    // never one it merely knows about because a different host announced a different major.
-    std::shared_ptr<serviceinfo> its_info = find_local_service(_service, _instance);
+void routing_manager_impl::init_service_info(service_t _service, instance_t _instance, major_version_t _major, bool _is_local_service) {
+    std::shared_ptr<serviceinfo> its_info = find_service(_service, _instance, _major);
     if (!its_info) {
-        VSOMEIP_ERROR_P << "Couldn't find serviceinfo for service: [" << hex4(_service) << "." << hex4(_instance)
-                        << "] is_local_service=" << _is_local_service;
+        VSOMEIP_ERROR_P << "Couldn't find serviceinfo for service: [" << hex4(_service) << "." << hex4(_instance) << "."
+                        << static_cast<int>(_major) << "] is_local_service=" << _is_local_service;
         return;
     }
     if (configuration_) {
@@ -1639,15 +1629,15 @@ void routing_manager_impl::init_service_info(service_t _service, instance_t _ins
             uint16_t its_unreliable_port = configuration_->get_unreliable_port(_service, _instance);
             bool _is_found(false);
             if (ILLEGAL_PORT != its_reliable_port) {
-                auto its_reliable_endpoint =
-                        ep_mgr_impl_->find_or_create_server_endpoint(its_reliable_port, true, is_someip, _service, _instance, _is_found);
+                auto its_reliable_endpoint = ep_mgr_impl_->find_or_create_server_endpoint(its_reliable_port, true, is_someip, _service,
+                                                                                          _instance, _major, _is_found);
                 if (its_reliable_endpoint) {
                     its_info->set_endpoint(its_reliable_endpoint, true);
                 }
             }
             if (ILLEGAL_PORT != its_unreliable_port) {
-                auto its_unreliable_endpoint =
-                        ep_mgr_impl_->find_or_create_server_endpoint(its_unreliable_port, false, is_someip, _service, _instance, _is_found);
+                auto its_unreliable_endpoint = ep_mgr_impl_->find_or_create_server_endpoint(its_unreliable_port, false, is_someip, _service,
+                                                                                            _instance, _major, _is_found);
                 if (its_unreliable_endpoint) {
                     its_info->set_endpoint(its_unreliable_endpoint, false);
                 }
@@ -1711,11 +1701,11 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
 
     // Update the changed endpoints
     if (must_clear_reliable) {
-        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, true);
+        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, true, std::nullopt);
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, _major, true);
     }
     if (must_clear_unreliable) {
-        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, false);
+        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, false, std::nullopt);
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, _major, false);
     }
 
@@ -1738,7 +1728,7 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
         // do anything useful (and only needs to be called) for a service we're offering
         // ourselves; a purely remote entry has nothing for it to find or set up.
         if (is_local) {
-            init_service_info(_service, _instance, is_local);
+            init_service_info(_service, _instance, _major, is_local);
         }
     } else if (its_info->is_local()) {
         // We received a service info for a service which is already offered locally
@@ -2205,7 +2195,8 @@ void routing_manager_impl::on_remote_unsubscribe(std::shared_ptr<remote_subscrip
 void routing_manager_impl::on_subscribe_ack_with_multicast(service_t _service, instance_t _instance,
                                                            const boost::asio::ip::address& _sender,
                                                            const boost::asio::ip::address& _address, uint16_t _port) {
-    ep_mgr_impl_->find_or_create_multicast_endpoint(_service, _instance, _sender, _address, _port);
+    // TODO major version
+    ep_mgr_impl_->find_or_create_multicast_endpoint(_service, _instance, ANY_MAJOR, _sender, _address, _port);
 }
 
 void routing_manager_impl::on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup,
@@ -2322,8 +2313,17 @@ return_code_e routing_manager_impl::check_error(const byte_t* _data, length_t /*
             return return_code_e::E_WRONG_PROTOCOL_VERSION;
         }
         if (_instance == ANY_INSTANCE) {
-            VSOMEIP_WARNING_P << "Receiving endpoint is not configured for service 0x" << hex4(its_service);
-            return return_code_e::E_UNKNOWN_SERVICE;
+            // ANY_INSTANCE implies the endpoint_manager_impl can not find the corresponding service + endpoint + major version
+            // ensure it is not the major version only that has a problem:
+            if (!ep_mgr_impl_->is_service_known(its_service)) {
+                VSOMEIP_WARNING_P << "Receiving endpoint is not configured for service 0x" << hex4(its_service);
+                return return_code_e::E_UNKNOWN_SERVICE;
+            } else {
+                // it is the major version!
+                VSOMEIP_WARNING_P << "Received a message with unsupported interface version 0x" << hex2(its_version) << " for service 0x"
+                                  << hex4(its_service);
+                return return_code_e::E_WRONG_INTERFACE_VERSION;
+            }
         }
 
         if (its_version == ANY_MAJOR) {
@@ -2754,19 +2754,18 @@ void routing_manager_impl::on_pong(client_t _client) {
     // This defers processing outside the critical section to maintain lock ordering.
     for (const auto& [key, requesting_clients] : requests_to_process) {
         auto [service_id, instance_id, major] = key;
-        // TODO major version
         protocol::service its_request(service_id, instance_id, major, ANY_MINOR);
         std::set<protocol::service> requests;
         requests.insert(its_request);
 
         for (auto client_id : requesting_clients) {
-            // TODO major version
             request_service(client_id, service_id, instance_id, major, ANY_MINOR);
             if (configuration_->is_security_enabled()) {
                 stub_->handle_credentials(client_id, requests);
             }
             stub_->handle_requests(client_id, requests);
-            VSOMEIP_INFO << "REQUEST(" << hex4(client_id) << "): [" << hex4(service_id) << "." << hex4(instance_id) << "] processed";
+            VSOMEIP_INFO << "REQUEST(" << hex4(client_id) << "): [" << hex4(service_id) << "." << hex4(instance_id) << "."
+                         << static_cast<int>(major) << "] processed";
         }
     }
 }
@@ -2875,18 +2874,21 @@ void routing_manager_impl::set_routing_state_internal(std::unique_lock<std::mute
             std::vector<std::shared_ptr<serviceinfo>> _service_infos;
             // send StopOffer messages for remotely offered services on this node
             for (const auto& [service, instances] : get_offered_services()) {
-                for (const auto& [instance, info] : instances) {
-                    bool has_reliable(info->get_endpoint(true) != nullptr);
-                    bool has_unreliable(info->get_endpoint(false) != nullptr);
-                    if (has_reliable || has_unreliable) {
-                        const client_t its_client(find_local_client(service, instance));
-                        VSOMEIP_WARNING_P << "Service " << hex4(service) << "." << hex4(instance) << " still offered by "
-                                          << hex4(its_client);
-                    }
+                for (const auto& [instance, versions] : instances) {
+                    for (const auto& [major, info] : versions) {
+                        bool has_reliable(info->get_endpoint(true) != nullptr);
+                        bool has_unreliable(info->get_endpoint(false) != nullptr);
+                        if (has_reliable || has_unreliable) {
+                            std::scoped_lock service_state_lock{services_state_mutex_};
+                            const client_t its_client(find_local_provider(service, instance, major, service_state_lock));
+                            VSOMEIP_WARNING_P << "Service " << hex4(service) << "." << hex4(instance) << "." << static_cast<int>(major)
+                                              << " still offered by " << hex4(its_client);
+                        }
 
-                    // collect stop offers to be sent out
-                    discovery_->stop_offer_service(info); // does book-keeping changes only due to stop()
-                    _service_infos.push_back(info);
+                        // collect stop offers to be sent out
+                        discovery_->stop_offer_service(info); // does book-keeping changes only due to stop()
+                        _service_infos.push_back(info);
+                    }
                 }
             }
             // send collected stop offers packed together in one ore multiple SD messages
@@ -2961,10 +2963,12 @@ void routing_manager_impl::set_routing_state_internal(std::unique_lock<std::mute
 
             // Reset relevant in service info
             VSOMEIP_INFO_P << "Reset service info.";
-            for (const auto& its_service : get_offered_services()) {
-                for (const auto& its_instance : its_service.second) {
-                    its_instance.second->set_ttl(DEFAULT_TTL);
-                    its_instance.second->set_is_in_mainphase(false);
+            for (const auto& [service, instances] : get_offered_services()) {
+                for (const auto& [instance, majors] : instances) {
+                    for (const auto& [major, info] : majors) {
+                        info->set_ttl(DEFAULT_TTL);
+                        info->set_is_in_mainphase(false);
+                    }
                 }
             }
 
@@ -2979,11 +2983,13 @@ void routing_manager_impl::set_routing_state_internal(std::unique_lock<std::mute
             // if there are any offered services, start offers watchdog
             // TODO: this is awkward as hell - why are we passing services without endpoints to `discovery_`?
             bool trigger_offer_watchdog = false;
-            for (const auto& its_service : get_offered_services()) {
-                for (const auto& its_instance : its_service.second) {
-                    if (its_instance.second->get_endpoint(true) != nullptr || its_instance.second->get_endpoint(false) != nullptr) {
-                        trigger_offer_watchdog = true;
-                        break;
+            for (const auto& [service, instances] : get_offered_services()) {
+                for (const auto& [instance, majors] : instances) {
+                    for (const auto& [major, info] : majors) {
+                        if (info->get_endpoint(true) != nullptr || info->get_endpoint(false) != nullptr) {
+                            trigger_offer_watchdog = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -2993,7 +2999,7 @@ void routing_manager_impl::set_routing_state_internal(std::unique_lock<std::mute
 
             for (const auto& [expiry, entry] : last_stop_offer_) {
                 if (entry.second) {
-                    init_service_info(entry.first.service, entry.first.instance, true);
+                    init_service_info(entry.first.service, entry.first.instance, entry.first.major, true);
                 }
             }
 
@@ -3004,9 +3010,11 @@ void routing_manager_impl::set_routing_state_internal(std::unique_lock<std::mute
 
             // Trigger initial offer phase for relevant services
             VSOMEIP_INFO_P << "Offer services.";
-            for (const auto& its_service : get_offered_services()) {
-                for (const auto& its_instance : its_service.second) {
-                    discovery_->offer_service(its_instance.second);
+            for (const auto& [service, instances] : get_offered_services()) {
+                for (const auto& [instance, majors] : instances) {
+                    for (const auto& [major, info] : majors) {
+                        discovery_->offer_service(info);
+                    }
                 }
             }
 
@@ -3117,8 +3125,8 @@ void routing_manager_impl::init_pending_services() {
     // Needs to be called with mutex_ locked so offers cannot be queued after pending_sd_offers_ is drained.
     std::scoped_lock its_lock(pending_sd_offers_mutex_);
     if (!pending_sd_offers_.empty()) {
-        for (auto [service, instance] : pending_sd_offers_) {
-            init_service_info(service, instance, true);
+        for (auto [service, instance, major] : pending_sd_offers_) {
+            init_service_info(service, instance, major, true);
         }
         pending_sd_offers_.clear();
 
@@ -3637,7 +3645,8 @@ void routing_manager_impl::cleanup_server_endpoint(service_t _service, const std
         // Clear service_instances_, check whether any service still
         // uses this endpoint and clear server endpoint if no service
         // remains using it
-        if (ep_mgr_impl_->remove_instance(_service, _endpoint.get())) {
+        // TODO major version - router public API -> out of scope
+        if (ep_mgr_impl_->remove_instance(_service, ANY_MAJOR, _endpoint.get())) {
             if (ep_mgr_impl_->remove_server_endpoint(_endpoint->get_local_port(), _endpoint->is_reliable())) {
                 // Stop endpoint (close socket) to release its async_handlers!
                 _endpoint->stop(false);
@@ -3674,7 +3683,8 @@ void routing_manager_impl::on_resend_provided_events_response(pending_remote_off
         std::shared_ptr<serviceinfo> its_info = find_service(its_service.first, its_service.second, ANY_MAJOR);
         if (its_info) {
             its_info->set_ttl(DEFAULT_TTL);
-            init_service_info(its_service.first, its_service.second, true);
+            // TODO major version
+            init_service_info(its_service.first, its_service.second, ANY_MAJOR, true);
         }
     }
 }
@@ -3938,7 +3948,7 @@ void routing_manager_impl::remove_pending_requests(pending_request_removal_type_
 
 void routing_manager_impl::remove_pending_requests_unlocked(pending_request_removal_type_e _removal_type, client_t _client,
                                                             service_t _service, instance_t _instance) {
-    // TODO major version
+    // TODO major version - single app offering (if app stops offering v2, but not v1 it would be wrongfully removed here)
     bool _remove_offering =
             (_removal_type == pending_request_removal_type_e::OFFERING_ONLY || _removal_type == pending_request_removal_type_e::BOTH);
     bool _remove_requesting =
@@ -4109,24 +4119,6 @@ bool routing_manager_impl::offer_service_base(client_t _client, service_t _servi
             return false;
         }
     } else {
-        // Only a second LOCAL major offer on this same host is rejected here (a single host
-        // offering multiple majors of the same service+instance itself is a separate, not yet
-        // supported concern). An alternative major already known purely because it was
-        // discovered remotely (from a different host, via SD) must not block this host from
-        // offering its own single major -- that is the normal cross-ECU multi-major shape.
-        auto const alternative_info = find_service(_service, _instance, ANY_MAJOR);
-        if (alternative_info && alternative_info->is_local()) {
-            uint16_t its_reliable_port = configuration_->get_reliable_port(_service, _instance);
-            uint16_t its_unreliable_port = configuration_->get_unreliable_port(_service, _instance);
-            bool const is_forwarded = ILLEGAL_PORT != its_reliable_port || ILLEGAL_PORT != its_unreliable_port;
-            if (is_forwarded) {
-                VSOMEIP_ERROR_P << "Service for boardnet not supporting multiple major offerings. Rejecting client "
-                                << get_client_info(_client) << ": [" << hex4(_service) << "." << hex4(_instance) << ":"
-                                << static_cast<uint32_t>(_major) << "." << _minor << "] passed: " << static_cast<uint32_t>(_major) << ":"
-                                << _minor;
-                return false;
-            }
-        }
         its_info = create_service_info(_service, _instance, _major, _minor, DEFAULT_TTL, true);
     }
     {
@@ -4684,14 +4676,14 @@ void routing_manager_impl::stop_offer_graceful_timeout(const boost::system::erro
     // Drain all entries whose deadline has been reached.
     const auto now = std::chrono::steady_clock::now();
     for (auto it = last_stop_offer_.begin(); it != last_stop_offer_.end() && it->first <= now;) {
-        const service_instance_t si = it->second.first;
+        const versioned_service_instance_t si = it->second.first;
         const bool offer_pending = it->second.second;
 
         it = last_stop_offer_.erase(it);
 
         if (offer_pending) {
             VSOMEIP_INFO << "Graceful stop-offer window expired for service [" << si << "]. Service can be offered again.";
-            offer_remote_service(si.service, si.instance, is_external_routing_ready());
+            offer_remote_service(si.service, si.instance, si.major, is_external_routing_ready());
         }
     }
 
@@ -4705,23 +4697,19 @@ void routing_manager_impl::stop_offer_graceful_timeout(const boost::system::erro
 }
 
 // Needs to be called with mutex_ locked.
-void routing_manager_impl::offer_remote_service(service_t _service, instance_t _instance, bool _external_routing_ready) {
+void routing_manager_impl::offer_remote_service(service_t _service, instance_t _instance, major_version_t _major,
+                                                bool _external_routing_ready) {
     {
         if (_external_routing_ready) {
-            init_service_info(_service, _instance, true);
+            init_service_info(_service, _instance, _major, true);
         } else {
             std::scoped_lock its_lock_inner(pending_sd_offers_mutex_);
-            pending_sd_offers_.emplace(_service, _instance);
+            pending_sd_offers_.insert(versioned_service_instance_t{_service, _instance, _major});
         }
     }
 
     if (discovery_) {
-        // Must announce only the major THIS host itself offers. find_service(..., ANY_MAJOR)
-        // would arbitrarily return whichever major sorts first in the map, which can be a
-        // different major that this host only knows about because a different host announced
-        // it remotely via SD (this host offering one major while remotely discovering another
-        // host's different major of the same service+instance is the normal cross-ECU shape).
-        std::shared_ptr<serviceinfo> its_info = find_local_service(_service, _instance);
+        std::shared_ptr<serviceinfo> its_info = find_service(_service, _instance, _major);
         if (its_info) {
             discovery_->offer_service(its_info);
         }

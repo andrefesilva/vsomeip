@@ -145,9 +145,9 @@ public:
     bool stop_offer_service_remotely(service_t _service, instance_t _instance, uint16_t _port, bool _reliable, bool _magic_cookies_enabled);
 
     // interface "service_discovery_host"
-    services_t get_offered_services() const;
+    versioned_services_t get_offered_services() const;
     std::shared_ptr<serviceinfo> get_offered_service(service_t _service, instance_t _instance) const;
-    std::map<instance_t, std::shared_ptr<serviceinfo>> get_offered_service_instances(service_t _service) const;
+    std::vector<std::shared_ptr<serviceinfo>> get_offered_service_instances(service_t _service) const;
 
     std::shared_ptr<boardnet_endpoint> create_service_discovery_endpoint(const std::string& _address, uint16_t _port, bool _reliable);
     void init_routing_info();
@@ -291,7 +291,7 @@ private:
 
     bool is_suppress_event(service_t _service, instance_t _instance, event_t _event) const;
 
-    void init_service_info(service_t _service, instance_t _instance, bool _is_local_service);
+    void init_service_info(service_t _service, instance_t _instance, major_version_t _major, bool _is_local_service);
 
     std::shared_ptr<boardnet_endpoint> create_remote_client(service_t _service, instance_t _instance, bool _reliable, client_t _client);
 
@@ -405,7 +405,7 @@ private:
      */
     void stop_offer_graceful_timeout(const boost::system::error_code& _ec);
 
-    void offer_remote_service(service_t _service, instance_t _instance, bool _external_routing_ready);
+    void offer_remote_service(service_t _service, instance_t _instance, major_version_t _major, bool _external_routing_ready);
 
     std::shared_ptr<serializer> get_serializer();
     void put_serializer(const std::shared_ptr<serializer>& _serializer);
@@ -441,7 +441,7 @@ private:
     std::atomic_bool sd_route_set_;
     std::atomic_bool routing_running_;
     std::mutex pending_sd_offers_mutex_;
-    std::unordered_set<std::pair<service_t, instance_t>, boost::hash<std::pair<service_t, instance_t>>> pending_sd_offers_;
+    std::unordered_set<versioned_service_instance_t> pending_sd_offers_;
 #if defined(__linux__)
     std::shared_ptr<abstract_netlink_connector> netlink_connector_;
 #endif
@@ -514,7 +514,7 @@ private:
     service_instance_map<std::unordered_map<event_t, std::shared_ptr<event>>> events_;
 
     /// Graceful stop-offer state ordered ascending by expiry so begin() always yields the soonest deadline.
-    std::map<std::chrono::steady_clock::time_point, std::pair<service_instance_t, bool /* service re-offered*/>> last_stop_offer_;
+    std::map<std::chrono::steady_clock::time_point, std::pair<versioned_service_instance_t, bool /* service re-offered*/>> last_stop_offer_;
     boost::asio::steady_timer stop_offer_graceful_timer_;
 
     std::mutex event_registration_mutex_;
