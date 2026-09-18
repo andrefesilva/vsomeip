@@ -20,6 +20,14 @@ export PATH="$PATH:../../../examples/routingmanagerd:../../../examples/wait-unti
 ######### test setup helpers ##########
 #######################################
 
+# sshd runs in the slave's default namespace, so connect to its management
+# address and only then step into the per-test one. Set by run_isolated.sh.
+SLAVE_SSH_HOST="${TEST_SLAVE_SSH_IP:-$TEST_IP_SLAVE}"
+SLAVE_NETNS_PREFIX=""
+if [ -n "${TEST_SLAVE_NETNS:-}" ]; then
+    SLAVE_NETNS_PREFIX="ip netns exec ${TEST_SLAVE_NETNS} "
+fi
+
 # cleanup background processes
 cleanup() {
     # kill all processes whose parent is this process
@@ -55,8 +63,8 @@ exec_slave_blocking() {
     if [ -n "$USE_LXC_TEST" ]; then
         VSOMEIP_BASE_PATH="" \
             ssh -tt -i "$SANDBOX_ROOT_DIR/commonapi_main/lxc-config/.ssh/mgc_lxc/rsa_key_file.pub" \
-            -o StrictHostKeyChecking=no "root@$TEST_IP_SLAVE" \
-            "bash -ci \"set -m; cd \\\$SANDBOX_TARGET_DIR/vsomeip_lib/${RELATIVE_DIR}; ${COM}\""
+            -o StrictHostKeyChecking=no "root@$SLAVE_SSH_HOST" \
+            "${SLAVE_NETNS_PREFIX}bash -ci \"set -m; cd \\\$SANDBOX_TARGET_DIR/vsomeip_lib/${RELATIVE_DIR}; ${COM}\""
     elif [ -n "$USE_DOCKER" ]; then
         VSOMEIP_BASE_PATH="" \
             docker exec "$DOCKER_IMAGE" sh -c "cd $DOCKER_TESTS && ${COM}"
@@ -75,8 +83,8 @@ exec_slave() {
     if [ -n "$USE_LXC_TEST" ]; then
         VSOMEIP_BASE_PATH="" \
             ssh -tt -i "$SANDBOX_ROOT_DIR/commonapi_main/lxc-config/.ssh/mgc_lxc/rsa_key_file.pub" \
-            -o StrictHostKeyChecking=no "root@$TEST_IP_SLAVE" \
-            "bash -ci \"set -m; cd \\\$SANDBOX_TARGET_DIR/vsomeip_lib/${RELATIVE_DIR}; ${COM}\"" &
+            -o StrictHostKeyChecking=no "root@$SLAVE_SSH_HOST" \
+            "${SLAVE_NETNS_PREFIX}bash -ci \"set -m; cd \\\$SANDBOX_TARGET_DIR/vsomeip_lib/${RELATIVE_DIR}; ${COM}\"" &
         echo $!
     elif [ -n "$USE_DOCKER" ]; then
         VSOMEIP_BASE_PATH="" \
