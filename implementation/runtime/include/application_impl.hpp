@@ -195,7 +195,7 @@ public:
 
 private:
     using members_key_t = uint64_t;
-    using members_t = std::unordered_map<members_key_t, std::deque<message_handler_t>>;
+    using message_callbacks_t = std::unordered_map<members_key_t, std::deque<message_handler_t>>;
 
     static members_key_t to_members_key(service_t _service, instance_t _instance, method_t _method) {
         return (static_cast<members_key_t>(_service) << 0) | (static_cast<members_key_t>(_instance) << 16)
@@ -368,23 +368,24 @@ private:
     std::mutex offered_services_handler_mutex_;
     offered_services_handler_t offered_services_handler_;
 
-    // Method/Event (=Member) handlers
-    members_t members_;
-    mutable std::mutex members_mutex_;
+    // Message handlers, per member (service/instance/method)
+    message_callbacks_t message_callbacks_;
+    mutable std::mutex message_callbacks_mutex_;
 
-    // Availability handlers
+    // Availability handlers, per service/instance/version
     using availability_major_minor_t = std::map<major_version_t, std::map<minor_version_t, availability_state_handler_t>>;
-    service_instance_map<availability_major_minor_t> availability_;
-    mutable std::mutex availability_mutex_;
+    service_instance_map<availability_major_minor_t> availability_callbacks_;
+    mutable std::mutex availability_callbacks_mutex_;
 
-    // Subscription handlers
-    service_instance_map<std::map<eventgroup_t, std::pair<subscription_handler_sec_t, async_subscription_handler_sec_t>>> subscription_;
-    mutable std::mutex subscription_mutex_;
+    // Subscription handlers, per service/instance/eventgroup
+    service_instance_map<std::map<eventgroup_t, std::pair<subscription_handler_sec_t, async_subscription_handler_sec_t>>>
+            subscription_callbacks_;
+    mutable std::mutex subscription_callbacks_mutex_;
 
-    // Handlers
+    // Dispatch queue and the ordering of the handlers pending on a running one
     mutable std::deque<std::shared_ptr<sync_handler>> handlers_;
-    service_instance_map<std::deque<std::shared_ptr<sync_handler>>> availability_handlers_;
-    std::map<client_t, std::deque<std::shared_ptr<sync_handler>>> subscription_handlers_;
+    service_instance_map<std::deque<std::shared_ptr<sync_handler>>> availability_dispatch_order_;
+    std::map<client_t, std::deque<std::shared_ptr<sync_handler>>> subscription_dispatch_order_;
     mutable std::mutex handlers_mutex_;
 
     // Dispatching
