@@ -464,7 +464,7 @@ void application_impl::start() {
 
     {
         std::scoped_lock its_lock{handlers_mutex_};
-        availability_handlers_.clear();
+        availability_dispatch_order_.clear();
     }
 
     stopping_ = false;
@@ -521,7 +521,7 @@ void application_impl::stop() {
                     // no io thread is pushing any task into the queue
                     // -> now we can clear all pending tasks
                     std::scoped_lock its_handler_lock{handlers_mutex_};
-                    subscription_handlers_.clear();
+                    subscription_dispatch_order_.clear();
                 }
                 if (routing_app_) {
                     routing_app_->stop();
@@ -690,9 +690,9 @@ void application_impl::register_availability_handler(service_t _service, instanc
                                                      major_version_t _major, minor_version_t _minor) {
 
     {
-        std::scoped_lock availability_lock{availability_mutex_};
+        std::scoped_lock availability_lock{availability_callbacks_mutex_};
         // A pre-existing handler for this service/instance and major is silently replaced, so warn users.
-        if (auto its_service = availability_.find({_service, _instance}); its_service != availability_.end()) {
+        if (auto its_service = availability_callbacks_.find({_service, _instance}); its_service != availability_callbacks_.end()) {
             if (its_service->second.find(_major) != its_service->second.end()) {
                 warn_duplicate_registration("Availability handler", _service, _instance, _major, _minor);
             }
@@ -711,8 +711,8 @@ void application_impl::register_availability_handler(service_t _service, instanc
 void application_impl::register_availability_handler(service_t _service, instance_t _instance, const availability_state_handler_t& _handler,
                                                      major_version_t _major, minor_version_t _minor) {
     {
-        std::scoped_lock availability_lock{availability_mutex_};
-        if (auto its_service = availability_.find({_service, _instance}); its_service != availability_.end()) {
+        std::scoped_lock availability_lock{availability_callbacks_mutex_};
+        if (auto its_service = availability_callbacks_.find({_service, _instance}); its_service != availability_callbacks_.end()) {
             if (its_service->second.find(_major) != its_service->second.end()) {
                 warn_duplicate_registration("Availability handler", _service, _instance, _major, _minor);
             }
@@ -730,7 +730,7 @@ void application_impl::register_availability_handler_internal(service_t _service
 
     // Seeded under the routing manager's consumer_mutex_, so registration cannot race an availability change.
     auto its_register = [this, &_handler, _service, _instance, _major, _minor](bool _is_available, const available_t& _replay) {
-        std::scoped_lock availability_lock{availability_mutex_};
+        std::scoped_lock availability_lock{availability_callbacks_mutex_};
         register_availability_handler_unlocked(_service, _instance, _handler, _major, _minor, _is_available, _replay);
     };
 
@@ -745,7 +745,7 @@ void application_impl::register_availability_handler_internal(service_t _service
 void application_impl::register_availability_handler_unlocked(service_t _service, instance_t _instance,
                                                               const availability_state_handler_t& _handler, major_version_t _major,
                                                               minor_version_t _minor, bool _is_available, const available_t& _replay) {
-    availability_[{_service, _instance}][_major][_minor] = _handler;
+    availability_callbacks_[{_service, _instance}][_major][_minor] = _handler;
 
     auto add_sync_handler = [&](service_t _srvc, instance_t _nstnc, availability_state_e _stt) {
         auto its_sync_handler = std::make_shared<sync_handler>([_handler, _srvc, _nstnc, _stt]() { _handler(_srvc, _nstnc, _stt); });
@@ -776,16 +776,16 @@ void application_impl::register_availability_handler_unlocked(service_t _service
 
 void application_impl::unregister_availability_handler(service_t _service, instance_t _instance, major_version_t _major,
                                                        minor_version_t _minor) {
-    std::scoped_lock its_lock{availability_mutex_};
+    std::scoped_lock its_lock{availability_callbacks_mutex_};
 
-    if (auto found_si = availability_.find({_service, _instance}); found_si != availability_.end()) {
+    if (auto found_si = availability_callbacks_.find({_service, _instance}); found_si != availability_callbacks_.end()) {
         if (auto found_major = found_si->second.find(_major); found_major != found_si->second.end()) {
             if (auto found_minor = found_major->second.find(_minor); found_minor != found_major->second.end()) {
                 found_major->second.erase(_minor);
                 if (!found_major->second.size()) {
                     found_si->second.erase(_major);
                     if (!found_si->second.size()) {
-                        availability_.erase(found_si);
+                        availability_callbacks_.erase(found_si);
                     }
                 }
             }
@@ -799,29 +799,29 @@ void application_impl::on_subscription(service_t _service, instance_t _instance,
 
     // A sync_handler needs to be created to guarantee order of callback invocations,
     // irrespective of (un)registration of any handler
-    auto its_sync_handler =
-            std::make_shared<sync_handler>([this, _service, _instance, _eventgroup, _client, _subscribed, sec_client = *_sec_client,
-                                            env = _env, continuation = _accepted_cb, weak_self = weak_from_this()] {
-                if (auto self = weak_self.lock(); self) {
-                    subscription_handler_sec_t handler;
-                    async_subscription_handler_sec_t async_handler;
-                    {
-                        std::scoped_lock its_lock{subscription_mutex_};
-                        if (auto found_si = subscription_.find({_service, _instance}); found_si != subscription_.end()) {
-                            if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
-                                std::tie(handler, async_handler) = found_eventgroup->second;
-                            }
-                        }
-                    }
-                    if (handler) {
-                        continuation(handler(_client, &sec_client, env, _subscribed));
-                    } else if (async_handler) {
-                        async_handler(_client, &sec_client, env, _subscribed, continuation);
-                    } else {
-                        continuation(true);
+    auto its_sync_handler = std::make_shared<sync_handler>([this, _service, _instance, _eventgroup, _client, _subscribed,
+                                                            sec_client = *_sec_client, env = _env, continuation = _accepted_cb,
+                                                            weak_self = weak_from_this()] {
+        if (auto self = weak_self.lock(); self) {
+            subscription_handler_sec_t handler;
+            async_subscription_handler_sec_t async_handler;
+            {
+                std::scoped_lock its_lock{subscription_callbacks_mutex_};
+                if (auto found_si = subscription_callbacks_.find({_service, _instance}); found_si != subscription_callbacks_.end()) {
+                    if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
+                        std::tie(handler, async_handler) = found_eventgroup->second;
                     }
                 }
-            });
+            }
+            if (handler) {
+                continuation(handler(_client, &sec_client, env, _subscribed));
+            } else if (async_handler) {
+                async_handler(_client, &sec_client, env, _subscribed, continuation);
+            } else {
+                continuation(true);
+            }
+        }
+    });
     its_sync_handler->service_id_ = _service;
     its_sync_handler->instance_id_ = _instance;
     its_sync_handler->eventgroup_id_ = _eventgroup;
@@ -865,24 +865,24 @@ void application_impl::register_subscription_handler(service_t _service, instanc
 
     const bool offered = routing_ && routing_->is_offered(_service, _instance);
 
-    std::scoped_lock<std::mutex> its_lock(subscription_mutex_);
-    if (auto found = subscription_.find({_service, _instance});
-        found != subscription_.end() && found->second.find(_eventgroup) != found->second.end()) {
+    std::scoped_lock<std::mutex> its_lock(subscription_callbacks_mutex_);
+    if (auto found = subscription_callbacks_.find({_service, _instance});
+        found != subscription_callbacks_.end() && found->second.find(_eventgroup) != found->second.end()) {
         warn_duplicate_registration("Subscription handler", _service, _instance, _eventgroup);
     }
     if (offered) {
         warn_late_registration("Subscription handler", _service, _instance, "offer");
     }
-    subscription_[{_service, _instance}][_eventgroup] = std::make_pair(_handler, nullptr);
+    subscription_callbacks_[{_service, _instance}][_eventgroup] = std::make_pair(_handler, nullptr);
 }
 
 void application_impl::unregister_subscription_handler(service_t _service, instance_t _instance, eventgroup_t _eventgroup) {
-    std::scoped_lock its_lock{subscription_mutex_};
-    if (auto found_si = subscription_.find({_service, _instance}); found_si != subscription_.end()) {
+    std::scoped_lock its_lock{subscription_callbacks_mutex_};
+    if (auto found_si = subscription_callbacks_.find({_service, _instance}); found_si != subscription_callbacks_.end()) {
         if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
             found_si->second.erase(_eventgroup);
             if (found_si->second.empty()) {
-                subscription_.erase(found_si);
+                subscription_callbacks_.erase(found_si);
             }
         }
     }
@@ -994,8 +994,8 @@ void application_impl::register_message_handler(service_t _service, instance_t _
 }
 
 void application_impl::unregister_message_handler(service_t _service, instance_t _instance, method_t _method) {
-    std::scoped_lock its_lock{members_mutex_};
-    members_.erase(to_members_key(_service, _instance, _method));
+    std::scoped_lock its_lock{message_callbacks_mutex_};
+    message_callbacks_.erase(to_members_key(_service, _instance, _method));
 }
 
 void application_impl::offer_event(service_t _service, instance_t _instance, event_t _notifier, const std::set<eventgroup_t>& _eventgroups,
@@ -1200,7 +1200,7 @@ void application_impl::on_availability(service_t _service, instance_t _instance,
 
     std::vector<availability_state_handler_t> its_handlers;
     {
-        std::scoped_lock availability_lock{availability_mutex_};
+        std::scoped_lock availability_lock{availability_callbacks_mutex_};
 
         // The routing manager client only calls in on a real transition, so every match is notified.
         auto collect_handlers = [&](availability_major_minor_t& _av_ma_mi_it, major_version_t _match_major) {
@@ -1221,7 +1221,7 @@ void application_impl::on_availability(service_t _service, instance_t _instance,
 
         for (const service_instance_t si : {service_instance_t{_service, _instance}, service_instance_t{_service, ANY_INSTANCE},
                                             service_instance_t{ANY_SERVICE, _instance}, service_instance_t{ANY_SERVICE, ANY_INSTANCE}}) {
-            if (auto found = availability_.find(si); found != availability_.end()) {
+            if (auto found = availability_callbacks_.find(si); found != availability_callbacks_.end()) {
                 collect_handlers(found->second, _major);
                 if (_major != ANY_MAJOR) {
                     // find(_major) already covered this bucket when the event major is ANY_MAJOR.
@@ -1258,8 +1258,8 @@ const std::deque<message_handler_t>& application_impl::find_handlers(service_t _
             to_members_key(ANY_SERVICE, ANY_INSTANCE, _method), to_members_key(ANY_SERVICE, ANY_INSTANCE, ANY_METHOD)};
 
     for (const auto query : queries) {
-        const auto& search = members_.find(query);
-        if (search != members_.end()) {
+        const auto& search = message_callbacks_.find(query);
+        if (search != message_callbacks_.end()) {
             return search->second;
         }
     }
@@ -1274,7 +1274,7 @@ void application_impl::on_message(std::shared_ptr<message>&& _message) {
     const method_t its_method = _message->get_method();
 
     {
-        std::scoped_lock its_lock{members_mutex_};
+        std::scoped_lock its_lock{message_callbacks_mutex_};
 
         const auto its_handlers = find_handlers(its_service, its_instance, its_method);
 
@@ -1413,31 +1413,32 @@ std::shared_ptr<application_impl::sync_handler> application_impl::get_next_handl
         // Check handler
         if (its_next_handler->handler_type_ == handler_type_e::SUBSCRIPTION && its_next_handler->client_id_ != ANY_CLIENT) {
             const auto its_key = its_next_handler->client_id_;
-            auto found = subscription_handlers_.find(its_key);
-            if (found != subscription_handlers_.end() && !found->second.empty() && found->second.front() != its_next_handler) {
+            auto found = subscription_dispatch_order_.find(its_key);
+            if (found != subscription_dispatch_order_.end() && !found->second.empty() && found->second.front() != its_next_handler) {
                 // A subscription handler for this client is already running.
                 found->second.push_back(its_next_handler);
                 its_next_handler = nullptr;
             } else {
-                subscription_handlers_[its_key].push_back(its_next_handler);
+                subscription_dispatch_order_[its_key].push_back(its_next_handler);
             }
         } else if (its_next_handler->handler_type_ == handler_type_e::AVAILABILITY) {
             const service_instance_t its_si_pair{its_next_handler->service_id_, its_next_handler->instance_id_};
 
-            auto found_si = availability_handlers_.find(its_si_pair);
-            if (found_si != availability_handlers_.end() && !found_si->second.empty() && found_si->second.front() != its_next_handler) {
+            auto found_si = availability_dispatch_order_.find(its_si_pair);
+            if (found_si != availability_dispatch_order_.end() && !found_si->second.empty()
+                && found_si->second.front() != its_next_handler) {
                 found_si->second.push_back(its_next_handler);
                 // There is a running availability handler for this service.
                 // Therefore, this one must wait...
                 its_next_handler = nullptr;
             } else {
-                availability_handlers_[its_si_pair].push_back(its_next_handler);
+                availability_dispatch_order_[its_si_pair].push_back(its_next_handler);
             }
         } else if (its_next_handler->handler_type_ == handler_type_e::MESSAGE) {
             const service_instance_t its_si_pair{its_next_handler->service_id_, its_next_handler->instance_id_};
 
-            auto found_si = availability_handlers_.find(its_si_pair);
-            if (found_si != availability_handlers_.end() && found_si->second.size() > 1) {
+            auto found_si = availability_dispatch_order_.find(its_si_pair);
+            if (found_si != availability_dispatch_order_.end() && found_si->second.size() > 1) {
                 // The message comes after the next availability handler
                 // Therefore, queue it to the last one
                 found_si->second.push_back(its_next_handler);
@@ -1453,8 +1454,8 @@ void application_impl::reschedule_availability_handler(const std::shared_ptr<syn
     if (_handler->handler_type_ == handler_type_e::AVAILABILITY) {
         const service_instance_t its_si_pair{_handler->service_id_, _handler->instance_id_};
 
-        auto found_si = availability_handlers_.find(its_si_pair);
-        if (found_si != availability_handlers_.end()) {
+        auto found_si = availability_dispatch_order_.find(its_si_pair);
+        if (found_si != availability_dispatch_order_.end()) {
             if (!found_si->second.empty() && found_si->second.front() == _handler) {
                 found_si->second.pop_front();
 
@@ -1463,7 +1464,7 @@ void application_impl::reschedule_availability_handler(const std::shared_ptr<syn
                 for (auto it = found_si->second.rbegin(); it != found_si->second.rend(); it++) {
                     handlers_.push_front(*it);
                 }
-                availability_handlers_.erase(found_si);
+                availability_dispatch_order_.erase(found_si);
             }
             return;
         }
@@ -1474,7 +1475,7 @@ void application_impl::reschedule_availability_handler(const std::shared_ptr<syn
 void application_impl::reschedule_subscription_handler(const std::shared_ptr<sync_handler>& _handler) {
     if (_handler->handler_type_ == handler_type_e::SUBSCRIPTION && _handler->client_id_ != ANY_CLIENT) {
         const auto its_key = _handler->client_id_;
-        if (auto const found = subscription_handlers_.find(its_key); found != subscription_handlers_.end()) {
+        if (auto const found = subscription_dispatch_order_.find(its_key); found != subscription_dispatch_order_.end()) {
             if (!found->second.empty() && found->second.front() == _handler) {
                 found->second.pop_front();
 
@@ -1482,7 +1483,7 @@ void application_impl::reschedule_subscription_handler(const std::shared_ptr<syn
                 for (auto it = found->second.rbegin(); it != found->second.rend(); ++it) {
                     handlers_.push_front(*it);
                 }
-                subscription_handlers_.erase(found);
+                subscription_dispatch_order_.erase(found);
             }
             return;
         }
@@ -1605,23 +1606,23 @@ void application_impl::clear_all_handler() {
     }
 
     {
-        std::scoped_lock availability_lock{availability_mutex_};
-        availability_.clear();
+        std::scoped_lock availability_lock{availability_callbacks_mutex_};
+        availability_callbacks_.clear();
     }
 
     {
-        std::scoped_lock its_lock{subscription_mutex_};
-        subscription_.clear();
+        std::scoped_lock its_lock{subscription_callbacks_mutex_};
+        subscription_callbacks_.clear();
     }
 
     {
-        std::scoped_lock its_lock{members_mutex_};
-        members_.clear();
+        std::scoped_lock its_lock{message_callbacks_mutex_};
+        message_callbacks_.clear();
     }
     {
         std::scoped_lock its_lock{handlers_mutex_};
         handlers_.clear();
-        availability_handlers_.clear();
+        availability_dispatch_order_.clear();
     }
 }
 
@@ -1782,15 +1783,15 @@ void application_impl::register_async_subscription_handler(service_t _service, i
 
     const bool offered = routing_ && routing_->is_offered(_service, _instance);
 
-    std::scoped_lock<std::mutex> its_lock(subscription_mutex_);
-    if (auto found = subscription_.find({_service, _instance});
-        found != subscription_.end() && found->second.find(_eventgroup) != found->second.end()) {
+    std::scoped_lock<std::mutex> its_lock(subscription_callbacks_mutex_);
+    if (auto found = subscription_callbacks_.find({_service, _instance});
+        found != subscription_callbacks_.end() && found->second.find(_eventgroup) != found->second.end()) {
         warn_duplicate_registration("Async subscription handler", _service, _instance, _eventgroup);
     }
     if (offered) {
         warn_late_registration("Async subscription handler", _service, _instance, "offer");
     }
-    subscription_[{_service, _instance}][_eventgroup] = std::make_pair(nullptr, _handler);
+    subscription_callbacks_[{_service, _instance}][_eventgroup] = std::make_pair(nullptr, _handler);
 }
 
 void application_impl::register_sd_acceptance_handler(const sd_acceptance_handler_t& _handler) {
@@ -1975,9 +1976,9 @@ void application_impl::register_message_handler_ext(service_t _service, instance
 
     const auto key = to_members_key(_service, _instance, _method);
 
-    std::scoped_lock its_lock{members_mutex_};
+    std::scoped_lock its_lock{message_callbacks_mutex_};
     // If the handler is already registered and type is HRT_REPLACE, warn about duplicate registration.
-    if (members_.find(key) != members_.end() && _type == handler_registration_type_e::HRT_REPLACE) {
+    if (message_callbacks_.find(key) != message_callbacks_.end() && _type == handler_registration_type_e::HRT_REPLACE) {
         warn_duplicate_registration("Message handler", _service, _instance, _method);
     }
     // If the handler is being registered after the service has been offered, warn about late registration.
@@ -1987,13 +1988,13 @@ void application_impl::register_message_handler_ext(service_t _service, instance
 
     switch (_type) {
     case handler_registration_type_e::HRT_REPLACE:
-        members_[key].clear();
+        message_callbacks_[key].clear();
         [[gnu::fallthrough]];
     case handler_registration_type_e::HRT_APPEND:
-        members_[key].push_back(_handler);
+        message_callbacks_[key].push_back(_handler);
         break;
     case handler_registration_type_e::HRT_PREPEND:
-        members_[key].push_front(_handler);
+        message_callbacks_[key].push_front(_handler);
         break;
     default:;
     }
