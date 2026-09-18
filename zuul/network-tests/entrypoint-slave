@@ -4,7 +4,14 @@ source "${BASH_SOURCE[0]%/*}"/shlib/common.shlib
 
 # The ephemeral local port range is narrowed via docker-compose.yaml sysctls so
 # the kernel never hands out the fixed SOME/IP test ports as ephemeral source
-# ports. The slave runs in its container namespace, so no re-apply is needed here.
+# ports. Tests run in a per-test namespace, which starts from the kernel defaults
+# rather than inheriting these, so run_isolated.sh re-applies them there.
+
+mkdir -p /run/netns
+if ! mountpoint -q /run/netns; then
+	mount --bind /run/netns /run/netns
+fi
+mount --make-shared /run/netns
 
 mkdir -p /run/sshd
 exec /sbin/sshd -D
