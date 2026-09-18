@@ -367,7 +367,18 @@ void routing_manager_client::request_service([[maybe_unused]] client_t _client, 
         protocol::service_data request = {.key_ = {.service_ = _service, .instance_ = _instance, .major_ = _major},
                                           .minor_version_ = _minor};
         std::scoped_lock its_lock{consumer_mutex_};
-        if (requests_.contains(request) || requests_to_debounce_.contains(request)) {
+        if (auto const* existing = requests_.find(request); existing) {
+            if (existing->key_.major_ != _major) {
+                VSOMEIP_ERROR_P << "Dropping request for: " << request.key_ << ", already requested: " << existing->key_
+                                << " and multiple major versions can not be requested";
+            }
+            return;
+        }
+        if (auto const* existing = requests_to_debounce_.find(request); existing) {
+            if (existing->key_.major_ != _major) {
+                VSOMEIP_ERROR_P << "Dropping request for: " << request.key_ << ", already requested: " << existing->key_
+                                << " and multiple major versions can not be requested";
+            }
             return;
         }
         if (!request_debouncing_time) {

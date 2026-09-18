@@ -3,6 +3,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#include "vsomeip/defines.hpp"
+#include "vsomeip/primitive_types.hpp"
 #include <iomanip>
 #include <thread>
 #include <vector>
@@ -702,7 +704,8 @@ void udp_server_endpoint_impl::on_message_received_unlocked(const boost::system:
                     }
                     if (tp::tp::tp_flag_is_set(_buffer[i + VSOMEIP_MESSAGE_TYPE_POS])) {
                         const method_t its_method = bithelper::read_uint16_be(&_buffer[i + VSOMEIP_METHOD_POS_MIN]);
-                        instance_t its_instance = this->get_instance(its_service);
+                        const major_version_t its_major = _buffer[i + VSOMEIP_INTERFACE_VERSION_POS];
+                        instance_t its_instance = this->get_instance(its_service, its_major);
 
                         // NOTE: ANY_INSTANCE => we do not know/want this service
                         // `on_message` would also drop it, we do it already to avoid (somewhat expensive) TP logic

@@ -17,6 +17,7 @@
 #include "../../routing/include/routing_host.hpp"
 #include "../include/endpoint_impl.hpp"
 #include "../../utility/include/utility.hpp"
+#include "vsomeip/primitive_types.hpp"
 
 namespace vsomeip_v3 {
 
@@ -67,12 +68,12 @@ template<typename Protocol>
 void endpoint_impl<Protocol>::remove_default_target(service_t) { }
 
 template<typename Protocol>
-instance_t endpoint_impl<Protocol>::get_instance(service_t _service) {
+instance_t endpoint_impl<Protocol>::get_instance(service_t _service, major_version_t _major) {
 
     instance_t its_instance = ANY_INSTANCE;
     auto its_host = endpoint_host_.lock();
     if (its_host) {
-        its_instance = its_host->find_instance(_service, this);
+        its_instance = its_host->find_instance(_service, _major, this);
     }
 
     return its_instance;

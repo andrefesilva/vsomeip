@@ -22,6 +22,7 @@
 #include "../../routing/include/routing_host.hpp"
 #include "../../utility/include/utility.hpp"
 #include "../../utility/include/bithelper.hpp"
+#include "vsomeip/primitive_types.hpp"
 
 #include <algorithm>
 #include <forward_list>
@@ -353,7 +354,8 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_server_endpoint(u
 
 std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_or_create_server_endpoint(uint16_t _port, bool _reliable, bool _start,
                                                                                          service_t _service, instance_t _instance,
-                                                                                         bool& _is_found, bool _is_multicast) {
+                                                                                         major_version_t _major, bool& _is_found,
+                                                                                         bool _is_multicast) {
     auto its_endpoint = find_server_endpoint(_port, _reliable);
     _is_found = false;
     if (!its_endpoint) {
@@ -364,7 +366,7 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_or_create_server_
     if (its_endpoint) {
         std::scoped_lock its_lock(endpoint_mutex_);
         if (!_is_multicast) {
-            service_instances_[_service][its_endpoint.get()] = _instance;
+            service_instances_[_service][_major][its_endpoint.get()] = _instance;
         }
     }
     return its_endpoint;
@@ -403,6 +405,7 @@ bool endpoint_manager_impl::remove_server_endpoint(uint16_t _port, bool _reliabl
 void endpoint_manager_impl::clear_client_endpoints(service_t _service, instance_t _instance, major_version_t _major, bool _reliable,
                                                    std::optional<disconnect_reason_e> _disconnect) {
 
+    assert(_major != ANY_MAJOR); // see comment below
     std::shared_ptr<boardnet_endpoint> its_endpoint;
 
     boost::asio::ip::address its_remote_address;
@@ -432,7 +435,7 @@ void endpoint_manager_impl::clear_client_endpoints(service_t _service, instance_
         }
         if (found_si != remote_services_.end()) {
             if (const auto found_reliability = found_si->second.find(_reliable); found_reliability != found_si->second.end()) {
-                service_instances_[_service].erase(found_reliability->second.get());
+                service_instances_[_service][_major].erase(found_reliability->second.get());
                 its_endpoint = found_reliability->second;
                 found_si->second.erase(found_reliability);
                 if (found_si->second.empty()) {
@@ -509,7 +512,7 @@ void endpoint_manager_impl::clear_client_endpoints(service_t _service, instance_
     }
 }
 
-void endpoint_manager_impl::find_or_create_multicast_endpoint(service_t _service, instance_t _instance,
+void endpoint_manager_impl::find_or_create_multicast_endpoint(service_t _service, instance_t _instance, major_version_t _major,
                                                               const boost::asio::ip::address& _sender,
                                                               const boost::asio::ip::address& _address, uint16_t _port) {
     bool is_known_multicast(false);
@@ -528,7 +531,7 @@ void endpoint_manager_impl::find_or_create_multicast_endpoint(service_t _service
     const bool is_someip = configuration_->is_someip(_service, _instance);
     bool _is_found(false);
     // Create multicast endpoint & join multicase group
-    auto its_endpoint = find_or_create_server_endpoint(_port, false, is_someip, _service, _instance, _is_found, true);
+    auto its_endpoint = find_or_create_server_endpoint(_port, false, is_someip, _service, _instance, _major, _is_found, true);
     if (!_is_found) {
         // Only save multicast info if we created a new endpoint
         // to be able to delete the new endpoint
@@ -803,14 +806,22 @@ bool endpoint_manager_impl::create_routing_root(std::shared_ptr<local_server>& _
     return true;
 }
 
-instance_t endpoint_manager_impl::find_instance(service_t _service, boardnet_endpoint* const _endpoint) const {
+bool endpoint_manager_impl::is_service_known(service_t _service) const {
+    std::scoped_lock its_lock(endpoint_mutex_);
+    if (auto found_service = service_instances_.find(_service); found_service != service_instances_.end()) {
+        return !found_service->second.empty();
+    }
+    return false;
+}
+
+instance_t endpoint_manager_impl::find_instance(service_t _service, major_version_t _major, boardnet_endpoint* const _endpoint) const {
     instance_t its_instance = ANY_INSTANCE;
     std::scoped_lock its_lock(endpoint_mutex_);
-    auto found_service = service_instances_.find(_service);
-    if (found_service != service_instances_.end()) {
-        auto found_endpoint = found_service->second.find(_endpoint);
-        if (found_endpoint != found_service->second.end()) {
-            its_instance = found_endpoint->second;
+    if (auto found_service = service_instances_.find(_service); found_service != service_instances_.end()) {
+        if (auto found_major = found_service->second.find(_major); found_major != found_service->second.end()) {
+            if (auto found_endpoint = found_major->second.find(_endpoint); found_endpoint != found_major->second.end()) {
+                its_instance = found_endpoint->second;
+            }
         }
     }
     return its_instance;
@@ -829,14 +840,34 @@ instance_t endpoint_manager_impl::find_instance_multicast(service_t _service, co
     return its_instance;
 }
 
-bool endpoint_manager_impl::remove_instance(service_t _service, boardnet_endpoint* const _endpoint) {
+bool endpoint_manager_impl::remove_instance(service_t _service, major_version_t _major, boardnet_endpoint* const _endpoint) {
     {
         std::scoped_lock its_lock(endpoint_mutex_);
-        auto found_service = service_instances_.find(_service);
-        if (found_service != service_instances_.end()) {
-            if (found_service->second.erase(_endpoint)) {
-                if (!found_service->second.size()) {
-                    service_instances_.erase(found_service);
+        if (auto found_service = service_instances_.find(_service); found_service != service_instances_.end()) {
+            if (auto found_major = found_service->second.find(_major); found_major != found_service->second.end()) {
+                if (found_major->second.erase(_endpoint)) {
+                    if (found_major->second.empty()) {
+                        if (found_service->second.erase(_major)) {
+                            if (found_service->second.empty()) {
+                                service_instances_.erase(found_service);
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (_major == ANY_MAJOR) {
+                    VSOMEIP_ERROR_P << "removing endpoints for ANY_MAJOR for the service: " << hex4(_service);
+                    auto& majors = found_service->second;
+                    for (auto it = majors.begin(); it != majors.end();) {
+                        if (it->second.erase(_endpoint) && it->second.empty()) {
+                            it = majors.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                    if (majors.empty()) {
+                        service_instances_.erase(found_service);
+                    }
                 }
             }
         }
@@ -995,8 +1026,7 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_remote_client(ser
     std::shared_ptr<boardnet_endpoint> its_endpoint;
     if (_major == ANY_MAJOR) {
 
-        VSOMEIP_ERROR_P << "called with ANY_MAJOR for [" << hex4(_service) << "." << hex4(_instance)
-                        << "] -- falling back to an arbitrary concrete-major match; this should be unreachable";
+        VSOMEIP_ERROR_P << "called with ANY_MAJOR for [" << hex4(_service) << "." << hex4(_instance) << "] -- returning nullptr";
         return nullptr;
     }
     if (auto found_si = remote_services_.find({_service, _instance, _major}); found_si != remote_services_.end()) {
@@ -1031,7 +1061,7 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_remote_client(ser
                         // store the endpoint under this service/instance/major id
                         // as well - needed for later cleanup
                         remote_services_[{_service, _instance, _major}][_reliable] = its_endpoint;
-                        service_instances_[_service][its_endpoint.get()] = _instance;
+                        service_instances_[_service][_major][its_endpoint.get()] = _instance;
 
                         // add endpoint to serviceinfo object
                         if (auto found_service_info_inner = router_->find_service(_service, _instance, _major); found_service_info_inner) {
@@ -1082,7 +1112,7 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::create_remote_client(s
             if (its_endpoint) {
                 request_used_client_port(its_remote_address, its_remote_port, _reliable, its_local_port);
 
-                service_instances_[_service][its_endpoint.get()] = _instance;
+                service_instances_[_service][_major][its_endpoint.get()] = _instance;
                 remote_services_[{_service, _instance, _major}][_reliable] = its_endpoint;
 
                 partition_id_t its_partition = configuration_->get_partition_id(_service, _instance);
@@ -1212,9 +1242,11 @@ bool endpoint_manager_impl::is_used_endpoint(boardnet_endpoint* const _endpoint)
     {
         std::scoped_lock its_lock(endpoint_mutex_);
         // Do we still use the endpoint to offer a service instance?
-        for (const auto& si : service_instances_) {
-            if (si.second.count(_endpoint) > 0) {
-                return true;
+        for (const auto& [service, majors] : service_instances_) {
+            for (auto const& [major, ep] : majors) {
+                if (ep.count(_endpoint) > 0) {
+                    return true;
+                }
             }
         }
     }

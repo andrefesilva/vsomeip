@@ -287,6 +287,9 @@ void write_service_discovery(std::ostringstream& o, bool enabled, const service_
         if (sd.repetitions_base_delay_) {
             o << R"(, "repetitions_base_delay" : ")" << *sd.repetitions_base_delay_ << "\"";
         }
+        if (sd.cyclic_offer_delay_) {
+            o << R"(, "cyclic_offer_delay" : ")" << sd.cyclic_offer_delay_->count() << "\"";
+        }
         o << R"(, "ttl" : ")" << sd.ttl_ << "\"";
     }
     o << R"( })";

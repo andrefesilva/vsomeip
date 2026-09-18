@@ -36,7 +36,7 @@ public:
     virtual std::shared_ptr<boardnet_endpoint> create_service_discovery_endpoint(const std::string& _address, uint16_t _port,
                                                                                  bool _reliable) = 0;
 
-    virtual services_t get_offered_services() const = 0;
+    virtual versioned_services_t get_offered_services() const = 0;
 
     virtual std::shared_ptr<eventgroupinfo> find_eventgroup(service_t _service, instance_t _instance, eventgroup_t _eventgroup) const = 0;
 
@@ -86,7 +86,7 @@ public:
     virtual std::chrono::steady_clock::time_point expire_subscriptions(bool _force) = 0;
 
     virtual std::shared_ptr<serviceinfo> get_offered_service(service_t _service, instance_t _instance) const = 0;
-    virtual std::map<instance_t, std::shared_ptr<serviceinfo>> get_offered_service_instances(service_t _service) const = 0;
+    virtual std::vector<std::shared_ptr<serviceinfo>> get_offered_service_instances(service_t _service) const = 0;
 
     virtual std::set<eventgroup_t> get_subscribed_eventgroups(service_t _service, instance_t _instance) = 0;
 };

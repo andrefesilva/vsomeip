@@ -15,6 +15,7 @@
 #include "../include/endpoint_definition.hpp"
 #include "../../utility/include/service_instance_map.hpp"
 #include "../../protocol/include/command_types.hpp"
+#include "vsomeip/primitive_types.hpp"
 
 namespace vsomeip_v3 {
 
@@ -60,7 +61,8 @@ public:
     std::shared_ptr<boardnet_endpoint> find_server_endpoint(uint16_t _port, bool _reliable) const;
 
     std::shared_ptr<boardnet_endpoint> find_or_create_server_endpoint(uint16_t _port, bool _reliable, bool _start, service_t _service,
-                                                                      instance_t _instance, bool& _is_found, bool _is_multicast = false);
+                                                                      instance_t _instance, major_version_t _major, bool& _is_found,
+                                                                      bool _is_multicast = false);
     bool remove_server_endpoint(uint16_t _port, bool _reliable);
 
     /**
@@ -70,9 +72,11 @@ public:
      *        endpoint as erroneous; a plain removal (stop offer, TTL expiry, suspend) stops it gracefully.
      */
     void clear_client_endpoints(service_t _service, instance_t _instance, major_version_t _major, bool _reliable,
-                                std::optional<disconnect_reason_e> _disconnect = std::nullopt);
-    void find_or_create_multicast_endpoint(service_t _service, instance_t _instance, const boost::asio::ip::address& _sender,
-                                           const boost::asio::ip::address& _address, uint16_t _port);
+                                std::optional<disconnect_reason_e> _disconnect);
+    void find_or_create_multicast_endpoint(service_t _service, instance_t _instance, major_version_t _major,
+                                           const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
+                                           uint16_t _port);
+
     void clear_multicast_endpoints(service_t _service, instance_t _instance);
 
     bool supports_selective(service_t _service, instance_t _instance) const;
@@ -82,10 +86,11 @@ public:
     bool create_routing_root(std::shared_ptr<local_server>& _root, const transport_protocol_e& _type, bool& _is_socket_activated,
                              const std::shared_ptr<routing_host>& _host, const std::string& _env);
 
-    instance_t find_instance(service_t _service, boardnet_endpoint* const _endpoint) const;
+    [[nodiscard]] bool is_service_known(service_t _service) const;
+    instance_t find_instance(service_t _service, major_version_t _major, boardnet_endpoint* const _endpoint) const;
     instance_t find_instance_multicast(service_t _service, const boost::asio::ip::address& _sender) const;
 
-    bool remove_instance(service_t _service, boardnet_endpoint* const _endpoint);
+    bool remove_instance(service_t _service, major_version_t _major, boardnet_endpoint* const _endpoint);
     bool remove_instance_multicast(service_t _service, instance_t _instance);
 
     // boardnet_endpoint_host interface
@@ -165,7 +170,7 @@ private:
                                         std::map<uint16_t, std::map<bool, std::map<partition_id_t, std::shared_ptr<boardnet_endpoint>>>>>;
     client_endpoints_t client_endpoints_;
 
-    std::map<service_t, std::map<boardnet_endpoint*, instance_t>> service_instances_;
+    std::map<service_t, std::map<major_version_t, std::map<boardnet_endpoint*, instance_t>>> service_instances_;
     std::map<service_t, std::map<boost::asio::ip::address, instance_t>> service_instances_multicast_;
 
     std::map<boost::asio::ip::address, std::map<port_t, std::map<bool, std::set<port_t>>>> used_client_ports_;

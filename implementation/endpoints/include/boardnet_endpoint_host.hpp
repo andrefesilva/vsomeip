@@ -58,7 +58,7 @@ public:
      *
      * @return instance_t the instance id, or ANY_INSTANCE if not found
      */
-    virtual instance_t find_instance(service_t _service, boardnet_endpoint* const _endpoint) const = 0;
+    virtual instance_t find_instance(service_t _service, major_version_t _major, boardnet_endpoint* const _endpoint) const = 0;
 };
 
 } // namespace vsomeip_v3
