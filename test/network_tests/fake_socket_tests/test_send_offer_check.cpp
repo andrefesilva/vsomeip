@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,8 +61,9 @@ security_credentials own_credentials() {
 }
 
 /// Local TCP routing with uds_preferred, i.e. the offerer registers over UDS but is also reachable
-/// over TCP -- the transport a guest has to use for it.
-ecu_config hybrid_config() {
+/// over TCP -- the transport a guest has to use for it. Security is configured in audit mode when
+/// _with_security: that is enough for is_security_enabled(), without enforcing any policy.
+ecu_config hybrid_config(bool _with_security) {
     ecu_config its_config;
     its_config.apps_ = {{routingmanager_name_, routingmanager_id_}, {server_name_, server_id_}};
     its_config.routing_config_ = local_tcp_config{.router_name_ = routingmanager_name_,
@@ -69,6 +71,9 @@ ecu_config hybrid_config() {
                                                   .guest_ = boost::asio::ip::make_address("127.0.0.1")};
     its_config.sd_ = false;
     its_config.uds_preferred_ = true;
+    if (_with_security) {
+        its_config.security_ = security_config{.check_credentials_ = false, .allowed_ = {}};
+    }
     return its_config;
 }
 
@@ -205,9 +210,13 @@ TEST_F(send_offer_check_fixture, request_is_routed_via_the_host_when_the_offerer
 }
 
 struct guest_offer_check_fixture : public base_fake_socket_fixture {
+    explicit guest_offer_check_fixture(bool _with_security = true) :
+        ecu_{"guest_offer_check", hybrid_config(_with_security), *socket_manager_} { }
+
     /// _resolved_uid is what the consumer's security library reports for the offerer when it
-    /// connects to it over local TCP.
-    void start_ecu(uid_t _resolved_uid) {
+    /// connects to it over local TCP. std::nullopt keeps the default no-op sync_client, i.e. a
+    /// deployment without a security library.
+    void start_ecu(std::optional<uid_t> _resolved_uid) {
         ecu_.add_guest({client_name_, client_id_});
         ecu_.prepare();
         ecu_.start_router();
@@ -224,7 +233,9 @@ struct guest_offer_check_fixture : public base_fake_socket_fixture {
         client_ = ecu_.start_one(client_name_);
         ASSERT_NE(client_, nullptr);
         ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        resolve_peer_uid_as(*client_, _resolved_uid);
+        if (_resolved_uid) {
+            resolve_peer_uid_as(*client_, *_resolved_uid);
+        }
         client_->request_service(service_instance_);
         ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::available(service_instance_)));
     }
@@ -235,7 +246,12 @@ struct guest_offer_check_fixture : public base_fake_socket_fixture {
     app* client_{};
     app* server_{};
 
-    ecu_setup ecu_{"guest_offer_check", hybrid_config(), *socket_manager_};
+    ecu_setup ecu_;
+};
+
+/// Same guest setup on an ECU that configures no security at all.
+struct guest_offer_check_without_security_fixture : public guest_offer_check_fixture {
+    guest_offer_check_without_security_fixture() : guest_offer_check_fixture(false) { }
 };
 
 // A guest consumer reaches the offerer over local TCP, where only the uid gets resolved. Comparing
@@ -260,5 +276,19 @@ TEST_F(guest_offer_check_fixture, request_is_skipped_when_the_resolved_uid_does_
 
     EXPECT_FALSE(server_->message_record_.wait_for(request_checker_, std::chrono::milliseconds(500)))
             << "request reached a peer whose uid did not match the one reported for it";
+}
+
+// An ECU that configures no security also deploys no security library, so local TCP resolves no
+// uid at all and the default left in place is not an identity. Comparing it to the reported one
+// rejects every such connection and leaves the consumer looping connect -> reject -> cleanup ->
+// reconnect.
+TEST_F(guest_offer_check_without_security_fixture, request_reaches_the_offerer_when_security_is_not_enabled) {
+    start_ecu(std::nullopt);
+
+    client_->send_request(request_);
+
+    EXPECT_TRUE(server_->message_record_.wait_for(request_checker_)) << "request did not reach the offerer";
+    EXPECT_NE(0u, socket_manager_->count_established_connections(client_name_, server_name_))
+            << "consumer did not connect directly to the offerer";
 }
 }

@@ -435,7 +435,8 @@ void local_endpoint::connect_cbk(boost::system::error_code const& _ec) {
             // connecting late to a client id that has meanwhile been re-used by a different
             // process. Either way the peer is not the one we were told about, so the connection
             // must not be used.
-            if (expected_sec_client_ && expected_sec_client_->user != peer_data_.sec_client_.user) {
+            if (auto const its_configuration = configuration_.lock(); its_configuration && its_configuration->is_security_enabled()
+                && expected_sec_client_ && expected_sec_client_->user != peer_data_.sec_client_.user) {
                 VSOMEIP_WARNING_P << "vSomeIP Security: local connection to client 0x" << hex4(peer_data_.id_)
                                   << " has uid=" << peer_data_.sec_client_.user << " instead of the reported " << expected_sec_client_->user
                                   << " (client id re-used?)";

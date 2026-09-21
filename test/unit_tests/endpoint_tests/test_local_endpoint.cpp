@@ -76,8 +76,14 @@ struct test_uds_local_endpoint : base_endpoint_fixture {
         delegate_->impl_ = factory_;
 
         static constexpr char const* path = "uds_local_endpoint_config.json";
+        static constexpr char const* name = "stub";
+        // VSOMEIP_CONFIGURATION overrides the path handed to configuration_impl, and test_main
+        // points it at a generated logger configuration. The per-application variable wins over it.
+        auto const its_variable = std::string{VSOMEIP_ENV_CONFIGURATION} + "_" + name;
+        ::setenv(its_variable.c_str(), path, 1);
         configuration_ = std::make_shared<vsomeip_v3::cfg::configuration_impl>(path);
-        configuration_->load("stub");
+        configuration_->load(name);
+        ::unsetenv(its_variable.c_str());
 
         ON_CALL(*server_routing_host_, get_policy_manager()).WillByDefault(::testing::Return(policy_manager_));
         ON_CALL(*server_routing_host_, get_security()).WillByDefault(::testing::Return(security_));
