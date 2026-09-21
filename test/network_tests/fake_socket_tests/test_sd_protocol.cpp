@@ -6,6 +6,7 @@
 #include "sample_configurations.hpp"
 
 #include "../../../implementation/service_discovery/include/eventgroupentry_impl.hpp"
+#include "../../../implementation/service_discovery/include/selective_option_impl.hpp"
 
 #include "helpers/app.hpp"
 #include "helpers/base_fake_socket_fixture.hpp"
@@ -78,8 +79,9 @@ struct test_field_resubscribe : public base_fake_socket_fixture {
 };
 
 TEST_F(test_field_resubscribe, field_resubscribe_recovers_after_lost_initial_notification_udp) {
-    // If a field's initial notification is lost, the next cyclic offer must make
-    // the client force a StopSubscribe(ttl=0)+Subscribe pair, which prompts the server to resend the initial value.
+    // If a field's initial notification is lost, the first cyclic offer arriving at least half a cycle after
+    // the subscribe must make the client force a StopSubscribe(ttl=0)+Subscribe pair, which prompts the
+    // server to resend the initial value.
     prepare_ecus_and_apps();
 
     auto* router_one = ecu_one_.router_;
@@ -99,10 +101,10 @@ TEST_F(test_field_resubscribe, field_resubscribe_recovers_after_lost_initial_not
     router_one->subscribe_field({udp_field_});
     ASSERT_TRUE(notify_gate_->wait_for_blocked());
 
-    // Next cyclic offer must force a StopSubscribe(ttl=0) immediately followed by Subscribe.
+    // The first cyclic offer arriving at least half a cycle after the subscribe must force a
+    // StopSubscribe(ttl=0) immediately followed by Subscribe.
     ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
-            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
-            common::scaled_timeout(std::chrono::seconds(2))));
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
 
     // Release the withheld notification — recovery should complete.
     notify_gate_->block(false);
@@ -133,10 +135,10 @@ TEST_F(test_field_resubscribe, field_resubscribe_recovers_after_lost_initial_not
     router_one->subscribe_field({tcp_field_});
     ASSERT_TRUE(notify_gate_->wait_for_blocked());
 
-    // Next cyclic offer must force a StopSubscribe(ttl=0) immediately followed by Subscribe.
+    // The first cyclic offer arriving at least half a cycle after the subscribe must force a
+    // StopSubscribe(ttl=0) immediately followed by Subscribe.
     ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
-            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
-            common::scaled_timeout(std::chrono::seconds(2))));
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
 
     // Release the withheld notification — recovery should complete.
     notify_gate_->block(false);
@@ -166,10 +168,10 @@ TEST_F(test_field_resubscribe, field_resubscribe_recovers_after_lost_initial_not
     router_one->subscribe_eventgroup_field({mix_event_group_});
     ASSERT_TRUE(notify_gate_->wait_for_blocked());
 
-    // Next cyclic offer must force a StopSubscribe(ttl=0) immediately followed by Subscribe.
+    // The first cyclic offer arriving at least half a cycle after the subscribe must force a
+    // StopSubscribe(ttl=0) immediately followed by Subscribe.
     ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
-            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
-            common::scaled_timeout(std::chrono::seconds(2))));
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
 
     // Release the withheld notification — recovery should complete.
     notify_gate_->block(false);
@@ -207,10 +209,10 @@ TEST_F(test_field_resubscribe, field_resubscribe_recovers_after_lost_initial_not
 
     ASSERT_TRUE(notify_gate_->wait_for_blocked());
 
-    // Next cyclic offer must force a StopSubscribe(ttl=0) immediately followed by Subscribe.
+    // The first cyclic offer arriving at least half a cycle after the subscribe must force a
+    // StopSubscribe(ttl=0) immediately followed by Subscribe.
     ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
-            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
-            common::scaled_timeout(std::chrono::seconds(2))));
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
 
     // Release the withheld notification — recovery should complete.
     notify_gate_->block(false);
@@ -219,16 +221,16 @@ TEST_F(test_field_resubscribe, field_resubscribe_recovers_after_lost_initial_not
     EXPECT_TRUE(client_one->message_record_.wait_for(checker));
     EXPECT_TRUE(client_two->message_record_.wait_for(checker));
 
-    // The next cyclic offer shall still trigger a StopSubscribe+Subscribe pair, because one the fields is still missing the initial
-    // notification.
+    // A later cyclic offer shall still trigger a StopSubscribe+Subscribe pair, because one of the fields is
+    // still missing the initial notification.
+    ecu_one_sd_send_gate_->sd_record_.clear();
     ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
-            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
-            common::scaled_timeout(std::chrono::seconds(2))));
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
 }
 
 TEST_F(test_field_resubscribe, field_resubscribe_repeats_while_value_still_missing) {
     // Retries are unbounded by design: as long as the field's value never arrives,
-    // every subsequent cyclic offer must keep forcing the stop+subscribe pair.
+    // subsequent cyclic offers must keep forcing the stop+subscribe pair.
     prepare_ecus_and_apps();
 
     auto* router_one = ecu_one_.router_;
@@ -246,14 +248,12 @@ TEST_F(test_field_resubscribe, field_resubscribe_repeats_while_value_still_missi
     router_one->subscribe_field({udp_field_});
     ASSERT_TRUE(notify_gate_->wait_for_blocked());
 
-    // First forced resubscribe, on the next cyclic offer.
-    ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0},
-                                                               common::scaled_timeout(std::chrono::seconds(2))));
+    // First forced resubscribe, once half a cycle has passed without the initial value.
+    ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}));
 
-    // The notification stays blocked — a second cyclic offer must trigger it again.
+    // The notification stays blocked — a later cyclic offer must trigger it again.
     ecu_one_sd_send_gate_->sd_record_.clear();
-    ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0},
-                                                               common::scaled_timeout(std::chrono::seconds(2))));
+    ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}));
 }
 
 TEST_F(test_field_resubscribe, no_forced_resubscribe_for_plain_event) {
@@ -275,7 +275,7 @@ TEST_F(test_field_resubscribe, no_forced_resubscribe_for_plain_event) {
     router_one->subscribe_event({udp_field_});
     ASSERT_TRUE(notify_gate_->wait_for_blocked());
 
-    ASSERT_FALSE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::seconds(2)))
+    ASSERT_FALSE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::seconds(3)))
             << "Plain event subscription should not trigger a forced resubscribe";
 }
 
@@ -297,12 +297,12 @@ TEST_F(test_field_resubscribe, no_forced_resubscribe_once_initial_value_delivere
     ASSERT_TRUE(router_one->message_record_.wait_for(checker));
 
     ecu_one_sd_send_gate_->sd_record_.clear();
-    EXPECT_FALSE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::seconds(2)));
+    EXPECT_FALSE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}));
 }
 
 TEST_F(test_field_resubscribe, field_resubscribe_late_field_registration) {
-    // Ensure the initial notification is properly tracked even if the field is registered after a notification has been sent for another
-    // field of the eventgroup.
+    // Ensure the initial notification is properly tracked even if the field
+    // is registered after a notification has been sent for another field of the eventgroup.
     prepare_ecus_and_apps();
 
     auto* client_one = ecu_one_.apps_[ecu_one_client_name_];
@@ -330,11 +330,355 @@ TEST_F(test_field_resubscribe, field_resubscribe_late_field_registration) {
     client_one->subscribe_field({iface_.instance_, iface_.fields_[3]});
     client_two->subscribe_field({iface_.instance_, iface_.fields_[3]});
 
-    // The next cyclic offer must force a StopSubscribe(ttl=0) immediately followed by Subscribe, because the newly registered field has not
-    // yet been notified.
+    // A cyclic offer arriving at least half a cycle after the subscribe must force a StopSubscribe(ttl=0)
+    // immediately followed by Subscribe, because the newly registered field has not yet been notified.
     ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
-            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
-            common::scaled_timeout(std::chrono::seconds(2))));
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
+}
+
+constexpr auto half_cycle_ = std::chrono::milliseconds(VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY / 2);
+
+// The repetition phase doubles its delay each round, so pinning the base delay puts the offers at
+// known times (~200/600/1400/3000ms) and lands the 600ms one inside the grace period the tests
+// observe. Left unset, vsomeip's own 10ms default would finish the whole burst before the tests
+// start looking.
+constexpr uint32_t repetitions_base_delay_{200};
+
+struct test_forced_resubscribe_timing : public base_fake_socket_fixture {
+
+    std::vector<event_spec> const events_{{0x8010, {0x1}, vsomeip::reliability_type_e::RT_UNRELIABLE},
+                                          {0x8017, {0x6}, vsomeip::reliability_type_e::RT_UNRELIABLE}};
+    std::vector<event_spec> const fields_{{0x8012, {0x2}, vsomeip::reliability_type_e::RT_UNRELIABLE}};
+    interface iface_{0x334a, events_, fields_};
+
+    ecu_config ecu_one_cfg_{boardnet::ecu_one_config};
+    ecu_config ecu_two_cfg_{boardnet::ecu_two_config};
+
+    ecu_setup ecu_one_{"ecu_one", ecu_one_cfg_.add_interface({iface_}), *socket_manager_};
+    ecu_setup ecu_two_{"ecu_two", ecu_two_cfg_.add_interface({iface_}), *socket_manager_};
+
+    event_ids udp_field_{iface_.instance_, iface_.fields_[0]};
+    event_ids plain_only_event_{iface_.instance_, iface_.events_[1]};
+
+    std::vector<unsigned char> const payload_{0x5, 0x3};
+
+    std::shared_ptr<someip_gate> ecu_one_sd_send_gate_ = someip_gate::create();
+    std::shared_ptr<someip_gate> ecu_two_sd_multicast_gate_ = someip_gate::create();
+    std::shared_ptr<someip_gate> ecu_two_sd_unicast_gate_ = someip_gate::create();
+    std::shared_ptr<someip_gate> notify_gate_ = someip_gate::create();
+
+    boost::asio::ip::udp::endpoint const multicast_ep_{boost::asio::ip::make_address("224.224.224.0"), 30490};
+
+    boost::asio::ip::udp::endpoint client_endpoint() { return {boardnet::ecu_one_config.unicast_ip_, 30491}; }
+
+    void prepare_ecus_and_apps() {
+        for (auto* its_ecu : {&ecu_one_, &ecu_two_}) {
+            its_ecu->config().service_discovery_.repetitions_base_delay_ = repetitions_base_delay_;
+        }
+
+        ecu_two_.add_app(ecu_two_server_name_);
+
+        ecu_one_.prepare();
+        ecu_two_.prepare();
+
+        ASSERT_TRUE(
+                set_udp_data_pipe({ecu_one_.sd_endpoint(), router_one_name_}, udp_party::any(), ecu_one_sd_send_gate_->get_data_pipe()));
+        // SubscribeAcks are unicast and cyclic offers are multicast. someip_gate blocking stalls the
+        // whole pipe, so they need separate pipes: stalling the acks must not hold back the offers.
+        ASSERT_TRUE(set_udp_data_pipe({ecu_two_.sd_endpoint(), router_two_name_}, {ecu_one_.sd_endpoint(), router_one_name_},
+                                      ecu_two_sd_unicast_gate_->get_data_pipe()));
+        ASSERT_TRUE(set_udp_data_pipe({ecu_two_.sd_endpoint(), router_two_name_}, {multicast_ep_},
+                                      ecu_two_sd_multicast_gate_->get_data_pipe()));
+
+        ecu_one_.start_apps();
+        ecu_two_.start_apps();
+    }
+
+    // Subscribes to the field and withholds its initial notification.
+    // Returns with the subscribe just sent, so the half-cycle window starts here.
+    void subscribe_field_with_initial_value_withheld() {
+        auto* server = ecu_two_.apps_[ecu_two_server_name_];
+
+        ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {client_endpoint(), router_one_name_}, notify_gate_->get_data_pipe()));
+
+        server->offer(iface_);
+        server->send_event(udp_field_, payload_);
+
+        notify_gate_->block_at({.service_ = iface_.instance_.service_,
+                                .method_ = udp_field_.event_id_,
+                                .type_ = vsomeip::message_type_e::MT_NOTIFICATION});
+
+        ecu_one_.router_->request_service(iface_.instance_);
+        ecu_one_.router_->subscribe_field({udp_field_});
+        ASSERT_TRUE(notify_gate_->wait_for_blocked());
+    }
+};
+
+// The negative windows, where we expect the StopSubscribe/Subscribe to not happen,
+// should not be scaled. If we scale the windows, we could receive a cyclic offer
+// outside the grace period which would trigger a StopSubscribe/Subscribe.
+TEST_F(test_forced_resubscribe_timing, no_forced_resubscribe_within_half_cycle_of_subscribe_when_initial_field_notification_withheld) {
+    prepare_ecus_and_apps();
+    // Don't send the initial notification to the field event, which should trigger the StopSubscribe/Subscribe
+    subscribe_field_with_initial_value_withheld();
+
+    ecu_one_sd_send_gate_->sd_record_.clear();
+
+    // The repetition-phase offer at ~200ms after the subscribe lands inside this window and must be
+    // answered with a plain Subscribe only.
+    // Check that the service consumer doesn't send a StopSubscribe within the grace period.
+    // Use a slightly smaller window to ensure that we are really within the grace period, and it didn't elapse already.
+    // Check that the client sent a subscribe, which ensures that the service consumer has received an offer
+    EXPECT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}, half_cycle_ * 9 / 10));
+    EXPECT_FALSE(
+            ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::milliseconds(1)));
+
+    // Once half a cycle has passed without the initial value, the pair must go out.
+    EXPECT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
+}
+
+TEST_F(test_forced_resubscribe_timing, forced_resubscribe_when_subscribe_ack_withheld) {
+    prepare_ecus_and_apps();
+
+    auto* server = ecu_two_.apps_[ecu_two_server_name_];
+    server->offer(iface_);
+
+    // Stall the SubscribeAck on the unicast pipe. Offers keep arriving over multicast, so the
+    // service stays available and its TTL keeps being refreshed.
+    ecu_two_sd_unicast_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK, 3});
+
+    ecu_one_.router_->request_service(iface_.instance_);
+    ecu_one_.router_->subscribe_event({plain_only_event_});
+    ASSERT_TRUE(ecu_two_sd_unicast_gate_->wait_for_blocked());
+
+    ecu_one_sd_send_gate_->sd_record_.clear();
+
+    // Check that the service consumer doesn't send a StopSubscribe within the grace period.
+    // Use a slightly smaller window to ensure that we are really within the grace period, and it didn't elapse already.
+    EXPECT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}, half_cycle_ * 9 / 10));
+    EXPECT_FALSE(
+            ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::milliseconds(1)));
+
+    // No field is involved, so this pair can only be driven by the missing SubscribeAck.
+    EXPECT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_sequence(
+            {{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}}));
+}
+
+// Tests for the selective subscriptions.
+// An eventgroup is selective only when it holds exactly one event and that event was registered as
+// ET_SELECTIVE_EVENT, so the interface below carries a single event in its own eventgroup and both
+// subscribers must go through subscribe_selective. Only ecu_two offers the service.
+struct test_selective_subscription : public base_fake_socket_fixture {
+    std::string const subscriber_name_ = "selective_subscriber";
+
+    interface iface_{0x334b, {event_spec{0x8018, {0x7}, vsomeip::reliability_type_e::RT_UNRELIABLE}}, {}};
+
+    ecu_config ecu_one_cfg_{boardnet::ecu_one_config};
+    ecu_config ecu_two_cfg_{boardnet::ecu_two_config};
+
+    ecu_setup ecu_one_{"ecu_one", ecu_one_cfg_.add_interface({iface_}), *socket_manager_};
+    ecu_setup ecu_two_{"ecu_two", ecu_two_cfg_.add_interface({iface_}), *socket_manager_};
+
+    event_ids selective_event_{iface_.instance_, iface_.events_[0]};
+
+    std::shared_ptr<someip_gate> ecu_two_sd_unicast_gate_ = someip_gate::create();
+
+    std::shared_ptr<attribute_recorder<someip_sd_record_message>> sd_record_ =
+            std::make_shared<attribute_recorder<someip_sd_record_message>>();
+    std::shared_ptr<attribute_recorder<std::set<vsomeip::client_t>>> selective_clients_ =
+            std::make_shared<attribute_recorder<std::set<vsomeip::client_t>>>();
+    std::shared_ptr<attribute_recorder<vsomeip::client_t>> subscribing_clients_ = std::make_shared<attribute_recorder<vsomeip::client_t>>();
+
+    std::shared_ptr<data_pipe> sd_send_pipe_ = std::make_shared<data_pipe>(static_cast<data_pipe::external_message_checker_t>(
+            [its_sd_record = sd_record_, its_selective_clients = selective_clients_](someip_message const& _message) {
+                if (_message.sd_) {
+                    for (auto const& its_entry : _message.sd_->get_entries()) {
+                        its_sd_record->record(someip_sd_record_message{its_entry->get_type(), its_entry->get_ttl()});
+                        if (its_entry->get_type() == sd::entry_type_e::SUBSCRIBE_EVENTGROUP) {
+                            auto const its_eventgroup_entry = std::static_pointer_cast<sd::eventgroupentry_impl>(its_entry);
+                            if (auto const its_option = its_eventgroup_entry->get_selective_option()) {
+                                its_selective_clients->record(its_option->get_clients());
+                            }
+                        }
+                    }
+                }
+                return data_pipe_state::OPEN;
+            }));
+
+    void prepare_ecus_and_apps() {
+        for (auto* its_ecu : {&ecu_one_, &ecu_two_}) {
+            its_ecu->config().service_discovery_.repetitions_base_delay_ = repetitions_base_delay_;
+        }
+
+        ecu_one_.add_app(subscriber_name_);
+        ecu_two_.add_app(ecu_two_server_name_);
+
+        ecu_one_.prepare();
+        ecu_two_.prepare();
+
+        ASSERT_TRUE(set_udp_data_pipe({ecu_one_.sd_endpoint(), router_one_name_}, udp_party::any(), sd_send_pipe_));
+        // SubscribeAcks are unicast and cyclic offers are multicast. someip_gate blocking stalls the
+        // whole pipe, so they need separate pipes: stalling the acks must not hold back the offers.
+        ASSERT_TRUE(set_udp_data_pipe({ecu_two_.sd_endpoint(), router_two_name_}, {ecu_one_.sd_endpoint(), router_one_name_},
+                                      ecu_two_sd_unicast_gate_->get_data_pipe()));
+
+        ecu_one_.start_apps();
+        ecu_two_.start_apps();
+
+        ASSERT_TRUE(ecu_one_.router_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(ecu_one_.apps_[subscriber_name_]->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    }
+};
+
+TEST_F(test_selective_subscription, selective_subscription_grows_the_client_option) {
+    prepare_ecus_and_apps();
+
+    auto* client_one = ecu_one_.router_;
+    auto* client_two = ecu_one_.apps_[subscriber_name_];
+    auto* server = ecu_two_.apps_[ecu_two_server_name_];
+
+    server->register_group_subscription_handler(selective_event_,
+                                                [its_subscribing_clients = subscribing_clients_](vsomeip::client_t _client, vsomeip::uid_t,
+                                                                                                 vsomeip::gid_t, std::string const&,
+                                                                                                 bool _is_subscribed) {
+                                                    if (_is_subscribed) {
+                                                        its_subscribing_clients->record(_client);
+                                                    }
+                                                    return true;
+                                                });
+
+    server->offer(iface_);
+
+    client_one->request_service(iface_.instance_);
+    client_two->request_service(iface_.instance_);
+
+    std::set<vsomeip::client_t> const its_first_client{client_one->get_client_id()};
+    std::set<vsomeip::client_t> const its_clients{client_one->get_client_id(), client_two->get_client_id()};
+
+    client_one->subscribe_selective(selective_event_);
+    ASSERT_TRUE(selective_clients_->wait_for_last(its_first_client))
+            << "the first Subscribe carried no selective option, expected client " << client_one->get_client_id()
+            << ", recorded: " << selective_clients_->to_string();
+    ASSERT_TRUE(client_one->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(selective_event_)))
+            << "the first client was never acknowledged";
+    ASSERT_TRUE(subscribing_clients_->wait_for_last(client_one->get_client_id()))
+            << "the provider was not told about the first client, expected " << client_one->get_client_id()
+            << ", recorded: " << subscribing_clients_->to_string();
+
+    // The acknowledgement answering the joining client lists every client of the eventgroup, so only
+    // the ones still waiting may be reported upwards. Subscribing the second client once the first one
+    // is acknowledged is what makes that observable.
+    client_one->subscription_record_.clear();
+    subscribing_clients_->clear();
+
+    client_two->subscribe_selective(selective_event_);
+    EXPECT_TRUE(selective_clients_->wait_for_last(its_clients))
+            << "the Subscribe for the joining client did not carry both clients, expected " << client_one->get_client_id() << " and "
+            << client_two->get_client_id() << ", recorded: " << selective_clients_->to_string();
+
+    EXPECT_TRUE(subscribing_clients_->wait_for_last(client_two->get_client_id()))
+            << "the provider was not told about the joining client, expected " << client_two->get_client_id()
+            << ", recorded: " << subscribing_clients_->to_string();
+    EXPECT_FALSE(subscribing_clients_->wait_for_any(client_one->get_client_id(), std::chrono::seconds(1)))
+            << "the provider was told about the established client again, recorded: " << subscribing_clients_->to_string();
+
+    EXPECT_TRUE(client_two->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(selective_event_)));
+    EXPECT_FALSE(client_one->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(selective_event_),
+                                                               std::chrono::seconds(1)))
+            << "the established client was acknowledged a second time, recorded: " << client_one->subscription_record_.to_string();
+
+    // Both clients are acknowledged and no field is involved, so nothing is ever waiting and the pair
+    // must never be forced.
+    EXPECT_FALSE(sd_record_->wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::seconds(3)));
+}
+
+TEST_F(test_selective_subscription, forced_resubscribe_covers_every_selective_client) {
+    prepare_ecus_and_apps();
+
+    auto* client_one = ecu_one_.router_;
+    auto* client_two = ecu_one_.apps_[subscriber_name_];
+    auto* server = ecu_two_.apps_[ecu_two_server_name_];
+
+    server->offer(iface_);
+
+    // Stall the SubscribeAck on the unicast pipe, so both clients stay unacknowledged and both end up
+    // in the waiting set. Offers keep arriving over multicast, so the service stays available.
+    ecu_two_sd_unicast_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK, 3});
+
+    client_one->request_service(iface_.instance_);
+    client_two->request_service(iface_.instance_);
+
+    // Subscribe the clients one after the other.
+    client_one->subscribe_selective(selective_event_);
+    std::set<vsomeip::client_t> const its_first_client{client_one->get_client_id()};
+    ASSERT_TRUE(selective_clients_->wait_for_last(its_first_client))
+            << "expected client " << client_one->get_client_id() << ", recorded: " << selective_clients_->to_string();
+
+    client_two->subscribe_selective(selective_event_);
+    std::set<vsomeip::client_t> const its_clients{client_one->get_client_id(), client_two->get_client_id()};
+    ASSERT_TRUE(selective_clients_->wait_for_last(its_clients))
+            << "both clients were never part of the same subscription, expected " << client_one->get_client_id() << " and "
+            << client_two->get_client_id() << ", recorded: " << selective_clients_->to_string();
+
+    sd_record_->clear();
+    selective_clients_->clear();
+
+    // Check that the service consumer doesn't send a StopSubscribe within the grace period.
+    EXPECT_TRUE(sd_record_->wait_for_any({sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}, half_cycle_ * 9 / 10));
+    EXPECT_FALSE(sd_record_->wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::milliseconds(1)));
+
+    // One pair for the eventgroup, not one per client, and it must still address both of them.
+    EXPECT_TRUE(
+            sd_record_->wait_for_sequence({{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
+                                          common::scaled_timeout(std::chrono::seconds(5))));
+    EXPECT_TRUE(selective_clients_->wait_for_last(its_clients))
+            << "the forced Subscribe dropped a client, expected " << client_one->get_client_id() << " and " << client_two->get_client_id()
+            << ", recorded: " << selective_clients_->to_string();
+}
+
+// The acknowledgement state is the one thing tracked per client, so it is the only way two clients of
+// the same selective subscription can diverge: the field-missing condition is per eventgroup, and this
+// interface has no field at all, so a withheld ack is the only thing that can force the pair.
+TEST_F(test_selective_subscription, unacknowledged_client_forces_a_resubscribe_for_the_whole_eventgroup) {
+    prepare_ecus_and_apps();
+
+    auto* client_one = ecu_one_.router_;
+    auto* client_two = ecu_one_.apps_[subscriber_name_];
+    auto* server = ecu_two_.apps_[ecu_two_server_name_];
+
+    server->offer(iface_);
+
+    client_one->request_service(iface_.instance_);
+    client_two->request_service(iface_.instance_);
+
+    client_one->subscribe_selective(selective_event_);
+    ASSERT_TRUE(client_one->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(selective_event_)))
+            << "the first client was never acknowledged";
+
+    // Stall the unicast pipe only once the first client is acknowledged, so every later ack is held
+    // and the second client can never be acknowledged. Offers keep arriving over multicast.
+    ecu_two_sd_unicast_gate_->block_at(someip_gate::sd_trigger{sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK, 3});
+
+    client_two->subscribe_selective(selective_event_);
+    ASSERT_TRUE(ecu_two_sd_unicast_gate_->wait_for_blocked()) << "no acknowledgement was held back";
+
+    EXPECT_FALSE(client_two->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(selective_event_),
+                                                               std::chrono::seconds(1)))
+            << "the second client was acknowledged even though its ack was held";
+
+    sd_record_->clear();
+    selective_clients_->clear();
+
+    // The pair is built per eventgroup, so the unacknowledged client makes it tear down and
+    // re-establish the acknowledged client's subscription as well.
+    EXPECT_TRUE(
+            sd_record_->wait_for_sequence({{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, {sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}},
+                                          common::scaled_timeout(std::chrono::seconds(5))));
+    std::set<vsomeip::client_t> const its_clients{client_one->get_client_id(), client_two->get_client_id()};
+    EXPECT_TRUE(selective_clients_->wait_for_any(its_clients))
+            << "the forced Subscribe did not address both clients, expected " << client_one->get_client_id() << " and "
+            << client_two->get_client_id() << ", recorded: " << selective_clients_->to_string();
 }
 
 const interface service_3344_instance_2{0x3344,

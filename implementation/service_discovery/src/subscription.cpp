@@ -12,8 +12,7 @@ namespace sd {
 
 subscription::subscription(major_version_t _major, bool _is_selective, ttl_t _ttl, std::shared_ptr<boardnet_endpoint> _reliable,
                            std::shared_ptr<boardnet_endpoint> _unreliable) :
-    major_(_major), is_selective_(_is_selective), ttl_(_ttl), reliable_(_reliable), unreliable_(_unreliable),
-    tcp_connection_established_(false), udp_connection_established_(false) { }
+    major_(_major), is_selective_(_is_selective), ttl_(_ttl), reliable_(_reliable), unreliable_(_unreliable) { }
 
 major_version_t subscription::get_major() const {
     return major_;
@@ -55,6 +54,14 @@ bool subscription::is_udp_connection_established() const {
 }
 void subscription::set_udp_connection_established(bool _is_established) {
     udp_connection_established_ = _is_established;
+}
+
+std::chrono::steady_clock::time_point subscription::get_stop_subscribe_pending_since() const {
+    return stop_subscribe_pending_since_;
+}
+
+void subscription::set_stop_subscribe_pending_since(std::chrono::steady_clock::time_point _since) {
+    stop_subscribe_pending_since_ = _since;
 }
 
 bool subscription::add_client(const client_t _client, subscription_state_e _state) {
