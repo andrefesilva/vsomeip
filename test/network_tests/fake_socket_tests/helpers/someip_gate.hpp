@@ -50,10 +50,11 @@ class someip_gate : public std::enable_shared_from_this<someip_gate> {
     struct hidden { };
 
 public:
-    someip_gate(hidden);
+    someip_gate(hidden, std::string _name);
 
-    /// Factory — must be used instead of direct construction.
-    static std::shared_ptr<someip_gate> create();
+    /// Factory — must be used instead of direct construction. _name is optional and only used
+    /// for debug logging (e.g. the underlying data_pipe's "received N bytes while closed" log).
+    static std::shared_ptr<someip_gate> create(std::string _name = {});
 
     /// Returns the underlying data_pipe to pass to setup_data_pipe.
     std::shared_ptr<data_pipe> get_data_pipe() const;
@@ -123,6 +124,7 @@ public:
 
 private:
     std::shared_ptr<data_pipe> pipe_;
+    const std::string name_;
 
     struct search {
         std::variant<trigger, sd_trigger, sd_predicate> trigger_;

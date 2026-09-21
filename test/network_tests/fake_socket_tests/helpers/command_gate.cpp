@@ -9,17 +9,18 @@
 
 namespace vsomeip_v3::testing {
 
-command_gate::command_gate(hidden) { }
+command_gate::command_gate(hidden, std::string _name) : name_(_name.empty() ? default_name(this) : std::move(_name)) { }
 
-std::shared_ptr<command_gate> command_gate::create() {
-    auto ptr = std::make_shared<command_gate>(hidden{});
+std::shared_ptr<command_gate> command_gate::create(std::string _name) {
+    auto ptr = std::make_shared<command_gate>(hidden{}, std::move(_name));
     ptr->pipe_ = std::make_shared<data_pipe>(
             static_cast<data_pipe::local_message_checker_t>([weak_self = std::weak_ptr<command_gate>(ptr)](auto const& _cmd) {
                 if (auto self = weak_self.lock(); self) {
                     return (*self)(_cmd);
                 }
                 return data_pipe_state::OPEN;
-            }));
+            }),
+            ptr->name_);
     return ptr;
 }
 

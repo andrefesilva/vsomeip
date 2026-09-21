@@ -20,6 +20,7 @@
 #include <memory>
 #include <tuple>
 #include <optional>
+#include <utility>
 
 namespace vsomeip_v3::testing {
 
@@ -289,15 +290,37 @@ public:
                                        std::shared_ptr<data_pipe> const& _pipe);
 
     /**
-     * Registers (or replaces) a data pipe gating the udp datagram flow from @p _sender to
-     * @p _receiver, matched against the concrete addresses of every udp datagram passed to
-     * send_someip() -- independent of bind/multicast-join order, since matching is address-data
-     * only and re-evaluated on every send instead of being cached on a socket handle.
+     * Registers a data pipe gating the udp datagram flow from @p _sender to @p _receiver, matched
+     * against the concrete addresses of every udp datagram passed to send_someip() -- independent
+     * of bind/multicast-join order, since matching is address-data only and re-evaluated on every
+     * send instead of being cached on a socket handle. Re-registering the exact same (@p _sender,
+     * @p _receiver) tuple is rejected (@return false) rather than replacing the existing pipe --
+     * see find_next_pipe()'s reliance on pipe identity/position never changing once registered.
+     *
+     * Ordering when multiple registered pipes apply to the same datagram:
+     * Every applicable pipe is chained, in registration order -- not just the first match. A
+     * datagram passes through each in turn; a CLOSED pipe holds it there until reopened, blocking
+     * everything further down the chain. Registration order is the *only* thing that determines a
+     * pipe's position -- not how broadly or narrowly its @p _sender/@p _receiver happen to be
+     * constrained, and not whether the traffic turns out to be unicast or multicast: an
+     * any()-sender pipe registered before a sender-scoped one runs first, an any()-sender pipe
+     * registered after a sender-scoped one runs after it, exactly the same way for both transports
+     * (see find_next_pipe() for unicast, find_towards_group_pipe() for multicast).
+     *
+     * Multicast has one further, unavoidable split: fanning out to the group's current members is
+     * a separate, later phase (see route_multicast_datagram()), since that's the point a single
+     * datagram genuinely becomes N separate deliveries -- there's no equivalent point for unicast.
+     * Within that phase, multiple pipes registered for the *same* member still chain in
+     * registration order too (see find_member_pipe()).
      *
      * Real multicast has no point-to-point channel to filter by original sender, so a @p _receiver
-     * that targets one specific group member (app_name_ set, endpoint_ a literal multicast address)
-     * requires an unconstrained @p _sender (udp_party::any()); any other sender is rejected outright
-     * (@return false).
+     * that unambiguously targets one specific group member (app_name_ set, endpoint_ a literal
+     * multicast address) requires an unconstrained @p _sender (udp_party::any()); any other sender
+     * is rejected outright (@return false) -- this combination could never be reached by the
+     * per-member matching phase, whose own sender check requires udp_party::any() regardless. A
+     * @p _receiver with app_name_ set but endpoint_ left unset is *not* rejected even with a
+     * constrained @p _sender: it's simply a plain unicast rule (matched via find_next_pipe()),
+     * which never reaches the multicast-only per-member phase either way.
      */
     [[nodiscard]] bool set_udp_data_pipe(udp_party _sender, udp_party _receiver, std::shared_ptr<data_pipe> const& _pipe);
 
@@ -537,7 +560,60 @@ public:
     std::optional<fake_netlink_connector::state_e> extract_state(boost::asio::io_context* _io);
 
 private:
+    bool send_someip_to_multicast(std::vector<unsigned char> const& _buffer, boost::asio::ip::udp::endpoint _src,
+                                  boost::asio::ip::udp::endpoint _dst);
+    bool send_someip_to_peer(std::vector<unsigned char> const& _buffer, boost::asio::ip::udp::endpoint _src,
+                             boost::asio::ip::udp::endpoint _dst);
+
+    void flush_pipe(std::shared_ptr<data_pipe> const& _pipe);
+    bool deliver_udp_to_peer(std::vector<unsigned char> const& _buffer, boost::asio::ip::udp::endpoint _src,
+                             boost::asio::ip::udp::endpoint _dst, std::shared_ptr<fake_socket_handle>& _shared_handle,
+                             std::scoped_lock<std::mutex> const& _lock);
+
+    std::shared_ptr<data_pipe> find_next_pipe(std::shared_ptr<data_pipe> const& _last, boost::asio::ip::udp::endpoint _src,
+                                              boost::asio::ip::udp::endpoint _dst, std::scoped_lock<std::mutex> const& _lock,
+                                              std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive) const;
+
+    // Only 2 rule shapes are valid for multicast traffic (a constrained sender together with a receiver
+    // naming one specific member is rejected by set_udp_data_pipe(), since real multicast has no
+    // point-to-point channel to narrow a per-recipient receiver by sender): "towards the group" (receiver
+    // unconstrained, sender any() or scoped -- these are one combined category, not two separate stages, so
+    // a unicast and a multicast send apply the same overlapping rules in the same registration order) and
+    // "per member" (any sender, receiver naming one member). _last resumes the search just past it, exactly
+    // like find_next_pipe(), so multiple distinct rules sharing a shape chain in registration order too.
+    std::shared_ptr<data_pipe> find_towards_group_pipe(boost::asio::ip::udp::endpoint const& _src,
+                                                       boost::asio::ip::udp::endpoint const& _dst, std::shared_ptr<data_pipe> const& _last,
+                                                       std::scoped_lock<std::mutex> const& _lock,
+                                                       std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive) const;
+    std::shared_ptr<data_pipe> find_member_pipe(std::string const& _app_name, boost::asio::ip::udp::endpoint const& _dst,
+                                                std::shared_ptr<data_pipe> const& _last, std::scoped_lock<std::mutex> const& _lock) const;
+
+    /// Returns the receiver_.app_name_ of the rule owning _pipe, if any -- set means _pipe is a per-member
+    /// rule, unset means it's a towards-the-group rule (or _pipe is no longer registered at all).
+    std::optional<std::string> find_rule_receiver_app_name(std::shared_ptr<data_pipe> const& _pipe,
+                                                           std::scoped_lock<std::mutex> const& _lock) const;
+
+    /// Continues a multicast delivery after _last (nullptr for a fresh send) just released it: checks the next
+    /// towards-the-group stage, then fans out to the group's *current* members once both are exhausted. Newly
+    /// gated pipes are appended to _next_pipes for the caller to flush once mtx_ is released.
+    void route_multicast_datagram(std::shared_ptr<data_pipe> const& _last, std::vector<unsigned char> const& _buffer,
+                                  boost::asio::ip::udp::endpoint const& _src, boost::asio::ip::udp::endpoint const& _dst,
+                                  std::scoped_lock<std::mutex> const& _lock, std::vector<std::shared_ptr<data_pipe>>& _next_pipes,
+                                  std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive);
+
+    void fan_out_to_multicast_members(std::vector<unsigned char> const& _buffer, boost::asio::ip::udp::endpoint const& _src,
+                                      boost::asio::ip::udp::endpoint const& _dst, std::scoped_lock<std::mutex> const& _lock,
+                                      std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive,
+                                      std::vector<std::shared_ptr<data_pipe>>& _next_pipes);
+
+    /// Terminal step of the per-member stage: delivers straight to _app_name's *current* handle, if still present.
+    void deliver_to_multicast_member(std::vector<unsigned char> const& _buffer, boost::asio::ip::udp::endpoint const& _src,
+                                     boost::asio::ip::udp::endpoint const& _dst, std::string const& _app_name,
+                                     std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive,
+                                     std::scoped_lock<std::mutex> const& _lock);
+
     void try_add(boost::asio::io_context* _io, fd_t _fd, char const* _type);
+
     std::shared_ptr<app_connection> get_or_create_connection(std::string const& _client, std::string const& _server);
 
     struct udp_pipe_rule {
@@ -545,11 +621,6 @@ private:
         udp_party receiver_;
         std::shared_ptr<data_pipe> pipe_;
     };
-
-    /// Drains every now-forwardable datagram held in _pipe and delivers it via deliver_udp_someip()
-    /// -- except a datagram addressed to a multicast group while _receiver.app_name_ is set, which
-    /// targets only that one recipient (see find_multicast_member()), not the whole group.
-    void flush_udp_pipe(std::shared_ptr<data_pipe> const& _pipe, udp_party const& _receiver);
 
     /// Must be called with mtx_ held. Returns the app name owning the socket bound to _ep, if any.
     /// The resolved handle is appended to _keep_alive, which the caller must declare before taking
@@ -562,8 +633,14 @@ private:
     std::vector<std::shared_ptr<fake_udp_socket_handle>>
     resolve_multicast_group(boost::asio::ip::udp::endpoint const& _src, boost::asio::ip::udp::endpoint const& _dst, bool& _blocked);
 
+    /// Returns every currently-joined member of the multicast group @p _address.
+    std::vector<std::shared_ptr<fake_udp_socket_handle>> find_multicast_members(boost::asio::ip::address const& _address,
+                                                                                std::scoped_lock<std::mutex> const& _lock) const;
+
     /// Returns the currently-joined multicast member owned by @p _app_name, if any.
-    std::shared_ptr<fake_udp_socket_handle> find_multicast_member(boost::asio::ip::address const& _address, std::string const& _app_name);
+    std::shared_ptr<fake_udp_socket_handle> find_multicast_member(boost::asio::ip::address const& _address, std::string const& _app_name,
+                                                                  std::vector<std::shared_ptr<fake_socket_handle>>& _keep_alive,
+                                                                  std::scoped_lock<std::mutex> const& _lock) const;
 
     mutable std::mutex mtx_;
     bool react_on_unassigned_udp_port_{false};
@@ -596,7 +673,8 @@ private:
     std::map<boost::asio::ip::tcp::endpoint, fd_t> endpoint_tcp_to_fd_;
     std::map<boost::asio::ip::udp::endpoint, fd_t> endpoint_udp_to_fd_;
     std::map<std::string, std::set<std::pair<boost::asio::ip::udp::endpoint, fd_t>>> binded_multicast_endpoints_;
-    // persisted delay state per sending endpoint; applied immediately if already bound, or on bind otherwise
+    // persisted delay state per sending endpoint; applied immediately if already bound, or on bind
+    // otherwise
     std::map<boost::asio::ip::udp::endpoint, bool> udp_sending_delay_;
     std::map<boost::asio::ip::address, bool> block_udp_messages_;
     std::vector<udp_pipe_rule> udp_pipe_rules_;

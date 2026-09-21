@@ -10,11 +10,22 @@
 
 #include <vsomeip/message.hpp>
 
+#include <sstream>
+
 namespace vsomeip_v3::testing {
 
-data_pipe::data_pipe(local_message_checker_t _checker) : checker_(std::move(_checker)) { }
+std::string default_name(void const* _addr) {
+    std::ostringstream oss;
+    oss << _addr;
+    return oss.str();
+}
 
-data_pipe::data_pipe(external_message_checker_t _external_checker) : external_checker_(std::move(_external_checker)) { }
+data_pipe::data_pipe(std::string _name) : name_(std::move(_name)) { }
+
+data_pipe::data_pipe(local_message_checker_t _checker, std::string _name) : name_(std::move(_name)), checker_(std::move(_checker)) { }
+
+data_pipe::data_pipe(external_message_checker_t _external_checker, std::string _name) :
+    name_(std::move(_name)), external_checker_(std::move(_external_checker)) { }
 
 void data_pipe::init(open_reaction_t _react) {
     std::scoped_lock lock{mtx_};
@@ -42,6 +53,7 @@ void data_pipe::add_data(control_data_t& _data) {
     std::scoped_lock lock{mtx_};
     input_data_.push_back(_data);
     if (state_ == data_pipe_state::CLOSED) {
+        TEST_LOG << "[data_pipe] " << name_ << " received " << _data.buffer_.size() << " bytes while being closed";
         return;
     }
     push_data(lock);
@@ -49,9 +61,11 @@ void data_pipe::add_data(control_data_t& _data) {
 
 void data_pipe::add_data(std::vector<unsigned char> _data) {
     std::scoped_lock lock{mtx_};
+    auto const byte_count = _data.size();
     control_data_t data{.buffer_ = std::move(_data), .addresses_ = std::nullopt};
     input_data_.push_back(std::move(data));
     if (state_ == data_pipe_state::CLOSED) {
+        TEST_LOG << "[data_pipe] " << name_ << " received " << byte_count << " bytes while being closed";
         return;
     }
     push_data(lock);
@@ -104,7 +118,7 @@ void data_pipe::set_state(data_pipe_state _input) {
         std::scoped_lock lock{mtx_};
         state_ = _input;
         if (state_ == data_pipe_state::OPEN && open_reaction_) {
-            TEST_LOG << "[data_pipe] is now OPEN, mem: " << this;
+            TEST_LOG << "[data_pipe] " << name_ << " is now OPEN";
             push_data(lock);
             react = open_reaction_;
         }
@@ -135,7 +149,7 @@ void data_pipe::push_checked_data(std::scoped_lock<std::mutex> const&) {
                 msg_size = parse(input_data_[segment_offset].buffer_.data() + local_offset,
                                  input_data_[segment_offset].buffer_.size() - local_offset, msg);
                 if (msg_size == 0) {
-                    TEST_LOG << "[data_pipe] ERROR Can not parse vsomeip command, mem: " << this;
+                    TEST_LOG << "[data_pipe] " << name_ << " ERROR Can not parse vsomeip command";
                     continue;
                 }
                 state_ = checker_(msg);
@@ -144,19 +158,19 @@ void data_pipe::push_checked_data(std::scoped_lock<std::mutex> const&) {
                 msg_size = parse_sequential_someip(input_data_[segment_offset].buffer_.data() + local_offset,
                                                    input_data_[segment_offset].buffer_.size() - local_offset, msg);
                 if (msg_size == 0) {
-                    TEST_LOG << "[data_pipe] ERROR Can not parse someip message, mem: " << this << " removing remaining data in segment";
+                    TEST_LOG << "[data_pipe] " << name_ << " ERROR Can not parse someip message, removing remaining data in segment";
                     input_data_[segment_offset].buffer_.erase(input_data_[segment_offset].buffer_.begin()
                                                                       + static_cast<std::ptrdiff_t>(local_offset),
                                                               input_data_[segment_offset].buffer_.end());
                     continue;
                 }
                 state_ = external_checker_(msg);
-                TEST_LOG << "[data_pipe] external checker returned state: " << static_cast<int>(state_) << ", mem: " << this
+                TEST_LOG << "[data_pipe] " << name_ << " external checker returned state: " << static_cast<int>(state_)
                          << ", parsed message: " << msg;
             }
 
             if (state_ == data_pipe_state::CLOSED) {
-                TEST_LOG << "[data_pipe] is now CLOSED, mem: " << this;
+                TEST_LOG << "[data_pipe] " << name_ << " is now CLOSED";
                 closed = true;
                 break;
             }
