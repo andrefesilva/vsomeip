@@ -8,6 +8,8 @@
 #include "helpers/base_fake_socket_fixture.hpp"
 #include "helpers/service_state.hpp"
 
+#include "common/timeout_scale.hpp"
+
 #include <boost/asio/ip/udp.hpp>
 #include <vsomeip/vsomeip.hpp>
 #include <gtest/gtest.h>
@@ -97,14 +99,18 @@ struct test_queue_limit_helper : public base_fake_socket_fixture {
         // Release the socket; whatever survived the limit drains to the client.
         EXPECT_TRUE(delay_boardnet_sending(ecu_two_data_ep_, false));
 
-        // Let the surviving notifications arrive, then read the recorded count.
+        auto& record = ecu_one_client_->message_record_;
+        // The survivors must arrive. Wait for the first one.
+        EXPECT_TRUE(record.wait_for([](auto const& _record) { return !_record.empty(); }));
+
+        // Then give the rest of the burst a fair chance to (not) arrive.
         size_t received{0};
-        (void)ecu_one_client_->message_record_.wait_for(
-                [&](auto const& record) {
-                    received = record.size();
-                    return record.size() >= kBurstCount; // times out unless everything arrived
+        (void)record.wait_for(
+                [&](auto const& _record) {
+                    received = _record.size();
+                    return _record.size() >= kBurstCount; // times out unless everything arrived
                 },
-                std::chrono::milliseconds(500));
+                common::scaled_timeout(std::chrono::milliseconds(500)));
         return received;
     }
 
