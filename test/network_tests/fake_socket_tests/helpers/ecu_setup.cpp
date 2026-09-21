@@ -88,6 +88,7 @@ void ecu_setup::add_guest(application_config app, bool uds_preferred) {
                 local_tcp_config{.router_name_ = tcp.router_name_, .host_ = tcp.host_, .guest_ = boost::asio::ip::address{guest_ip}};
         gcfg.uds_preferred_ = uds_preferred;
         gcfg.sd_ = false;
+        gcfg.security_ = config_.security_;
         guest_config_name_ = name_ + "_guest";
         guest_config_ = std::move(gcfg);
     } else {
