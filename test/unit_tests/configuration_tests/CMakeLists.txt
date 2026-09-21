@@ -6,7 +6,7 @@
 project("unit_tests_configuration_tests" LANGUAGES CXX)
 
 set(TEST_SRCS
-    ../main.cpp
+    main.cpp
     mock_configuration.cpp
     test_configuration.cpp
     test_logger_configuration.cpp
