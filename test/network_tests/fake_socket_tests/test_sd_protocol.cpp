@@ -53,9 +53,9 @@ struct test_field_resubscribe : public base_fake_socket_fixture {
 
     std::vector<unsigned char> const payload_{0x5, 0x3};
 
-    std::shared_ptr<someip_gate> ecu_one_sd_send_gate_ = someip_gate::create();
-    std::shared_ptr<someip_gate> ecu_two_sd_send_gate_ = someip_gate::create();
-    std::shared_ptr<someip_gate> notify_gate_ = someip_gate::create();
+    std::shared_ptr<someip_gate> ecu_one_sd_send_gate_ = someip_gate::create("ecu_one_sd_send_gate_");
+    std::shared_ptr<someip_gate> ecu_two_sd_send_gate_ = someip_gate::create("ecu_two_sd_send_gate_");
+    std::shared_ptr<someip_gate> notify_gate_ = someip_gate::create("notify_gate_");
 
     boost::asio::ip::udp::endpoint client_endpoint() { return {boardnet::ecu_one_config.unicast_ip_, 30491}; }
 
@@ -688,7 +688,16 @@ struct duplicate_remote_subscribe : public base_fake_socket_fixture {
         // The eventgroups only exist once the offer has been processed; subscribing earlier is NACKed.
         ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::OFFER_SERVICE, 3}))
                 << "service was never offered, recorded: " << ecu_one_sd_send_gate_->sd_record_.to_string();
-        ASSERT_TRUE(set_udp_data_pipe({ecu_one_.sd_endpoint(), router_one_name_}, udp_party::any(), sd_send_pipe_));
+        // Records SUBSCRIBE_EVENTGROUP_ACK entries into acked_eventgroups_ without ever blocking -- reuses the
+        // already-registered gate instead of a second set_udp_data_pipe() for the same (sender, receiver).
+        ecu_one_sd_send_gate_->block_at(someip_gate::sd_predicate{[this](std::shared_ptr<sd::message_impl> const& _msg) {
+            for (auto const& its_entry : _msg->get_entries()) {
+                if (its_entry->get_type() == sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK && its_entry->get_ttl() > 0) {
+                    acked_eventgroups_.record(std::static_pointer_cast<sd::eventgroupentry_impl>(its_entry)->get_eventgroup());
+                }
+            }
+            return false;
+        }});
 
         ASSERT_TRUE(set_udp_data_pipe({boost::asio::ip::udp::endpoint{ecu_one_.address(), 30501}, router_one_name_}, udp_party::any(),
                                       initial_notify_pipe_));
@@ -705,18 +714,6 @@ struct duplicate_remote_subscribe : public base_fake_socket_fixture {
     /// Eventgroups ecu_one acknowledged on the wire.
     attribute_recorder<vsomeip::eventgroup_t> acked_eventgroups_;
     attribute_recorder<vsomeip::event_t> initial_notifications_;
-
-    std::shared_ptr<data_pipe> sd_send_pipe_ =
-            std::make_shared<data_pipe>(static_cast<data_pipe::external_message_checker_t>([this](someip_message const& _message) {
-                if (_message.sd_) {
-                    for (auto const& its_entry : _message.sd_->get_entries()) {
-                        if (its_entry->get_type() == sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK && its_entry->get_ttl() > 0) {
-                            acked_eventgroups_.record(std::static_pointer_cast<sd::eventgroupentry_impl>(its_entry)->get_eventgroup());
-                        }
-                    }
-                }
-                return data_pipe_state::OPEN;
-            }));
 
     std::shared_ptr<data_pipe> initial_notify_pipe_ =
             std::make_shared<data_pipe>(static_cast<data_pipe::external_message_checker_t>([this](someip_message const& _message) {

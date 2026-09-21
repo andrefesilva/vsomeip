@@ -9,17 +9,18 @@
 
 namespace vsomeip_v3::testing {
 
-someip_gate::someip_gate(hidden) { }
+someip_gate::someip_gate(hidden, std::string _name) : name_(_name.empty() ? default_name(this) : std::move(_name)) { }
 
-std::shared_ptr<someip_gate> someip_gate::create() {
-    auto ptr = std::make_shared<someip_gate>(hidden{});
+std::shared_ptr<someip_gate> someip_gate::create(std::string _name) {
+    auto ptr = std::make_shared<someip_gate>(hidden{}, std::move(_name));
     ptr->pipe_ = std::make_shared<data_pipe>(
             static_cast<data_pipe::external_message_checker_t>([weak_self = std::weak_ptr<someip_gate>(ptr)](auto const& _msg) {
                 if (auto self = weak_self.lock(); self) {
                     return (*self)(_msg);
                 }
                 return data_pipe_state::OPEN;
-            }));
+            }),
+            ptr->name_);
     return ptr;
 }
 

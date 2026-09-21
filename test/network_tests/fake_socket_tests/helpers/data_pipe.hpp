@@ -37,6 +37,10 @@ enum class data_pipe_state {
     CLOSED, ///< Incoming data is buffered and not forwarded.
 };
 
+/// Formats _addr the same way other "mem: " debug logs in this test harness do, for use as a
+/// default data_pipe/gate name when the caller doesn't supply one.
+std::string default_name(void const* _addr);
+
 /**
  * A thread-safe byte buffer that sits between a producer (fake socket's consume)
  * and a consumer (async_receive). An optional checker function inspects each
@@ -57,13 +61,14 @@ public:
     using open_reaction_t = std::function<void()>;
 
     /// Default constructor, checkers are nullptr and the pipe is OPEN, so all data will be forwarded as-is.
-    data_pipe() = default;
+    /// _name is used in debug logging; gates pass their own resolved name down, standalone pipes default to "unnamed".
+    explicit data_pipe(std::string _name = "unnamed");
 
     /// Local message checker constructor, used for command gates.
-    explicit data_pipe(local_message_checker_t _checker);
+    explicit data_pipe(local_message_checker_t _checker, std::string _name = "unnamed");
 
     /// External message checker constructor, used for someip gates.
-    explicit data_pipe(external_message_checker_t _external_checker);
+    explicit data_pipe(external_message_checker_t _external_checker, std::string _name = "unnamed");
 
     /**
      * Resets the pipe for reuse on a new socket:
@@ -106,6 +111,10 @@ public:
 
     /// Empties both queues.
     void clear();
+
+    /// Human-readable identifier used in debug logging (e.g. "<name> received N bytes while closed");
+    /// resolved once at construction, defaulting to this pipe's address if no name was given.
+    const std::string name_;
 
 private:
     void push_data(std::scoped_lock<std::mutex> const&);

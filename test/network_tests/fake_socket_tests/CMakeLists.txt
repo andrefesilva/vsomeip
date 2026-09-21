@@ -57,6 +57,7 @@ set (TEST_SUITES
     test_event_subscription_callback
     test_framework
     test_hybrid_mode
+    test_infrastructure
     test_queue_limit
     test_interface_manipulation_recreate
     test_multiversion_support

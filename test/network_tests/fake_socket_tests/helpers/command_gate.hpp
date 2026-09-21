@@ -38,10 +38,11 @@ class command_gate : public std::enable_shared_from_this<command_gate> {
     struct hidden { };
 
 public:
-    command_gate(hidden);
+    command_gate(hidden, std::string _name);
     /// Factory — must be used instead of direct construction so that the
-    /// internal weak_self reference is valid from the start.
-    static std::shared_ptr<command_gate> create();
+    /// internal weak_self reference is valid from the start. _name is optional and only used
+    /// for debug logging (e.g. the underlying data_pipe's "received N bytes while closed" log).
+    static std::shared_ptr<command_gate> create(std::string _name = {});
 
     /// Returns the underlying data_pipe to pass to setup_data_pipe.
     std::shared_ptr<data_pipe> get_data_pipe() const;
@@ -62,6 +63,7 @@ public:
 
 private:
     std::shared_ptr<data_pipe> pipe_;
+    const std::string name_;
     struct search {
         vsomeip_v3::protocol::id_e id_;
         uint32_t barrier_;
