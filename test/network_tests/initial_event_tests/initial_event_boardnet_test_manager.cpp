@@ -137,7 +137,7 @@ std::string host_executor{"../../../examples/routingmanagerd/routingmanagerd"};
 std::string slave_executor{"./initial_event_boardnet_test_slave_starter.sh"};
 
 TEST(someip_initial_boardnet_event_test, wait_for_initial_events_of_all_services) {
-    setenv("VSOMEIP_CONFIGURATION", "initial_event_boardnet_test_master.json", 0);
+    setenv("VSOMEIP_CONFIGURATION", "initial_event_boardnet_test_master.json", 1);
 
     // Start host
     process_manager host{host_executor, {}};

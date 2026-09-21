@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #ifndef _WIN32
 #include <unistd.h>
@@ -24,6 +25,8 @@
  *
  * This main contains ad-hoc setup that shall be done by all test executables. In short:
  * - setup temporary directory and set VSOMEIP_BASE_PATH
+ * - if VSOMEIP_CONFIGURATION is not set, point it at a generated logger configuration
+ *   (trace level, console output) so that test output is verbose by default
  * - setup timeout (by using `timeout_detector`)
  * - execute gtest
  *
@@ -37,11 +40,13 @@
  * @param _abort_on_failure whether or not to make gtest abort on failure (default: true)
  * @param _setup function that does setup before test execution
  * @param _tearDown function that does cleaning after test execution
+ * @param _default_logger_config whether to point VSOMEIP_CONFIGURATION at a generated trace-level
+ *        logger configuration when it is not already set (default: true)
  * @return ret code
  */
 [[nodiscard]] inline int test_main(int _argc, char** _argv, std::chrono::seconds _timeout = std::chrono::seconds(0),
                                    bool _abort_on_failure = true, std::function<void()> _setup = std::function<void()>(),
-                                   std::function<void()> _tearDown = std::function<void()>()) {
+                                   std::function<void()> _tearDown = std::function<void()>(), bool _default_logger_config = true) {
 
     // setup new directory
     // .. if the caller did not already
@@ -67,6 +72,19 @@
         }
 
         if (setenv("VSOMEIP_BASE_PATH", path.c_str(), 0)) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    // setup default logger configuration
+    // .. if the caller did not already provide a global configuration
+    if (const char* e = getenv("VSOMEIP_CONFIGURATION"); _default_logger_config && (e == nullptr || e[0] == '\0')) {
+        // The logger is a process-wide singleton that only reads the *global*
+        // configuration source (VSOMEIP_CONFIGURATION). Per-app
+        // VSOMEIP_CONFIGURATION_<name> files never reach it.
+        auto logger_config = std::filesystem::path{path} / "logger.json";
+        std::ofstream{logger_config} << R"({ "logging" : { "level" : "trace", "console" : "true", "version" : { "interval" : 0 } } })";
+        if (setenv("VSOMEIP_CONFIGURATION", logger_config.c_str(), 0)) {
             return EXIT_FAILURE;
         }
     }
@@ -118,10 +136,11 @@
  * @param _abort_on_failure whether or not to make gtest abort on failure
  * @param _setup function that does setup before test execution
  * @param _tearDown function that does cleaning after test execution
+ * @param _default_logger_config whether to generate a default logger configuration (see above)
  * @return ret code
  */
 inline int test_main(int _argc, char** _argv, bool _abort_on_failure, std::function<void()> _setup = std::function<void()>(),
-                     std::function<void()> _tearDown = std::function<void()>()) {
+                     std::function<void()> _tearDown = std::function<void()>(), bool _default_logger_config = true) {
 
-    return test_main(_argc, _argv, std::chrono::seconds(0), _abort_on_failure, _setup, _tearDown);
+    return test_main(_argc, _argv, std::chrono::seconds(0), _abort_on_failure, _setup, _tearDown, _default_logger_config);
 }
