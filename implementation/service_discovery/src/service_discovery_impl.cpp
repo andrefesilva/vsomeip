@@ -274,6 +274,7 @@ void service_discovery_impl::subscribe(service_t _service, instance_t _instance,
                 VSOMEIP_ERROR << "Subscriptions to different versions of the same service instance are not supported!";
             } else if (its_subscription->is_selective()) {
                 if (its_subscription->add_client(_client, subscription_state_e::ST_NOT_ACKNOWLEDGED)) {
+                    its_subscription->set_stop_subscribe_pending_since(std::chrono::steady_clock::now());
                     send_subscription(its_subscription, _service, _instance, _eventgroup, _client);
                 }
             }
@@ -682,9 +683,6 @@ bool service_discovery_impl::has_unreceived_field_value(const std::shared_ptr<su
     if (auto its_info = _subscription->get_eventgroupinfo().lock()) {
         for (const auto& its_event : its_info->get_events()) {
             if (its_event->is_field() && !its_event->is_set()) {
-                VSOMEIP_WARNING << "Initial value for field [" << hex4(its_event->get_service()) << "." << hex4(its_event->get_instance())
-                                << "." << hex4(its_info->get_eventgroup()) << "." << hex4(its_event->get_event())
-                                << "] not yet received, will StopSub/Sub in SD";
                 return true;
             }
         }
@@ -1428,23 +1426,44 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
                 get_subscription_endpoints(_service, _instance, its_subscription->get_major(), its_reliable, its_unreliable);
                 its_subscription->set_endpoint(its_reliable, true);
                 its_subscription->set_endpoint(its_unreliable, false);
+                const bool its_field_value_missing = has_unreceived_field_value(its_subscription);
+                std::vector<client_t> its_waiting_clients;
                 // NOTE: we're mutating the subscription state directly
                 for (auto& [its_client, its_state] : its_subscription->get_clients()) {
                     if (its_state == subscription_state_e::ST_ACKNOWLEDGED) {
-                        if (has_unreceived_field_value(its_subscription)) {
+                        if (its_field_value_missing) {
                             its_state = subscription_state_e::ST_RESUBSCRIBING_NOT_ACKNOWLEDGED;
+                            its_waiting_clients.push_back(its_client);
                         } else {
                             its_state = subscription_state_e::ST_RESUBSCRIBING;
                         }
-                    } else if (its_state != subscription_state_e::ST_ACKNOWLEDGED && was_previously_offered_by_unicast) {
+                    } else if (was_previously_offered_by_unicast) {
                         its_state = subscription_state_e::ST_RESUBSCRIBING;
                     } else {
-                        VSOMEIP_WARNING_P << "Pending SubAck for client " << hex4(its_client) << " for eventgroup "
-                                          << hex4(its_eventgroup_id) << ", " << service_address_str() << " will resubscribe due to Offer";
-
                         its_state = subscription_state_e::ST_RESUBSCRIBING_NOT_ACKNOWLEDGED;
+                        its_waiting_clients.push_back(its_client);
                     }
                 }
+
+                if (!its_waiting_clients.empty()) {
+                    const auto its_offer_received = std::chrono::steady_clock::now();
+                    const auto its_elapsed = its_offer_received - its_subscription->get_stop_subscribe_pending_since();
+                    if (its_elapsed >= cyclic_offer_delay_ / 2) {
+                        std::stringstream its_clients;
+                        for (const auto its_client : its_waiting_clients) {
+                            its_clients << " " << hex4(its_client);
+                        }
+                        VSOMEIP_WARNING_P << "Sending StopSubscribe/Subscribe for eventgroup [" << hex4(_service) << "." << hex4(_instance)
+                                          << "." << hex4(its_eventgroup_id) << "] due to missing "
+                                          << (its_field_value_missing ? "initial field value" : "SubscribeAck")
+                                          << ", clients:" << its_clients.str();
+                    } else {
+                        for (const auto its_client : its_waiting_clients) {
+                            its_subscription->get_clients().at(its_client) = subscription_state_e::ST_RESUBSCRIBING;
+                        }
+                    }
+                }
+
                 const reliability_type_e its_reliability =
                         get_eventgroup_reliability(_service, _instance, its_eventgroup_id, its_subscription);
 

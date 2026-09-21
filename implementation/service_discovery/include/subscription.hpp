@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -49,6 +50,15 @@ public:
     bool is_udp_connection_established() const;
     void set_udp_connection_established(bool _is_established);
 
+    // StopSubscribe/Subscribe grace period mechanism
+    // Record the time at which a subscription was sent
+    // to decide if a StopSubscribe/Subscribe should be sent
+    //
+    // Return the last time a subscription was sent
+    std::chrono::steady_clock::time_point get_stop_subscribe_pending_since() const;
+    // Stamp the time at which the subscription was sent
+    void set_stop_subscribe_pending_since(std::chrono::steady_clock::time_point _since);
+
     bool add_client(const client_t _client, subscription_state_e _state);
     bool remove_client(const client_t _client);
 
@@ -69,13 +79,15 @@ private:
     const major_version_t major_;
     const bool is_selective_;
 
-    ttl_t ttl_;
+    ttl_t ttl_{0};
 
     std::shared_ptr<boardnet_endpoint> reliable_;
     std::shared_ptr<boardnet_endpoint> unreliable_;
 
-    bool tcp_connection_established_;
-    bool udp_connection_established_;
+    bool tcp_connection_established_{false};
+    bool udp_connection_established_{false};
+
+    std::chrono::steady_clock::time_point stop_subscribe_pending_since_{std::chrono::steady_clock::now()};
 
     std::map<client_t, subscription_state_e> clients_; // client-> is acknowledged?
     std::weak_ptr<eventgroupinfo> eg_info_;
