@@ -50,7 +50,7 @@ void restart_routing_test_client::on_availability(vsomeip::service_t _service, v
             is_available_ = false;
         } else if (_is_available && !is_available_) {
             is_available_ = true;
-            condition_.notify_one();
+            condition_.notify_all();
         }
     }
 }
