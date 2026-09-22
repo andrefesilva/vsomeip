@@ -83,11 +83,6 @@ void udp_server_endpoint_impl::init_unlocked(const endpoint_type& _local, boost:
         unicast_socket_.reset();
     }
 
-    // reset sending flag for all targets
-    for (auto& [client, endpoint_type] : targets_) {
-        endpoint_type.is_sending_ = false;
-    }
-
     auto socket_factory = abstract_socket_factory::get();
     unicast_socket_ = socket_factory->create_udp_socket(io_);
     if (!unicast_socket_) {
@@ -223,9 +218,15 @@ void udp_server_endpoint_impl::restart(bool _force) {
 
     VSOMEIP_INFO_P << instance_name_ << "lifecycle_idx=" << lifecycle_idx_.load();
 
-    std::scoped_lock its_lock(sync_);
+    // `mutex_` guards the targets whose sending flags are reset below, `sync_` the socket;
+    std::scoped_lock its_lock(mutex_, sync_);
 
     stop_unlocked();
+
+    // reset sending flag for all targets
+    for (auto& [its_target, its_data] : targets_) {
+        its_data.is_sending_ = false;
+    }
 
     boost::system::error_code its_error;
     init_unlocked(local_, its_error);
