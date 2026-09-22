@@ -887,7 +887,8 @@ void routing_manager_stub::on_ping_timer_expired(boost::system::error_code const
                 // Trigger the error under the pinged_clients_mutex_, to ensure that a concurrent clean-up
                 // of the client is not racing with this timer.
                 if (auto ep = host_->get_endpoint_manager()->find_routing_endpoint(_entry.first); ep) {
-                    VSOMEIP_WARNING_P << "Triggering a client error for: " << hex4(_entry.first);
+                    VSOMEIP_WARNING << VSOMEIP_LOG_PREFIX << "::on_ping_timer_expired: Triggering a client error"
+                                    << "for: " << hex4(_entry.first);
                     ep->request_cleanup(true);
                 }
                 return true;

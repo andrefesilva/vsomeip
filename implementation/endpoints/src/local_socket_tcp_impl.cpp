@@ -137,7 +137,7 @@ void local_socket_tcp_impl::async_receive(boost::asio::mutable_buffer _buffer, r
                     // necessary, because local connections are TCP RST'd, and in order to guarantee no
                     // loss of data, there is (active!) waiting for TCP ACKs - which relies on speedy delivery of TCP ACKs
                     if (!self->socket_->set_quick_ack()) {
-                        VSOMEIP_WARNING_P << "Could not setsockopt(TCP_QUICKACK), errno " << errno;
+                        VSOMEIP_WARNING << VSOMEIP_LOG_PREFIX << "::async_receive: Could not setsockopt(TCP_QUICKACK), errno " << errno;
                     }
                 }
             }

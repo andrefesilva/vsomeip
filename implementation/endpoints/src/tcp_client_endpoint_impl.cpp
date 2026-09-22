@@ -62,8 +62,8 @@ void tcp_client_endpoint_impl::restart(bool _force) {
     auto self = std::dynamic_pointer_cast<tcp_client_endpoint_impl>(shared_from_this());
     auto restart_func = [self, _force] {
         if (self->sending_blocked_) {
-            VSOMEIP_INFO_P << "Not restarting stopped endpoint, remote: " << self->get_address_port_remote() << ", endpoint > "
-                           << self.get();
+            VSOMEIP_INFO << VSOMEIP_LOG_PREFIX << "::restart: Not restarting stopped endpoint, remote: " << self->get_address_port_remote()
+                         << ", endpoint > " << self.get();
             return;
         }
         if (!_force && self->state_ == cei_state_e::CONNECTING) {
@@ -95,15 +95,16 @@ void tcp_client_endpoint_impl::restart(bool _force) {
                 const method_t its_method = bithelper::read_uint16_be(&(*q.first)[VSOMEIP_METHOD_POS_MIN]);
                 const client_t its_client = bithelper::read_uint16_be(&(*q.first)[VSOMEIP_CLIENT_POS_MIN]);
                 const session_t its_session = bithelper::read_uint16_be(&(*q.first)[VSOMEIP_SESSION_POS_MIN]);
-                VSOMEIP_WARNING_P << "Dropping message: remote:" << self->get_address_port_remote() << " (" << hex4(its_client) << "): ["
-                                  << hex4(its_service) << "." << hex4(its_method) << "." << hex4(its_session)
-                                  << "]  size: " << q.first->size();
+                VSOMEIP_WARNING << VSOMEIP_LOG_PREFIX << "::restart: Dropping message: remote:" << self->get_address_port_remote() << " ("
+                                << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_method) << "." << hex4(its_session)
+                                << "]  size: " << q.first->size();
             }
             self->queue_.clear();
             self->queue_size_ = 0;
             self->is_sending_ = false;
         }
-        VSOMEIP_WARNING_P << "local: " << address_port_local << " remote: " << self->get_address_port_remote();
+        VSOMEIP_WARNING << VSOMEIP_LOG_PREFIX << "::restart: Restarted endpoint, local: " << address_port_local
+                        << " remote: " << self->get_address_port_remote();
         self->start_connect_timer();
     };
     // bind to strand_ to avoid socket closure if

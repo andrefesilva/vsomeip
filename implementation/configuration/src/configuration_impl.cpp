@@ -3341,8 +3341,8 @@ bool configuration_impl::find_specific_port(uint16_t& _port, service_t _service,
             if (_used_client_ports[_reliable].count(*it) == 0) {
                 _port = *it;
                 last_used_port = *it;
-                VSOMEIP_INFO_P << "service/instance: [" << hex4(_service) << "." << hex4(_instance) << "] reliable: " << _reliable
-                               << " return specific port: " << static_cast<uint32_t>(_port);
+                VSOMEIP_INFO << VSOMEIP_LOG_PREFIX << "::find_specific_port: service/instance: [" << hex4(_service) << "."
+                             << hex4(_instance) << "] reliable: " << _reliable << " return specific port: " << static_cast<uint32_t>(_port);
                 return true;
             }
         }

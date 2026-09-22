@@ -104,7 +104,7 @@ void local_endpoint::start(uint32_t _lc_token) {
                 std::unique_lock inner_lock{mutex_};
                 // ensure that we weren't stopped in between
                 if (state_ != state_e::CONNECTED) {
-                    VSOMEIP_INFO_P << "post: Not starting to process due to state: " << status_unlock();
+                    VSOMEIP_INFO << VSOMEIP_LOG_PREFIX << "::start(post): Not starting to process due to state: " << status_unlock();
                     return;
                 }
                 if (!process(0, inner_lock)) {
