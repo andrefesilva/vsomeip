@@ -65,7 +65,7 @@ void data_pipe::add_data(std::vector<unsigned char> _data) {
     control_data_t data{.buffer_ = std::move(_data), .addresses_ = std::nullopt};
     input_data_.push_back(std::move(data));
     if (state_ == data_pipe_state::CLOSED) {
-        TEST_LOG << "[data_pipe] " << name_ << " received " << byte_count << " bytes while being closed";
+        TEST_LOG << "[data_pipe][" << name_ << "] received " << byte_count << " bytes while being closed";
         return;
     }
     push_data(lock);
@@ -118,7 +118,7 @@ void data_pipe::set_state(data_pipe_state _input) {
         std::scoped_lock lock{mtx_};
         state_ = _input;
         if (state_ == data_pipe_state::OPEN && open_reaction_) {
-            TEST_LOG << "[data_pipe] " << name_ << " is now OPEN";
+            TEST_LOG << "[data_pipe][" << name_ << "] is now OPEN";
             push_data(lock);
             react = open_reaction_;
         }
@@ -149,7 +149,7 @@ void data_pipe::push_checked_data(std::scoped_lock<std::mutex> const&) {
                 msg_size = parse(input_data_[segment_offset].buffer_.data() + local_offset,
                                  input_data_[segment_offset].buffer_.size() - local_offset, msg);
                 if (msg_size == 0) {
-                    TEST_LOG << "[data_pipe] " << name_ << " ERROR Can not parse vsomeip command";
+                    TEST_LOG << "[data_pipe][" << name_ << "] ERROR Can not parse vsomeip command";
                     continue;
                 }
                 state_ = checker_(msg);
@@ -158,19 +158,19 @@ void data_pipe::push_checked_data(std::scoped_lock<std::mutex> const&) {
                 msg_size = parse_sequential_someip(input_data_[segment_offset].buffer_.data() + local_offset,
                                                    input_data_[segment_offset].buffer_.size() - local_offset, msg);
                 if (msg_size == 0) {
-                    TEST_LOG << "[data_pipe] " << name_ << " ERROR Can not parse someip message, removing remaining data in segment";
+                    TEST_LOG << "[data_pipe][" << name_ << "] ERROR Can not parse someip message, removing remaining data in segment";
                     input_data_[segment_offset].buffer_.erase(input_data_[segment_offset].buffer_.begin()
                                                                       + static_cast<std::ptrdiff_t>(local_offset),
                                                               input_data_[segment_offset].buffer_.end());
                     continue;
                 }
                 state_ = external_checker_(msg);
-                TEST_LOG << "[data_pipe] " << name_ << " external checker returned state: " << static_cast<int>(state_)
+                TEST_LOG << "[data_pipe][" << name_ << "] external checker returned state: " << static_cast<int>(state_)
                          << ", parsed message: " << msg;
             }
 
             if (state_ == data_pipe_state::CLOSED) {
-                TEST_LOG << "[data_pipe] " << name_ << " is now CLOSED";
+                TEST_LOG << "[data_pipe][" << name_ << "] is now CLOSED";
                 closed = true;
                 break;
             }

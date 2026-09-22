@@ -1897,7 +1897,6 @@ TEST_F(interface_manipulation, routing_apps_offer_and_subscribe) {
 }
 
 TEST_F(interface_manipulation, interface_down_after_successful_subscription) {
-    GTEST_SKIP() << "Fix after using default sd configuration";
     /*
      * Check that if the network interface goes down after successful
      * subscriptions, everything recovers once it goes up again

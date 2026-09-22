@@ -9,6 +9,9 @@
 
 namespace vsomeip_v3::testing {
 
+char const* to_string(gate_state _state) {
+    return _state == gate_state::BLOCKED ? "BLOCKED" : "UNBLOCKED";
+}
 someip_gate::someip_gate(hidden, std::string _name) : name_(_name.empty() ? default_name(this) : std::move(_name)) { }
 
 std::shared_ptr<someip_gate> someip_gate::create(std::string _name) {
@@ -64,7 +67,7 @@ data_pipe_state someip_gate::operator()(someip_message const& _msg) {
         }
 
         if (matched && ++search_->count_ >= search_->barrier_) {
-            state_ = gate_state::BLOCKED;
+            set_state(gate_state::BLOCKED);
             cv_.notify_all();
             return data_pipe_state::CLOSED;
         }
@@ -96,7 +99,7 @@ void someip_gate::block_at(trigger _trigger, uint32_t _count) {
         TEST_LOG << "[someip_gate] Setup gate to block when seeing " << "service=0x" << std::hex << _trigger.service_ << " method=0x"
                  << _trigger.method_ << " for the " << std::dec << _count << " time, on gate mem: " << pipe_.get();
         search_ = {std::move(_trigger), _count, 0};
-        state_ = gate_state::UNBLOCKED;
+        set_state(gate_state::UNBLOCKED);
         pipe = pipe_;
     }
     // careful not to call this under the lock, as it will re-invoke the call operator
@@ -110,7 +113,7 @@ void someip_gate::block_at(sd_trigger _trigger, uint32_t _count) {
         TEST_LOG << "[someip_gate/sd] Setup gate to block when seeing " << to_string(_trigger.id_) << ":" << _trigger.ttl_ << " for the "
                  << _count << " time, on gate mem: " << pipe_.get();
         search_ = {std::move(_trigger), _count, 0};
-        state_ = gate_state::UNBLOCKED;
+        set_state(gate_state::UNBLOCKED);
         pipe = pipe_;
     }
     // careful not to call this under the lock, as it will re-invoke the call operator
@@ -124,7 +127,7 @@ void someip_gate::block_at(sd_predicate _predicate, uint32_t _count) {
         TEST_LOG << "[someip_gate/sd] Setup gate to block when a SD message matches the given predicate, for the " << _count
                  << " time, on gate mem: " << pipe_.get();
         search_ = {std::move(_predicate), _count, 0};
-        state_ = gate_state::UNBLOCKED;
+        set_state(gate_state::UNBLOCKED);
         pipe = pipe_;
     }
     // careful not to call this under the lock, as it will re-invoke the call operator
@@ -137,9 +140,9 @@ void someip_gate::block(bool _block) {
         std::scoped_lock lock{mtx_};
         search_ = std::nullopt;
         if (_block) {
-            state_ = gate_state::BLOCKED;
+            set_state(gate_state::BLOCKED);
         } else {
-            state_ = gate_state::UNBLOCKED;
+            set_state(gate_state::UNBLOCKED);
             pipe = pipe_;
         }
     }
@@ -154,6 +157,13 @@ bool someip_gate::wait_for_blocked(std::chrono::milliseconds _timeout) const {
         return true;
     }
     return cv_.wait_for(lock, _timeout, [this] { return state_ == gate_state::BLOCKED; });
+}
+
+void someip_gate::set_state(gate_state _state) {
+    if (_state != state_) {
+        TEST_LOG << "[someip_gate][" << name_ << "] changing state from: " << to_string(state_) << " into: " << to_string(_state);
+        state_ = _state;
+    }
 }
 
 } // namespace vsomeip_v3::testing

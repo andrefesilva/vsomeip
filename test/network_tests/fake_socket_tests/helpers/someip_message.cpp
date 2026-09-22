@@ -160,7 +160,7 @@ std::ostream& operator<<(std::ostream& _out, someip_message const& _m) {
              << ", is_initial: " << std::boolalpha << _m.msg_->is_initial() << ", payload: " << to_string(*(_m.msg_->get_payload())) << "}";
     } else if (_m.sd_) {
 
-        _out << "sd-message: { entries: " << to_string(_m.sd_->get_entries()) << "}";
+        _out << "sd-message: { session: " << _m.sd_->get_session() << ", entries: " << to_string(_m.sd_->get_entries()) << "}";
 
     } else {
         _out << "ERROR, no valid message";

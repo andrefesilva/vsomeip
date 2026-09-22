@@ -170,7 +170,6 @@ struct test_concurrent_registration : base_fake_socket_fixture {
 };
 
 TEST_F(test_client_lifecycle, router_consumes_field_before_service_tries_to_offer_field_is_updated_before_registration) {
-    GTEST_SKIP() << "Provokes a race in application_impl regarding the usage of sec_client_";
 
     start_router();
     routingmanagerd_->request_service(service_instance_);
@@ -186,7 +185,6 @@ TEST_F(test_client_lifecycle, router_consumes_field_before_service_tries_to_offe
     EXPECT_TRUE(routingmanagerd_->message_record_.wait_for(field_checker_));
 }
 TEST_F(test_client_lifecycle, router_consumes_field_before_service_tries_to_offer_field_is_updated_after_registration) {
-    GTEST_SKIP() << "Provokes a race in application_impl regarding the usage of sec_client_";
 
     start_router();
     routingmanagerd_->request_service(service_instance_);
@@ -201,7 +199,6 @@ TEST_F(test_client_lifecycle, router_consumes_field_before_service_tries_to_offe
     EXPECT_TRUE(routingmanagerd_->message_record_.wait_for(field_checker_));
 }
 TEST_F(test_client_lifecycle, router_consumes_field_after_service_tries_to_offer_before_registration) {
-    GTEST_SKIP() << "Provokes a race in application_impl regarding the usage of sec_client_";
 
     server_ = start_client(server_name_);
     ASSERT_NE(server_, nullptr);
