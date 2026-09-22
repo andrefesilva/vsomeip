@@ -41,12 +41,12 @@ void local_acceptor_uds_impl::init(boost::system::error_code& _ec, std::optional
     }
 
     auto close = [this](char const* _method, boost::system::error_code const& _error_code) {
-        VSOMEIP_ERROR_P << "Error encountered when calling: " << _method << ". Error: " << _error_code.message()
-                        << ", for socket: " << own_endpoint_.path() << ", mem: " << this;
+        VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::init: Error encountered when calling: " << _method << ". Error: " << _error_code.message()
+                      << ", for socket: " << own_endpoint_.path() << ", mem: " << this;
         boost::system::error_code ec;
         acceptor_->close(ec);
         if (ec) {
-            VSOMEIP_ERROR_P << "Could not close socket for " << own_endpoint_.path() << ", mem: " << this;
+            VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::init: Could not close socket for " << own_endpoint_.path() << ", mem: " << this;
         }
     };
     acceptor_->set_reuse_address(_ec);

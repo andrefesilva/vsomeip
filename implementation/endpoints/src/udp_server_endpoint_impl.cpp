@@ -315,8 +315,9 @@ void udp_server_endpoint_impl::receive_unicast_unlocked(std::shared_ptr<message_
                     }
 
                     if (!repeat) {
-                        VSOMEIP_WARNING_P << self->instance_name_ << "Stop unicast data handler, lifecycle_idx=" << lifecycle_idx << " vs "
-                                          << self->lifecycle_idx_.load() << ", " << _error.message() << ", stopped=" << self->is_stopped_;
+                        VSOMEIP_WARNING << VSOMEIP_LOG_PREFIX << "::receive_unicast_unlocked: " << self->instance_name_
+                                        << "Stop unicast data handler, lifecycle_idx=" << lifecycle_idx << " vs "
+                                        << self->lifecycle_idx_.load() << ", " << _error.message() << ", stopped=" << self->is_stopped_;
                     }
                 });
     } else {
@@ -358,10 +359,10 @@ void udp_server_endpoint_impl::receive_multicast_unlocked(std::shared_ptr<messag
                     }
 
                     if (!repeat) {
-                        VSOMEIP_WARNING_P << self->instance_name_
-                                          << "Stop multicast data handler, multicast_lifecycle_idx=" << lifecycle_idx << " vs "
-                                          << self->multicast_lifecycle_idx_.load() << ", " << _error.message()
-                                          << ", stopped=" << self->is_stopped_;
+                        VSOMEIP_WARNING << VSOMEIP_LOG_PREFIX << "::receive_multicast_unlocked: " << self->instance_name_
+                                        << "Stop multicast data handler, multicast_lifecycle_idx=" << lifecycle_idx << " vs "
+                                        << self->multicast_lifecycle_idx_.load() << ", " << _error.message()
+                                        << ", stopped=" << self->is_stopped_;
                     }
                 });
     } else {

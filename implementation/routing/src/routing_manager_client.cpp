@@ -1249,11 +1249,12 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                                 state_machine_->client(),
                                                 {.service_ = its_service, .instance_ = its_instance, .major_ = its_major}, its_eventgroup,
                                                 its_pending_id))) {
-                                        VSOMEIP_ERROR_P << "Failed to send UNSUBSCRIBE_ACK for [" << hex4(its_service) << "."
-                                                        << hex4(its_instance) << "." << hex4(its_eventgroup) << "]";
+                                        VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::on_message(UNSUBSCRIBE): Failed to send UNSUBSCRIBE_ACK"
+                                                      << " for [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                                                      << hex4(its_eventgroup) << "]";
                                     }
                                 } else {
-                                    VSOMEIP_ERROR_P << "Failed due to a missing sender";
+                                    VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::on_message(UNSUBSCRIBE): Failed due to a missing sender";
                                 }
                             }
                             VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
@@ -3145,8 +3146,9 @@ void routing_manager_client::notify_one_current_value(client_t _client, service_
             if (auto msg = event->get_current(); msg) {
                 msg->set_session(get_event_session());
                 if (!its_target->send(protocol::create_send_cmd(protocol::id_e::SEND_ID, its_own_client, msg, _client), tc_)) {
-                    VSOMEIP_ERROR_P << "Failed to send the current value to client 0x" << hex4(_client) << " for [" << hex4(_service) << "."
-                                    << hex4(_instance) << "." << hex4(event->get_event()) << "]";
+                    VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::notify_one_current_value: Failed to send the current value to client 0x"
+                                  << hex4(_client) << " for [" << hex4(_service) << "." << hex4(_instance) << "."
+                                  << hex4(event->get_event()) << "]";
                 }
             }
         };

@@ -443,7 +443,8 @@ void tcp_server_endpoint_impl::accept_cbk(connection::ptr _connection, std::shar
             if (!_error_inner) {
                 its_ep->start();
             } else {
-                VSOMEIP_ERROR_P << its_ep->instance_name_ << "Recovery error, " << _error_inner.message();
+                VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::accept_cbk(recovery timer): " << its_ep->instance_name_ << "Recovery error, "
+                              << _error_inner.message();
             }
         });
     }

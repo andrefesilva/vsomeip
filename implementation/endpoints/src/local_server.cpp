@@ -142,7 +142,8 @@ void local_server::accept_cbk(boost::system::error_code const& _ec, std::shared_
         }
         if (_ec == boost::asio::error::bad_descriptor) {
             auto log_problem = [mem = this] {
-                VSOMEIP_FATAL_P << "async_accept: Bad descriptors can not be dealt with. Lingering in a very bad state, self: " << mem;
+                VSOMEIP_FATAL << VSOMEIP_LOG_PREFIX << "::accept_cbk: async_accept: Bad descriptors can not be dealt with. "
+                              << "Lingering in a very bad state, self: " << mem;
                 return true;
             };
             log_problem();
@@ -158,11 +159,12 @@ void local_server::accept_cbk(boost::system::error_code const& _ec, std::shared_
                     if (auto self = weak_self.lock(); self) {
                         std::scoped_lock const inner_lock{self->mtx_};
                         if (_lc == self->lc_count_) {
-                            VSOMEIP_INFO_P << "Retrying to accept connections, after debounce, self: " << self.get();
+                            VSOMEIP_INFO << VSOMEIP_LOG_PREFIX << "::accept_cbk(debounce): Retrying to accept connections"
+                                         << ", self: " << self.get();
                             self->start_unlock(_lc);
                         } else {
-                            VSOMEIP_WARNING_P << "Stopping current retry from the lifecycle: " << _lc << ", current lc: " << self->lc_count_
-                                              << ", self: " << self.get();
+                            VSOMEIP_WARNING << VSOMEIP_LOG_PREFIX << "::accept_cbk(debounce): Stopping current retry from lifecycle:" << _lc
+                                            << ", current lc: " << self->lc_count_ << ", self: " << self.get();
                         }
                     }
                     return false;
