@@ -1495,8 +1495,10 @@ TEST_F(length_field_too_big, length_field_too_big_tcp) {
     inject_message_tcp("router_one", "router_two", bad_request_payload);
 
     // will go AVAILABLE -> UNAVAILABLE -> AVAILABLE due to connection restart
-    ASSERT_TRUE(router_one_->availability_record_.wait_for_last(service_availability::unavailable(interface_tcp_.instance_)));
-    ASSERT_TRUE(router_one_->availability_record_.wait_for_last(service_availability::available(interface_tcp_.instance_)));
+    ASSERT_TRUE(router_one_->availability_record_.wait_for_sequence({service_availability::available(interface_tcp_.instance_),
+                                                                     service_availability::unavailable(interface_tcp_.instance_),
+                                                                     service_availability::available(interface_tcp_.instance_)}))
+            << router_one_->availability_record_.to_string();
     ASSERT_FALSE(router_one_->message_record_.wait_for_last(expected_reply_tcp_, std::chrono::milliseconds(500)))
             << router_one_->message_record_.to_string();
 
