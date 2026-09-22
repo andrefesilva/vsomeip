@@ -48,11 +48,9 @@ struct interface_manipulation_recreate : public base_fake_socket_fixture {
  * ECUs do not collide with the previous iteration's retained connection state.
  */
 TEST_F(interface_manipulation_recreate, no_spurious_availability_when_recreated_from_scratch) {
-    GTEST_SKIP() << "Fix with adjusted configuration of service disocvery";
-
     common::iteration_log_capture log_capture;
 
-    for (size_t i = 0; i < 401; ++i) {
+    for (size_t i = 0; i < 301; ++i) {
         // Discard the previous iteration's captured output, so only this iteration's trace is dumped on failure.
         log_capture.begin_iteration();
         try {

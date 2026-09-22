@@ -340,17 +340,18 @@ TEST_F(remote_offer_endpoint_change, second_offer_removes_endpoint_) {
 //  Test steps:
 //  1. Start the client and wait for the request to be sent
 //  2. Start the provider ECU by offering the service via udp,
-//     expect the service to became available
+//     expect the service to become available
 //  3. Stop the sending of SD messages from the service provider
 //  4. Send a fake offer to the client with a new udp endpoint on a different port
 //  5. Expect the service to first became unavailable and then available
 //     and that the client does not send requests to the old port
 
 TEST_F(remote_offer_endpoint_change, second_offer_changes_endpoint_port) {
-    GTEST_SKIP() << "Fix with adjusted configuration of service disocvery";
     // 1.
+    client_ecu_.config().service_discovery_.repetitions_max_ = 0; // ensure no subsequent FIND_SERVICE request is answered via unicast
     auto* client = start_client_and_request();
     ASSERT_TRUE(wait_for_client_request()) << "Client did not send the service request";
+    // no further FIND_SERVICE requests are expected
 
     // 2.
     start_provider(udp_a_, 0);
@@ -361,11 +362,14 @@ TEST_F(remote_offer_endpoint_change, second_offer_changes_endpoint_port) {
 
     // 3.
     block_provider_sd();
+    TEST_LOG << "provider is blocked";
 
     // 4.
     auto const provider_ip = boardnet::ecu_two_config.unicast_ip_;
     auto second_offer = make_offer(provider_ip, service_, {{udp_b_, false}}, 0x0002);
+    TEST_LOG << "sending fake offer";
     send_someip_sd_message(second_offer, boost::asio::ip::udp::endpoint{provider_ip, 30490}, client_ecu_.sd_endpoint());
+    TEST_LOG << "fake offer send";
 
     // 5.
     ASSERT_TRUE(client->availability_record_.wait_for_any(service_availability::unavailable(service_)))

@@ -123,6 +123,7 @@ public:
     attribute_recorder<someip_sd_record_message> sd_record_;
 
 private:
+    void set_state(gate_state _state);
     std::shared_ptr<data_pipe> pipe_;
     const std::string name_;
 
