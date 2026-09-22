@@ -2117,7 +2117,6 @@ TEST_F(test_multiversion_support_aggregate_offering, v1_is_reoffered_after_resum
     EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
 }
 TEST_F(test_multiversion_support_aggregate_offering, v2_is_reoffered_after_resume_race) {
-    GTEST_SKIP() << "this test is triggering a race in the server_endpoint_impl";
     std::shared_ptr<command_gate> client_gate = command_gate::create();
     ASSERT_TRUE(setup_data_pipe(provider_v2_name_, provider_ecu_.router_name_, socket_role::server, client_gate->get_data_pipe()));
 
