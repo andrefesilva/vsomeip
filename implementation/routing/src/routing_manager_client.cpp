@@ -870,633 +870,591 @@ void routing_manager_client::unsubscribe(client_t _client, service_t _service, i
 
 void routing_manager_client::on_message(const byte_t* _data, length_t _size, const local_client_data& _peer_data) {
     protocol::command_header its_header{};
-    if (uint32_t parsed_hdr_bytes = protocol::deserialize(its_header, _data, _size); parsed_hdr_bytes) {
-        protocol::id_e its_id = its_header.id_;
-        client_t const its_client = its_header.client_;
+    uint32_t parsed_hdr_bytes = protocol::deserialize(its_header, _data, _size);
+    if (parsed_hdr_bytes == 0) {
+        VSOMEIP_ERROR_P << "Failed to deserialize command header, memory: " << utility::dump(_data, _size);
+        return;
+    }
 
-        bool is_from_routing = (_peer_data.id_ == VSOMEIP_ROUTING_CLIENT);
+    protocol::id_e its_id = its_header.id_;
+    client_t const its_client = its_header.client_;
 
-        if (!is_from_routing && _peer_data.id_ != its_client) {
-            VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a message with command " << its_id << " from "
-                            << hex4(its_client) << " which doesn't match the bound client " << hex4(_peer_data.id_) << " ~> skip message!";
-            return;
-        }
+    bool is_from_routing = (_peer_data.id_ == VSOMEIP_ROUTING_CLIENT);
+    if (!is_from_routing && _peer_data.id_ != its_client) {
+        VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a message with command " << its_id << " from "
+                        << hex4(its_client) << " which doesn't match the bound client " << hex4(_peer_data.id_) << " ~> skip message!";
+        return;
+    }
 
-#ifndef VSOMEIP_DISABLE_SECURITY
-        bool is_internal_policy_update = false;
-#endif
-        switch (its_id) {
-        case protocol::id_e::SEND_ID: {
-            if (std::shared_ptr<message_impl> its_message;
-                protocol::deserialize(its_message, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                its_message->set_sec_client(_peer_data.sec_client_);
-                its_message->set_env(_peer_data.env_);
+    // commands expected from any client (routing or not)
+    switch (its_id) {
+    case protocol::id_e::SEND_ID: {
+        if (std::shared_ptr<message_impl> its_message;
+            protocol::deserialize(its_message, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            its_message->set_sec_client(_peer_data.sec_client_);
+            its_message->set_env(_peer_data.env_);
 
-                bool has_active_subscription{true};
+            bool has_active_subscription{true};
 
-                if (!is_from_routing) {
-                    if (utility::is_request(its_message->get_message_type())) {
-                        // NOTE: its_header.client_ and message::get_client are different fields, the extra check is needed
-                        if (its_message->get_client() != _peer_data.id_) {
-                            VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client()) << " received a request from client 0x"
-                                          << hex4(its_message->get_client()) << " to service/instance/method "
-                                          << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                          << hex4(its_message->get_method()) << " which doesn't match the bound client 0x"
-                                          << hex4(_peer_data.id_) << " ~> skip message!";
-                            return;
-                        }
-
-                        if (VSOMEIP_SEC_OK
-                            != get_security()->is_client_allowed_to_access_member(&_peer_data.sec_client_, its_message->get_service(),
-                                                                                  its_message->get_instance(), its_message->get_method())) {
-                            VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
-                                          << " : routing_manager_client::on_message: " << hex4(its_message->get_client())
-                                          << " isn't allowed to send a request to service/instance/method "
-                                          << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                          << hex4(its_message->get_method()) << " ~> Skip message!";
-                            return;
-                        }
-                    } else { // Notification or Response
-                        // TODO for external security ports are checked.
-                        // Notification and responses were originally send out by the "sender".
-                        // With the refactoring towards client-server we have to temporarily "lie"
-                        // to security about the port we received the message from...
-                        auto sec_client = _peer_data.sec_client_;
-
-                        // If port is VSOMEIP_SEC_PORT_UNUSED (0) the connection is over UDS.
-                        // Subtracting 1 from 0 would wrap around to VSOMEIP_SEC_PORT_UNSET
-                        // (0xFFFF) which is not a valid registered port
-                        if (ntohs(_peer_data.sec_client_.port) != VSOMEIP_SEC_PORT_UNUSED) {
-                            sec_client.port = htons(ntohs(_peer_data.sec_client_.port) - 1);
-                        }
-
-                        // Verifies security offer rule for messages (notifications and
-                        // responses).
-                        if (bool is_offer_access_ok = (VSOMEIP_SEC_OK
-                                                       == get_security()->is_client_allowed_to_offer(
-                                                               &sec_client, its_message->get_service(), its_message->get_instance()));
-                            !is_offer_access_ok) {
-                            VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                          << " : routing_manager_client::on_message: received a "
-                                          << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
-                                          << " from client 0x" << hex4(_peer_data.id_) << " which does not offer service/instance/method "
-                                          << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                          << hex4(its_message->get_method()) << " ~> Skip message!";
-                            return;
-                        }
-
-                        const bool is_notification = utility::is_notification(its_message->get_message_type());
-
-                        if (is_notification) {
-                            auto const my_sec_client = get_sec_client();
-                            const bool is_access_member_ok = (VSOMEIP_SEC_OK
-                                                              == get_security()->is_client_allowed_to_access_member(
-                                                                      &my_sec_client, its_message->get_service(),
-                                                                      its_message->get_instance(), its_message->get_method()));
-
-                            if (!is_access_member_ok) {
-                                VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
-                                              << " : routing_manager_client::on_message: " << hex4(get_client())
-                                              << " : routing_manager_client::on_message: isn't allowed to receive a "
-                                              << " notification from service/instance/method " << hex4(its_message->get_service()) << "/"
-                                              << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
-                                              << " respectively from client 0x" << hex4(_peer_data.id_) << " ~> Skip message!";
-                                return;
-                            }
-                            has_active_subscription = cache_event_payload(its_message);
-                        }
-                    }
-                } else {
-                    if (!configuration_->is_remote_access_allowed()) {
-                        // if the message is from routing manager, check if
-                        // policy allows remote requests.
-                        VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                      << " : routing_manager_client::on_message: Security: Remote clients via routing manager with "
-                                      << "client ID 0x" << hex4(its_client)
-                                      << " are not allowed to communicate with service/instance/method " << hex4(its_message->get_service())
-                                      << "/" << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
-                                      << " respectively with client 0x" << hex4(get_client()) << " ~> Skip message!";
+            if (!is_from_routing) {
+                if (utility::is_request(its_message->get_message_type())) {
+                    // NOTE: its_header.client_ and message::get_client are different fields, the extra check is needed
+                    if (its_message->get_client() != _peer_data.id_) {
+                        VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client()) << " received a request from client 0x"
+                                      << hex4(its_message->get_client()) << " to service/instance/method "
+                                      << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                      << hex4(its_message->get_method()) << " which doesn't match the bound client 0x"
+                                      << hex4(_peer_data.id_) << " ~> skip message!";
                         return;
-                    } else if (utility::is_notification(its_message->get_message_type())) {
-                        // As subscription is sent on eventgroup level, incoming remote event
-                        // ID's need to be checked as well if remote clients are allowed and the
-                        // local policy only allows specific events in the eventgroup to be
-                        // received.
+                    }
 
-                        if (auto const my_sec_client = get_sec_client(); VSOMEIP_SEC_OK
-                            != get_security()->is_client_allowed_to_access_member(&my_sec_client, its_message->get_service(),
-                                                                                  its_message->get_instance(), its_message->get_method())) {
-                            VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client())
-                                          << " : routing_manager_client::on_message: "
-                                          << " isn't allowed to receive a notification from service/instance/event "
-                                          << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
-                                          << hex4(its_message->get_method()) << " ~> Skip message!";
+                    if (VSOMEIP_SEC_OK
+                        != get_security()->is_client_allowed_to_access_member(&_peer_data.sec_client_, its_message->get_service(),
+                                                                              its_message->get_instance(), its_message->get_method())) {
+                        VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
+                                      << " : routing_manager_client::on_message: " << hex4(its_message->get_client())
+                                      << " isn't allowed to send a request to service/instance/method " << hex4(its_message->get_service())
+                                      << "/" << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
+                                      << " ~> Skip message!";
+                        return;
+                    }
+                } else { // Notification or Response
+                    // TODO for external security ports are checked.
+                    // Notification and responses were originally send out by the "sender".
+                    // With the refactoring towards client-server we have to temporarily "lie"
+                    // to security about the port we received the message from...
+                    auto sec_client = _peer_data.sec_client_;
+
+                    // If port is VSOMEIP_SEC_PORT_UNUSED (0) the connection is over UDS.
+                    // Subtracting 1 from 0 would wrap around to VSOMEIP_SEC_PORT_UNSET
+                    // (0xFFFF) which is not a valid registered port
+                    if (ntohs(_peer_data.sec_client_.port) != VSOMEIP_SEC_PORT_UNUSED) {
+                        sec_client.port = htons(ntohs(_peer_data.sec_client_.port) - 1);
+                    }
+
+                    // Verifies security offer rule for messages (notifications and
+                    // responses).
+                    if (bool is_offer_access_ok = (VSOMEIP_SEC_OK
+                                                   == get_security()->is_client_allowed_to_offer(&sec_client, its_message->get_service(),
+                                                                                                 its_message->get_instance()));
+                        !is_offer_access_ok) {
+                        VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client())
+                                      << " : routing_manager_client::on_message: received a "
+                                      << (utility::is_notification(its_message->get_message_type()) ? "notification" : "response")
+                                      << " from client 0x" << hex4(_peer_data.id_) << " which does not offer service/instance/method "
+                                      << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                      << hex4(its_message->get_method()) << " ~> Skip message!";
+                        return;
+                    }
+
+                    const bool is_notification = utility::is_notification(its_message->get_message_type());
+
+                    if (is_notification) {
+                        auto const my_sec_client = get_sec_client();
+                        const bool is_access_member_ok = (VSOMEIP_SEC_OK
+                                                          == get_security()->is_client_allowed_to_access_member(
+                                                                  &my_sec_client, its_message->get_service(), its_message->get_instance(),
+                                                                  its_message->get_method()));
+
+                        if (!is_access_member_ok) {
+                            VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_message->get_client())
+                                          << " : routing_manager_client::on_message: " << hex4(get_client())
+                                          << " : routing_manager_client::on_message: isn't allowed to receive a "
+                                          << " notification from service/instance/method " << hex4(its_message->get_service()) << "/"
+                                          << hex4(its_message->get_instance()) << "/" << hex4(its_message->get_method())
+                                          << " respectively from client 0x" << hex4(_peer_data.id_) << " ~> Skip message!";
                             return;
                         }
                         has_active_subscription = cache_event_payload(its_message);
                     }
                 }
+            } else {
+                if (!configuration_->is_remote_access_allowed()) {
+                    // if the message is from routing manager, check if
+                    // policy allows remote requests.
+                    VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client())
+                                  << " : routing_manager_client::on_message: Security: Remote clients via routing manager with "
+                                  << "client ID 0x" << hex4(its_client) << " are not allowed to communicate with service/instance/method "
+                                  << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                  << hex4(its_message->get_method()) << " respectively with client 0x" << hex4(get_client())
+                                  << " ~> Skip message!";
+                    return;
+                } else if (utility::is_notification(its_message->get_message_type())) {
+                    // As subscription is sent on eventgroup level, incoming remote event
+                    // ID's need to be checked as well if remote clients are allowed and the
+                    // local policy only allows specific events in the eventgroup to be
+                    // received.
 
-                if (client_side_logging_
-                    && (client_side_logging_filter_.empty()
-                        || (1 == client_side_logging_filter_.count(std::make_tuple(its_message->get_service(), ANY_INSTANCE)))
-                        || (1
-                            == client_side_logging_filter_.count(
-                                    std::make_tuple(its_message->get_service(), its_message->get_instance()))))) {
-                    trace::header its_header;
-                    if (its_header.prepare(nullptr, false, its_message->get_instance(), trace::protocol_e::unknown)) {
-                        uint32_t offset = parsed_hdr_bytes + protocol::ipc_message_header::wire_size_;
-                        if (offset < _size) {
-                            tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data + offset, _size - offset);
-                        }
+                    if (auto const my_sec_client = get_sec_client(); VSOMEIP_SEC_OK
+                        != get_security()->is_client_allowed_to_access_member(&my_sec_client, its_message->get_service(),
+                                                                              its_message->get_instance(), its_message->get_method())) {
+                        VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(get_client()) << " : routing_manager_client::on_message: "
+                                      << " isn't allowed to receive a notification from service/instance/event "
+                                      << hex4(its_message->get_service()) << "/" << hex4(its_message->get_instance()) << "/"
+                                      << hex4(its_message->get_method()) << " ~> Skip message!";
+                        return;
+                    }
+                    has_active_subscription = cache_event_payload(its_message);
+                }
+            }
+
+            if (client_side_logging_
+                && (client_side_logging_filter_.empty()
+                    || (1 == client_side_logging_filter_.count(std::make_tuple(its_message->get_service(), ANY_INSTANCE)))
+                    || (1
+                        == client_side_logging_filter_.count(std::make_tuple(its_message->get_service(), its_message->get_instance()))))) {
+                trace::header its_header;
+                if (its_header.prepare(nullptr, false, its_message->get_instance(), trace::protocol_e::unknown)) {
+                    uint32_t offset = parsed_hdr_bytes + protocol::ipc_message_header::wire_size_;
+                    if (offset < _size) {
+                        tc_->trace(its_header.data_, VSOMEIP_TRACE_HEADER_SIZE, _data + offset, _size - offset);
                     }
                 }
-
-                if (utility::is_notification(its_message->get_message_type()) && !has_active_subscription) {
-                    VSOMEIP_WARNING_P << "[" << hex4(its_message->get_service()) << "." << hex4(its_message->get_instance()) << "."
-                                      << hex4(its_message->get_method()) << "]: blocked as the subscription is already inactive.";
-                    break;
-                }
-
-                host_->on_message(std::move(its_message));
-
-            } else {
-                VSOMEIP_ERROR_P << "Send command deserialization failed: " << utility::dump(_data, _size);
             }
-            break;
-        }
 
-        case protocol::id_e::ASSIGN_CLIENT_ACK_ID: {
-            if (is_from_routing) {
-                if (protocol::assign_client_ack_data its_data;
-                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                    on_client_assign_ack(its_data.assigned_, !_peer_data.routing_address_.is_unspecified(), its_data.policies_);
-                } else {
-                    VSOMEIP_ERROR_P << "Assign client ack command deserialization failed memory: " << utility::dump(_data, _size);
-                    // If it fails early, tear the
-                    // sender down so it restarts registration
-                    std::scoped_lock lock{mutex_};
-                    if (sender_) {
-                        sender_->request_cleanup(true);
-                    }
-                }
-            } else {
-                VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received assign_client_ack from client 0x" << hex4(its_client)
-                                << " which is not the router!";
+            if (utility::is_notification(its_message->get_message_type()) && !has_active_subscription) {
+                VSOMEIP_WARNING_P << "[" << hex4(its_message->get_service()) << "." << hex4(its_message->get_instance()) << "."
+                                  << hex4(its_message->get_method()) << "]: blocked as the subscription is already inactive.";
+                return;
             }
-            break;
+
+            host_->on_message(std::move(its_message));
+
+        } else {
+            VSOMEIP_ERROR_P << "Send command deserialization failed: " << utility::dump(_data, _size);
         }
+        return;
+    }
+    case protocol::id_e::PING_ID: {
+        VSOMEIP_INFO << "PING(" << hex4(get_client()) << ")";
+        send_pong();
+        return;
+    }
+    case protocol::id_e::SUBSCRIBE_ID: {
+        if (protocol::subscribe_with_filter_data its_data;
+            protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-        case protocol::id_e::ROUTING_INFO_ID:
-            if (is_from_routing) {
-                on_routing_info(_data + parsed_hdr_bytes, _size - parsed_hdr_bytes);
-            } else {
-                VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received routing_info from client 0x" << hex4(its_client)
-                                << " which is not the router!";
-            }
-            break;
+            auto its_service = its_data.data_.service_key_.service_;
+            auto its_instance = its_data.data_.service_key_.instance_;
+            auto its_eventgroup = its_data.data_.eventgroup_;
+            auto its_major = its_data.data_.service_key_.major_;
+            auto its_event = its_data.data_.event_;
+            auto its_pending_id = its_data.data_.pending_id_;
+            auto its_filter = its_data.filter_;
 
-        case protocol::id_e::PING_ID: {
-            VSOMEIP_INFO << "PING(" << hex4(get_client()) << ")";
-            send_pong();
-            break;
-        }
-
-        case protocol::id_e::SUBSCRIBE_ID: {
-            if (protocol::subscribe_with_filter_data its_data;
-                protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-
-                auto its_service = its_data.data_.service_key_.service_;
-                auto its_instance = its_data.data_.service_key_.instance_;
-                auto its_eventgroup = its_data.data_.eventgroup_;
-                auto its_major = its_data.data_.service_key_.major_;
-                auto its_event = its_data.data_.event_;
-                auto its_pending_id = its_data.data_.pending_id_;
-                auto its_filter = its_data.filter_;
-
-                if (its_pending_id != PENDING_SUBSCRIPTION_ID) {
-                    std::scoped_lock lock{provider_mutex_};
-                    if (auto its_info =
-                                offered_services_.find({.key_ = {its_service, its_instance, its_major}, .minor_version_ = ANY_MINOR});
-                        its_info) {
-                        // Remote subscriber: Notify routing manager initially + count subscribes
-                        auto self = shared_from_this();
-                        host_->on_subscription(
-                                its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, true,
-                                [this, self, its_client, its_service, its_instance, its_eventgroup, its_event, its_filter, its_pending_id,
-                                 its_major, its_generation = _peer_data.lc_token_](const bool _subscription_accepted) {
-                                    // lock before asking for the token to ensure that an intermediate clean-up is honored
-                                    std::scoped_lock its_lock{provider_mutex_};
-                                    // remote subscriptions have to go through the router. If there is some lc change in the sender, all
-                                    // former subscriptions need to be dropped (the router will re-subscribe)
-                                    if (its_generation != lc_count_) {
-                                        VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                                     << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event)
-                                                     << "] router connection superseded, discarding stale continuation.";
-                                        return;
-                                    }
-                                    uint32_t its_count(0);
-                                    if (_subscription_accepted) {
-                                        insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter,
-                                                            VSOMEIP_ROUTING_CLIENT, its_lock);
-                                        // NOTE: order matters, send ACK _after_ inserting the subscription
-                                        send_subscribe_ack(its_client, its_service, its_instance, its_eventgroup, its_event, its_pending_id,
-                                                           its_lock);
-                                        notify_remote_initially(its_service, its_instance, its_eventgroup, its_lock);
-
-                                        its_count = get_remote_subscriber_count(its_service, its_instance, its_eventgroup, true, its_lock);
-                                    } else {
-                                        send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event,
-                                                            its_pending_id, its_lock);
-                                    }
+            if (its_pending_id != PENDING_SUBSCRIPTION_ID) {
+                std::scoped_lock lock{provider_mutex_};
+                if (auto its_info = offered_services_.find({.key_ = {its_service, its_instance, its_major}, .minor_version_ = ANY_MINOR});
+                    its_info) {
+                    // Remote subscriber: Notify routing manager initially + count subscribes
+                    auto self = shared_from_this();
+                    host_->on_subscription(
+                            its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, true,
+                            [this, self, its_client, its_service, its_instance, its_eventgroup, its_event, its_filter, its_pending_id,
+                             its_major, its_generation = _peer_data.lc_token_](const bool _subscription_accepted) {
+                                // lock before asking for the token to ensure that an intermediate clean-up is honored
+                                std::scoped_lock its_lock{provider_mutex_};
+                                // remote subscriptions have to go through the router. If there is some lc change in the sender, all
+                                // former subscriptions need to be dropped (the router will re-subscribe)
+                                if (its_generation != lc_count_) {
                                     VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                                 << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << ":"
-                                                 << static_cast<uint16_t>(its_major) << "] "
-                                                 << (_subscription_accepted ? "accepted." : "not accepted.")
-                                                 << " id=" << hex4(its_pending_id) << " subscribers=" << its_count;
-                                });
-                    } else {
-                        send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, its_pending_id, lock);
-                    }
-                } else { // local subscription
-                    if (!is_from_routing) {
-                        if (its_event == ANY_EVENT) {
-                            if (!is_subscribe_to_any_event_allowed(&_peer_data.sec_client_, its_client, its_service, its_instance,
-                                                                   its_eventgroup, true)) {
-                                VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_client)
-                                              << " : routing_manager_client::on_message: isn't allowed to subscribe to"
-                                              << " service/instance/event " << hex4(its_service) << "/" << hex4(its_instance)
-                                              << "/ANY_EVENT which violates the security policy ~> Skip subscribe!";
-                                return;
-                            }
-                        } else {
-                            if (VSOMEIP_SEC_OK
-                                != get_security()->is_client_allowed_to_access_member(&_peer_data.sec_client_, its_service, its_instance,
-                                                                                      its_event)) {
-                                VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_client)
-                                              << " : routing_manager_client::on_message: " << " subscribes to service/instance/event "
-                                              << hex4(its_service) << "/" << hex4(its_instance) << "/" << its_event
-                                              << " which violates the security policy ~> Skip subscribe!";
-                                return;
-                            }
+                                                 << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event)
+                                                 << "] router connection superseded, discarding stale continuation.";
+                                    return;
+                                }
+                                uint32_t its_count(0);
+                                if (_subscription_accepted) {
+                                    insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter,
+                                                        VSOMEIP_ROUTING_CLIENT, its_lock);
+                                    // NOTE: order matters, send ACK _after_ inserting the subscription
+                                    send_subscribe_ack(its_client, its_service, its_instance, its_eventgroup, its_event, its_pending_id,
+                                                       its_lock);
+                                    notify_remote_initially(its_service, its_instance, its_eventgroup, its_lock);
+
+                                    its_count = get_remote_subscriber_count(its_service, its_instance, its_eventgroup, true, its_lock);
+                                } else {
+                                    send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, its_pending_id,
+                                                        its_lock);
+                                }
+                                VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
+                                             << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << ":"
+                                             << static_cast<uint16_t>(its_major) << "] "
+                                             << (_subscription_accepted ? "accepted." : "not accepted.") << " id=" << hex4(its_pending_id)
+                                             << " subscribers=" << its_count;
+                            });
+                } else {
+                    send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, its_pending_id, lock);
+                }
+            } else { // local subscription
+                if (!is_from_routing) {
+                    if (its_event == ANY_EVENT) {
+                        if (!is_subscribe_to_any_event_allowed(&_peer_data.sec_client_, its_client, its_service, its_instance,
+                                                               its_eventgroup, true)) {
+                            VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_client)
+                                          << " : routing_manager_client::on_message: isn't allowed to subscribe to"
+                                          << " service/instance/event " << hex4(its_service) << "/" << hex4(its_instance)
+                                          << "/ANY_EVENT which violates the security policy ~> Skip subscribe!";
+                            return;
                         }
                     } else {
-                        if (!configuration_->is_remote_access_allowed()) {
+                        if (VSOMEIP_SEC_OK
+                            != get_security()->is_client_allowed_to_access_member(&_peer_data.sec_client_, its_service, its_instance,
+                                                                                  its_event)) {
                             VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_client)
-                                          << " : routing_manager_client::on_message: " << hex4(its_client)
-                                          << "Routing manager with client ID 0x" << hex4(its_client)
-                                          << " isn't allowed to subscribe to service/instance/event " << hex4(its_service) << "/"
-                                          << hex4(its_instance) << "/" << its_event << " respectively to client 0x" << hex4(get_client())
-                                          << " ~> Skip Subscribe!";
+                                          << " : routing_manager_client::on_message: " << " subscribes to service/instance/event "
+                                          << hex4(its_service) << "/" << hex4(its_instance) << "/" << its_event
+                                          << " which violates the security policy ~> Skip subscribe!";
                             return;
                         }
                     }
-
-                    std::scoped_lock lock{provider_mutex_};
-                    auto self = shared_from_this();
-                    if (auto its_info =
-                                offered_services_.find({.key_ = {its_service, its_instance, its_major}, .minor_version_ = ANY_MINOR});
-                        its_info) {
-                        host_->on_subscription(
-                                its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, true,
-                                [this, self, its_client, its_filter, its_pending_id, its_service, its_instance, its_eventgroup, its_event,
-                                 its_major, its_generation = _peer_data.lc_token_](const bool _subscription_accepted) {
-                                    // lock before asking for the token to ensure that an intermediate clean-up is honored
-                                    std::scoped_lock its_lock{provider_mutex_};
-                                    // a peer subscription needs to be bound to the peers connection -> use the corresponding token for
-                                    // this client id
-                                    if (its_generation != provider_token(its_client, its_lock)) {
-                                        VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                                     << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event)
-                                                     << "] client connection superseded, discarding stale continuation.";
-                                        return;
-                                    }
-                                    if (!_subscription_accepted) {
-                                        send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event,
-                                                            PENDING_SUBSCRIPTION_ID, its_lock);
-                                    } else {
-
-                                        insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter, its_client,
-                                                            its_lock);
-                                        // NOTE: order matters, send ACK _after_ inserting
-                                        // the subscription
-                                        send_subscribe_ack(its_client, its_service, its_instance, its_eventgroup, its_event,
-                                                           PENDING_SUBSCRIPTION_ID, its_lock);
-                                        notify_one_current_value(its_client, its_service, its_instance, its_eventgroup, its_event,
-                                                                 its_lock);
-                                    }
-
-                                    VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                                 << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << ":"
-                                                 << static_cast<uint16_t>(its_major) << "] " << std::boolalpha
-                                                 << (its_pending_id != PENDING_SUBSCRIPTION_ID)
-                                                 << (_subscription_accepted ? " accepted" : "not accepted");
-                                });
-                    } else {
-                        send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, PENDING_SUBSCRIPTION_ID,
-                                            lock);
+                } else {
+                    if (!configuration_->is_remote_access_allowed()) {
+                        VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(its_client)
+                                      << " : routing_manager_client::on_message: " << hex4(its_client)
+                                      << "Routing manager with client ID 0x" << hex4(its_client)
+                                      << " isn't allowed to subscribe to service/instance/event " << hex4(its_service) << "/"
+                                      << hex4(its_instance) << "/" << its_event << " respectively to client 0x" << hex4(get_client())
+                                      << " ~> Skip Subscribe!";
+                        return;
                     }
                 }
-                VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                             << hex4(its_eventgroup) << ":" << hex4(its_event) << ":" << static_cast<uint16_t>(its_major) << "] "
-                             << std::boolalpha << (its_pending_id != PENDING_SUBSCRIPTION_ID);
-            } else {
-                VSOMEIP_ERROR_P << "Subscribe command deserialization failed:" << utility::dump(_data, _size);
-            }
-            break;
-        }
 
-        case protocol::id_e::UNSUBSCRIBE_ID: {
-            if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-
-                auto its_service = its_data.service_key_.service_;
-                auto its_instance = its_data.service_key_.instance_;
-                auto its_eventgroup = its_data.eventgroup_;
-                auto its_event = its_data.event_;
-                auto its_pending_id = its_data.pending_id_;
-
-                // Notify user asynchronously (informational only; unsubscription cannot be rejected)
-                host_->on_subscription(
-                        its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, false,
-                        [this, self = shared_from_this(), its_pending_id, its_client, its_service, its_instance, its_eventgroup, its_event,
-                         its_generation = _peer_data.lc_token_](bool) {
-                            // lock before asking for the token to ensure that an intermediate clean-up is honored
-                            std::scoped_lock its_lock{provider_mutex_};
-                            if (its_generation
-                                != (its_pending_id != PENDING_SUBSCRIPTION_ID ? lc_count_.load() : provider_token(its_client, its_lock))) {
-                                VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                             << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << "] "
-                                             << std::boolalpha << (its_pending_id != PENDING_SUBSCRIPTION_ID)
-                                             << " client connection superseded, discarding stale continuation.";
-                                return;
-                            }
-                            uint32_t its_remote_subscriber_count(0);
-                            if (its_pending_id == PENDING_SUBSCRIPTION_ID) {
-                                // Local subscriber: withdraw subscription
-                                unsubscribe_base(its_client, its_service, its_instance, its_eventgroup, its_event, its_lock);
-                            } else {
-                                // Remote subscriber: withdraw subscription only if no more remote subscriber exists
-                                its_remote_subscriber_count =
-                                        get_remote_subscriber_count(its_service, its_instance, its_eventgroup, false, its_lock);
-                                if (!its_remote_subscriber_count) {
-                                    unsubscribe_base(VSOMEIP_ROUTING_CLIENT, its_service, its_instance, its_eventgroup, its_event,
-                                                     its_lock);
+                std::scoped_lock lock{provider_mutex_};
+                auto self = shared_from_this();
+                if (auto its_info = offered_services_.find({.key_ = {its_service, its_instance, its_major}, .minor_version_ = ANY_MINOR});
+                    its_info) {
+                    host_->on_subscription(
+                            its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, true,
+                            [this, self, its_client, its_filter, its_pending_id, its_service, its_instance, its_eventgroup, its_event,
+                             its_major, its_generation = _peer_data.lc_token_](const bool _subscription_accepted) {
+                                // lock before asking for the token to ensure that an intermediate clean-up is honored
+                                std::scoped_lock its_lock{provider_mutex_};
+                                // a peer subscription needs to be bound to the peers connection -> use the corresponding token for
+                                // this client id
+                                if (its_generation != provider_token(its_client, its_lock)) {
+                                    VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "."
+                                                 << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event)
+                                                 << "] client connection superseded, discarding stale continuation.";
+                                    return;
                                 }
-                                auto const its_major = find_offered_major(its_service, its_instance, its_lock);
-                                std::scoped_lock lock{mutex_};
-                                if (sender_) {
-                                    if (!sender_->send(protocol::create_unsubscribe_ack_cmd(
-                                                state_machine_->client(),
-                                                {.service_ = its_service, .instance_ = its_instance, .major_ = its_major}, its_eventgroup,
-                                                its_pending_id))) {
-                                        VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::on_message(UNSUBSCRIBE): Failed to send UNSUBSCRIBE_ACK"
-                                                      << " for [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                                                      << hex4(its_eventgroup) << "]";
-                                    }
+                                if (!_subscription_accepted) {
+                                    send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event,
+                                                        PENDING_SUBSCRIPTION_ID, its_lock);
                                 } else {
-                                    VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::on_message(UNSUBSCRIBE): Failed due to a missing sender";
+
+                                    insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter, its_client,
+                                                        its_lock);
+                                    // NOTE: order matters, send ACK _after_ inserting
+                                    // the subscription
+                                    send_subscribe_ack(its_client, its_service, its_instance, its_eventgroup, its_event,
+                                                       PENDING_SUBSCRIPTION_ID, its_lock);
+                                    notify_one_current_value(its_client, its_service, its_instance, its_eventgroup, its_event, its_lock);
                                 }
-                            }
-                            VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
-                                         << "." << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
-                                         << (its_pending_id != PENDING_SUBSCRIPTION_ID) << " subscribers=" << its_remote_subscriber_count;
-                        });
-                VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
-                             << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
-                             << (its_pending_id != PENDING_SUBSCRIPTION_ID);
 
-            } else {
-                VSOMEIP_ERROR_P << "Unsubscribe command deserialization failed: " << utility::dump(_data, _size);
-            }
-            break;
-        }
-
-        case protocol::id_e::EXPIRE_ID: {
-            if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-
-                auto its_service = its_data.service_key_.service_;
-                auto its_instance = its_data.service_key_.instance_;
-                auto its_eventgroup = its_data.eventgroup_;
-                auto its_event = its_data.event_;
-                auto its_pending_id = its_data.pending_id_;
-
-                host_->on_subscription(
-                        its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, false,
-                        [this, self = shared_from_this(), its_pending_id, its_client, its_service, its_instance, its_eventgroup, its_event,
-                         lc_token = _peer_data.lc_token_](bool) {
-                            // lock before asking for the token to ensure that an intermediate clean-up is honored
-                            std::scoped_lock its_lock{provider_mutex_};
-                            // expire commands are only send from the stub -> check validity of the "sender_"
-                            if (lc_token != lc_count_) {
-                                VSOMEIP_INFO << "EXPIRED SUBSCRIPTION(" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                             << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event)
-                                             << "] router connection superseded, discarding stale continuation.";
-                                return;
-                            }
-                            uint32_t its_remote_subscriber_count{0};
-                            if (its_pending_id == PENDING_SUBSCRIPTION_ID) {
-                                // Local subscriber: withdraw subscription
-                                unsubscribe_base(its_client, its_service, its_instance, its_eventgroup, its_event, its_lock);
-                            } else {
-                                // Remote subscriber: withdraw subscription only if no more remote subscriber exists
-                                its_remote_subscriber_count =
-                                        get_remote_subscriber_count(its_service, its_instance, its_eventgroup, false, its_lock);
-                                if (!its_remote_subscriber_count) {
-                                    unsubscribe_base(VSOMEIP_ROUTING_CLIENT, its_service, its_instance, its_eventgroup, its_event,
-                                                     its_lock);
-                                }
-                            }
-                            VSOMEIP_INFO << "EXPIRED SUBSCRIPTION(" << hex4(its_client) << "): [" << hex4(its_service) << "."
-                                         << hex4(its_instance) << "." << hex4(its_eventgroup) << "." << hex4(its_event) << "] "
-                                         << std::boolalpha << (its_pending_id != PENDING_SUBSCRIPTION_ID) << " "
-                                         << its_remote_subscriber_count;
-                        });
-                VSOMEIP_INFO << "EXPIRED SUBSCRIPTION(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
-                             << "." << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
-                             << (its_pending_id != PENDING_SUBSCRIPTION_ID);
-            } else {
-                VSOMEIP_ERROR_P << "Expire deserialization failed: " << utility::dump(_data, _size);
-            }
-            break;
-        }
-
-        case protocol::id_e::SUBSCRIBE_NACK_ID: {
-            if (protocol::subscribe_answer_data its_data;
-                protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-
-                on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service_, its_data.service_key_.instance_,
-                                     its_data.eventgroup_, its_data.event_, subscription_outcome_e::REJECTED);
-                VSOMEIP_INFO << "SUBSCRIBE NACK(" << hex4(its_client) << "): [" << its_data.service_key_ << "."
-                             << hex4(its_data.eventgroup_) << "." << hex4(its_data.event_) << "]";
-            } else {
-                VSOMEIP_ERROR_P << "Subscribe nack command deserialization failed: " << utility::dump(_data, _size);
-            }
-            break;
-        }
-
-        case protocol::id_e::SUBSCRIBE_ACK_ID: {
-            if (protocol::subscribe_answer_data its_data;
-                protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-
-                on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service_, its_data.service_key_.instance_,
-                                     its_data.eventgroup_, its_data.event_, subscription_outcome_e::OK);
-                VSOMEIP_INFO << "SUBSCRIBE ACK(" << hex4(its_client) << "): [" << its_data.service_key_ << "." << hex4(its_data.eventgroup_)
-                             << "." << hex4(its_data.event_) << "]";
-            } else {
-                VSOMEIP_ERROR_P << "Subscribe ack command deserialization failed: " << utility::dump(_data, _size);
-            }
-            break;
-        }
-
-        case protocol::id_e::OFFERED_SERVICES_RESPONSE_ID: {
-            auto const its_payload_size = _size - parsed_hdr_bytes;
-            if (std::vector<protocol::service_data> its_services;
-                its_payload_size == 0 || protocol::deserialize(its_services, _data + parsed_hdr_bytes, its_payload_size)) {
-                if (is_from_routing) {
-                    on_offered_services_info(its_services);
+                                VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
+                                             << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << ":"
+                                             << static_cast<uint16_t>(its_major) << "] " << std::boolalpha
+                                             << (its_pending_id != PENDING_SUBSCRIPTION_ID)
+                                             << (_subscription_accepted ? " accepted" : "not accepted");
+                            });
                 } else {
-                    VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a offered_services message from client 0x"
-                                    << hex4(its_client) << " which is not the router!";
+                    send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, PENDING_SUBSCRIPTION_ID, lock);
+                }
+            }
+            VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                         << hex4(its_eventgroup) << ":" << hex4(its_event) << ":" << static_cast<uint16_t>(its_major) << "] "
+                         << std::boolalpha << (its_pending_id != PENDING_SUBSCRIPTION_ID);
+        } else {
+            VSOMEIP_ERROR_P << "Subscribe command deserialization failed:" << utility::dump(_data, _size);
+        }
+        return;
+    }
+    case protocol::id_e::UNSUBSCRIBE_ID: {
+        if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+
+            auto its_service = its_data.service_key_.service_;
+            auto its_instance = its_data.service_key_.instance_;
+            auto its_eventgroup = its_data.eventgroup_;
+            auto its_event = its_data.event_;
+            auto its_pending_id = its_data.pending_id_;
+
+            // Notify user asynchronously (informational only; unsubscription cannot be rejected)
+            host_->on_subscription(
+                    its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, false,
+                    [this, self = shared_from_this(), its_pending_id, its_client, its_service, its_instance, its_eventgroup, its_event,
+                     its_generation = _peer_data.lc_token_](bool) {
+                        // lock before asking for the token to ensure that an intermediate clean-up is honored
+                        std::scoped_lock its_lock{provider_mutex_};
+                        if (its_generation
+                            != (its_pending_id != PENDING_SUBSCRIPTION_ID ? lc_count_.load() : provider_token(its_client, its_lock))) {
+                            VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
+                                         << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << "] " << std::boolalpha
+                                         << (its_pending_id != PENDING_SUBSCRIPTION_ID)
+                                         << " client connection superseded, discarding stale continuation.";
+                            return;
+                        }
+                        uint32_t its_remote_subscriber_count(0);
+                        if (its_pending_id == PENDING_SUBSCRIPTION_ID) {
+                            // Local subscriber: withdraw subscription
+                            unsubscribe_base(its_client, its_service, its_instance, its_eventgroup, its_event, its_lock);
+                        } else {
+                            // Remote subscriber: withdraw subscription only if no more remote subscriber exists
+                            its_remote_subscriber_count =
+                                    get_remote_subscriber_count(its_service, its_instance, its_eventgroup, false, its_lock);
+                            if (!its_remote_subscriber_count) {
+                                unsubscribe_base(VSOMEIP_ROUTING_CLIENT, its_service, its_instance, its_eventgroup, its_event, its_lock);
+                            }
+                            auto const its_major = find_offered_major(its_service, its_instance, its_lock);
+                            std::scoped_lock lock{mutex_};
+                            if (sender_) {
+                                if (!sender_->send(protocol::create_unsubscribe_ack_cmd(
+                                            state_machine_->client(),
+                                            {.service_ = its_service, .instance_ = its_instance, .major_ = its_major}, its_eventgroup,
+                                            its_pending_id))) {
+                                    VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::on_message(UNSUBSCRIBE): Failed to send UNSUBSCRIBE_ACK"
+                                                  << " for [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                                                  << hex4(its_eventgroup) << "]";
+                                }
+                            } else {
+                                VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::on_message(UNSUBSCRIBE): Failed due to a missing sender";
+                            }
+                        }
+                        VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
+                                     << "." << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
+                                     << (its_pending_id != PENDING_SUBSCRIPTION_ID) << " subscribers=" << its_remote_subscriber_count;
+                    });
+            VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                         << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
+                         << (its_pending_id != PENDING_SUBSCRIPTION_ID);
+
+        } else {
+            VSOMEIP_ERROR_P << "Unsubscribe command deserialization failed: " << utility::dump(_data, _size);
+        }
+        return;
+    }
+    case protocol::id_e::SUBSCRIBE_NACK_ID: {
+        if (protocol::subscribe_answer_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+
+            on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service_, its_data.service_key_.instance_,
+                                 its_data.eventgroup_, its_data.event_, subscription_outcome_e::REJECTED);
+            VSOMEIP_INFO << "SUBSCRIBE NACK(" << hex4(its_client) << "): [" << its_data.service_key_ << "." << hex4(its_data.eventgroup_)
+                         << "." << hex4(its_data.event_) << "]";
+        } else {
+            VSOMEIP_ERROR_P << "Subscribe nack command deserialization failed: " << utility::dump(_data, _size);
+        }
+        return;
+    }
+    case protocol::id_e::SUBSCRIBE_ACK_ID: {
+        if (protocol::subscribe_answer_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+
+            on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service_, its_data.service_key_.instance_,
+                                 its_data.eventgroup_, its_data.event_, subscription_outcome_e::OK);
+            VSOMEIP_INFO << "SUBSCRIBE ACK(" << hex4(its_client) << "): [" << its_data.service_key_ << "." << hex4(its_data.eventgroup_)
+                         << "." << hex4(its_data.event_) << "]";
+        } else {
+            VSOMEIP_ERROR_P << "Subscribe ack command deserialization failed: " << utility::dump(_data, _size);
+        }
+        return;
+    }
+    case protocol::id_e::CONFIG_ID: {
+        std::vector<std::pair<std::string, std::string>> its_configs;
+        protocol::deserialize(its_configs, _data + parsed_hdr_bytes, its_header.length_);
+        for (auto const& [key, value] : its_configs) {
+            if (key == "hostname") {
+                lazy_load(value);
+                break; // break inner loop
+            }
+        }
+        return;
+    }
+    default:
+        // probably a router command, keep going
+        break;
+    }
+
+    if (!is_from_routing) {
+        VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a message with command " << its_id << " from 0x"
+                        << hex4(its_client) << " which is not the router!";
+        return;
+    }
+
+#ifndef VSOMEIP_DISABLE_SECURITY
+    bool is_internal_policy_update = false;
+#endif
+    switch (its_id) {
+    case protocol::id_e::ASSIGN_CLIENT_ACK_ID: {
+        if (protocol::assign_client_ack_data its_data;
+            protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            on_client_assign_ack(its_data.assigned_, !_peer_data.routing_address_.is_unspecified(), its_data.policies_);
+        } else {
+            VSOMEIP_ERROR_P << "Assign client ack command deserialization failed memory: " << utility::dump(_data, _size);
+            // If it fails early, tear the
+            // sender down so it restarts registration
+            std::scoped_lock lock{mutex_};
+            if (sender_) {
+                sender_->request_cleanup(true);
+            }
+        }
+        return;
+    }
+    case protocol::id_e::ROUTING_INFO_ID: {
+        on_routing_info(_data + parsed_hdr_bytes, _size - parsed_hdr_bytes);
+        return;
+    }
+    case protocol::id_e::EXPIRE_ID: {
+        if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+
+            auto its_service = its_data.service_key_.service_;
+            auto its_instance = its_data.service_key_.instance_;
+            auto its_eventgroup = its_data.eventgroup_;
+            auto its_event = its_data.event_;
+            auto its_pending_id = its_data.pending_id_;
+
+            host_->on_subscription(
+                    its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, false,
+                    [this, self = shared_from_this(), its_pending_id, its_client, its_service, its_instance, its_eventgroup, its_event,
+                     lc_token = _peer_data.lc_token_](bool) {
+                        // lock before asking for the token to ensure that an intermediate clean-up is honored
+                        std::scoped_lock its_lock{provider_mutex_};
+                        // expire commands are only send from the router -> check validity of the "sender_"
+                        if (lc_token != lc_count_) {
+                            VSOMEIP_INFO << "EXPIRED SUBSCRIPTION(" << hex4(its_client) << "): [" << hex4(its_service) << "."
+                                         << hex4(its_instance) << "." << hex4(its_eventgroup) << ":" << hex4(its_event)
+                                         << "] router connection superseded, discarding stale continuation.";
+                            return;
+                        }
+                        uint32_t its_remote_subscriber_count{0};
+                        if (its_pending_id == PENDING_SUBSCRIPTION_ID) {
+                            // Local subscriber: withdraw subscription
+                            unsubscribe_base(its_client, its_service, its_instance, its_eventgroup, its_event, its_lock);
+                        } else {
+                            // Remote subscriber: withdraw subscription only if no more remote subscriber exists
+                            its_remote_subscriber_count =
+                                    get_remote_subscriber_count(its_service, its_instance, its_eventgroup, false, its_lock);
+                            if (!its_remote_subscriber_count) {
+                                unsubscribe_base(VSOMEIP_ROUTING_CLIENT, its_service, its_instance, its_eventgroup, its_event, its_lock);
+                            }
+                        }
+                        VSOMEIP_INFO << "EXPIRED SUBSCRIPTION(" << hex4(its_client) << "): [" << hex4(its_service) << "."
+                                     << hex4(its_instance) << "." << hex4(its_eventgroup) << "." << hex4(its_event) << "] "
+                                     << std::boolalpha << (its_pending_id != PENDING_SUBSCRIPTION_ID) << " " << its_remote_subscriber_count;
+                    });
+
+            VSOMEIP_INFO << "EXPIRED SUBSCRIPTION(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                         << hex4(its_eventgroup) << "." << hex4(its_event) << "] " << std::boolalpha
+                         << (its_pending_id != PENDING_SUBSCRIPTION_ID);
+        } else {
+            VSOMEIP_ERROR_P << "Expire deserialization failed: " << utility::dump(_data, _size);
+        }
+        return;
+    }
+    case protocol::id_e::OFFERED_SERVICES_RESPONSE_ID: {
+        auto const its_payload_size = _size - parsed_hdr_bytes;
+        if (std::vector<protocol::service_data> its_services;
+            its_payload_size == 0 || protocol::deserialize(its_services, _data + parsed_hdr_bytes, its_payload_size)) {
+            on_offered_services_info(its_services);
+        } else {
+            VSOMEIP_ERROR_P << "Offered services response command deserialization failed, memory: " << utility::dump(_data, _size);
+        }
+        return;
+    }
+    case protocol::id_e::RESEND_PROVIDED_EVENTS_ID: {
+        if (pending_remote_offer_id_t its_remote_offer_id;
+            protocol::deserialize(its_remote_offer_id, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            resend_provided_event_registrations();
+
+            std::scoped_lock lock{mutex_};
+            if (sender_) {
+                if (sender_->send(protocol::create_resend_provided_events_cmd(state_machine_->client(), its_remote_offer_id))) {
+                    VSOMEIP_INFO << "RESEND_PROVIDED_EVENTS(" << hex4(its_client) << ")";
+                } else {
+                    VSOMEIP_ERROR_P << "Failed to send RESEND_PROVIDED_EVENTS for client 0x" << hex4(its_client);
                 }
             } else {
-                VSOMEIP_ERROR_P << "Offered services response command deserialization failed, memory: " << utility::dump(_data, _size);
+                VSOMEIP_WARNING_P << "Failed due to a missing sender";
             }
-            break;
+        } else {
+            VSOMEIP_ERROR_P << "Resend provided events command deserialization failed, memory: " << utility::dump(_data, _size);
         }
-        case protocol::id_e::RESEND_PROVIDED_EVENTS_ID: {
-            if (pending_remote_offer_id_t its_remote_offer_id;
-                protocol::deserialize(its_remote_offer_id, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                resend_provided_event_registrations();
-
+        return;
+    }
+#ifndef VSOMEIP_DISABLE_SECURITY
+    case protocol::id_e::UPDATE_SECURITY_POLICY_INT_ID:
+        is_internal_policy_update = true;
+        [[fallthrough]];
+    case protocol::id_e::UPDATE_SECURITY_POLICY_ID: {
+        if (protocol::update_security_policy_data its_data;
+            protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            if (apply_security_policy_update(its_data, is_internal_policy_update)) {
                 std::scoped_lock lock{mutex_};
                 if (sender_) {
-                    if (sender_->send(protocol::create_resend_provided_events_cmd(state_machine_->client(), its_remote_offer_id))) {
-                        VSOMEIP_INFO << "RESEND_PROVIDED_EVENTS(" << hex4(its_client) << ")";
-                    } else {
-                        VSOMEIP_ERROR_P << "Failed to send RESEND_PROVIDED_EVENTS for client 0x" << hex4(its_client);
+                    if (!sender_->send(
+                                protocol::create_update_security_policy_response_cmd(state_machine_->client(), its_data.update_id_))) {
+                        VSOMEIP_ERROR_P << "Failed to send UPDATE_SECURITY_POLICY_RESPONSE for update id " << its_data.update_id_;
                     }
                 } else {
-                    VSOMEIP_WARNING_P << "Failed due to a missing sender";
+                    VSOMEIP_ERROR_P << "Failed due to a missing sender";
                 }
-            } else {
-                VSOMEIP_ERROR_P << "Resend provided events command deserialization failed, memory: " << utility::dump(_data, _size);
             }
-            break;
+        } else {
+            VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed: " << utility::dump(_data, _size);
         }
-#ifndef VSOMEIP_DISABLE_SECURITY
-        case protocol::id_e::UPDATE_SECURITY_POLICY_INT_ID:
-            is_internal_policy_update = true;
-            [[fallthrough]];
-        case protocol::id_e::UPDATE_SECURITY_POLICY_ID: {
-            if (is_from_routing) {
-                if (protocol::update_security_policy_data its_data;
-                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                    if (apply_security_policy_update(its_data, is_internal_policy_update)) {
-                        std::scoped_lock lock{mutex_};
-                        if (sender_) {
-                            if (!sender_->send(protocol::create_update_security_policy_response_cmd(state_machine_->client(),
-                                                                                                    its_data.update_id_))) {
-                                VSOMEIP_ERROR_P << "Failed to send UPDATE_SECURITY_POLICY_RESPONSE for update id " << its_data.update_id_;
-                            }
-                        } else {
-                            VSOMEIP_ERROR_P << "Failed due to a missing sender";
-                        }
+        return;
+    }
+    case protocol::id_e::REMOVE_SECURITY_POLICY_ID: {
+        if (protocol::remove_security_policy_data its_data;
+            protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+
+            uid_t its_uid(its_data.uid_);
+            gid_t its_gid(its_data.gid_);
+
+            if (get_policy_manager()->is_policy_removal_allowed(its_uid)) {
+                get_policy_manager()->remove_security_policy(its_uid, its_gid);
+                std::scoped_lock lock{mutex_};
+                if (sender_) {
+                    if (!sender_->send(
+                                protocol::create_remove_security_policy_response_cmd(state_machine_->client(), its_data.update_id_))) {
+                        VSOMEIP_ERROR_P << "Failed to send REMOVE_SECURITY_POLICY_RESPONSE for uid/gid " << its_uid << "/" << its_gid;
                     }
                 } else {
-                    VSOMEIP_ERROR << "vSomeIP Security: Policy deserialization failed: " << utility::dump(_data, _size);
+                    VSOMEIP_ERROR_P << "Failed due to a missing sender";
                 }
-            } else {
-                VSOMEIP_ERROR_P << "Client 0x" << hex4(state_machine_->client()) << " received a policy update from client 0x"
-                                << hex4(state_machine_->client()) << " which is not the router!";
             }
-            break;
+        } else {
+            VSOMEIP_ERROR_P << "Remove security policy command deserialization failed, memory: " << utility::dump(_data, _size);
         }
+        return;
+    }
+    case protocol::id_e::DISTRIBUTE_SECURITY_POLICIES_ID: {
+        if (std::vector<std::shared_ptr<policy>> its_data;
+            protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            for (auto p : its_data) {
+                uid_t its_uid;
+                gid_t its_gid;
+                p->get_uid_gid(its_uid, its_gid);
 
-        case protocol::id_e::REMOVE_SECURITY_POLICY_ID: {
-            if (is_from_routing) {
-                if (protocol::remove_security_policy_data its_data;
-                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-
-                    uid_t its_uid(its_data.uid_);
-                    gid_t its_gid(its_data.gid_);
-
-                    if (get_policy_manager()->is_policy_removal_allowed(its_uid)) {
-                        get_policy_manager()->remove_security_policy(its_uid, its_gid);
-                        std::scoped_lock lock{mutex_};
-                        if (sender_) {
-                            if (!sender_->send(protocol::create_remove_security_policy_response_cmd(state_machine_->client(),
-                                                                                                    its_data.update_id_))) {
-                                VSOMEIP_ERROR_P << "Failed to send REMOVE_SECURITY_POLICY_RESPONSE for uid/gid " << its_uid << "/"
-                                                << its_gid;
-                            }
-                        } else {
-                            VSOMEIP_ERROR_P << "Failed due to a missing sender";
-                        }
-                    }
-                } else {
-                    VSOMEIP_ERROR_P << "Remove security policy command deserialization failed, memory: " << utility::dump(_data, _size);
+                if (get_policy_manager()->is_policy_update_allowed(its_uid, p)) {
+                    get_policy_manager()->update_security_policy(its_uid, its_gid, p);
                 }
-            } else {
-                VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a remove_security_policy message from client 0x"
-                                << hex4(its_client) << " which is not the router!";
             }
-            break;
+        } else {
+            VSOMEIP_ERROR_P << "Distribute security policies command deserialization failed: " << utility::dump(_data, _size);
         }
-
-        case protocol::id_e::DISTRIBUTE_SECURITY_POLICIES_ID: {
-            if (is_from_routing) {
-                if (std::vector<std::shared_ptr<policy>> its_data;
-                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                    for (auto p : its_data) {
-                        uid_t its_uid;
-                        gid_t its_gid;
-                        p->get_uid_gid(its_uid, its_gid);
-
-                        if (get_policy_manager()->is_policy_update_allowed(its_uid, p)) {
-                            get_policy_manager()->update_security_policy(its_uid, its_gid, p);
-                        }
-                    }
-                } else {
-                    VSOMEIP_ERROR_P << "Distribute security policies command deserialization failed: " << utility::dump(_data, _size);
-                }
-            } else {
-                VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received a distribute_security_policies message from client 0x"
-                                << hex4(its_client) << " which is not the router!";
-            }
-            break;
+        return;
+    }
+    case protocol::id_e::UPDATE_SECURITY_CREDENTIALS_ID: {
+        if (std::vector<std::pair<uid_t, gid_t>> its_data;
+            protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            on_update_security_credentials(its_data);
+        } else {
+            VSOMEIP_ERROR_P << "Update security credentials command deserialization failed: " << utility::dump(_data, _size);
         }
-
-        case protocol::id_e::UPDATE_SECURITY_CREDENTIALS_ID: {
-            if (is_from_routing) {
-                if (std::vector<std::pair<uid_t, gid_t>> its_data;
-                    protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-                    on_update_security_credentials(its_data);
-                } else {
-                    VSOMEIP_ERROR_P << "Update security credentials command deserialization failed: " << utility::dump(_data, _size);
-                }
-            } else {
-                VSOMEIP_ERROR_P << "Client 0x" << hex4(get_client()) << " received an update_security_credentials message from client 0x"
-                                << hex4(its_client) << " which is not the router!";
-            }
-            break;
-        }
+        return;
+    }
 #endif // !VSOMEIP_DISABLE_SECURITY
-        case protocol::id_e::CONFIG_ID: {
-            std::vector<std::pair<std::string, std::string>> its_configs;
-            protocol::deserialize(its_configs, _data + parsed_hdr_bytes, its_header.length_);
-            for (auto const& [key, value] : its_configs) {
-                if (key == "hostname") {
-                    lazy_load(value);
-                    break;
-                }
-            }
-            break;
-        }
-        default:
-            break;
-        }
-    } else {
-        VSOMEIP_ERROR_P << "Deserialization of command header failed, memory: " << utility::dump(_data, _size);
+    default:
+        VSOMEIP_ERROR_P << "Unknown router command " << its_id << ", memory: " << utility::dump(_data, _size);
+        return;
     }
 }
 
