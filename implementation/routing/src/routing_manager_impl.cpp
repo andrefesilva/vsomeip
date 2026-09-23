@@ -361,10 +361,9 @@ void routing_manager_impl::request_service(client_t _client, service_t _service,
     }
 }
 
-void routing_manager_impl::release_service(client_t _client, service_t _service, instance_t _instance) {
+void routing_manager_impl::release_service(client_t _client, protocol::service_key const& _service) {
 
-    VSOMEIP_INFO << "RELEASE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "]";
-    major_version_t its_client_major{ANY_MAJOR};
+    VSOMEIP_INFO << "RELEASE(" << hex4(_client) << "): [" << _service << "]";
     bool found{false};
     {
         std::scoped_lock its_lock{requested_services_mutex_};
@@ -373,32 +372,26 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
         // per-major FindService state can be released precisely for what this client gives up,
         // without touching another client's request for a different major of the same service.
         // (atm. no client is allowed to request multiple majors)
-        if (auto found_service = requested_services_.find(_service); found_service != requested_services_.end()) {
-            if (auto found_instance = found_service->second.find(_instance); found_instance != found_service->second.end()) {
-                for (auto major_it = found_instance->second.begin(); major_it != found_instance->second.end(); ++major_it) {
-                    for (auto minor_it = major_it->second.begin(); minor_it != major_it->second.end(); ++minor_it) {
+        if (auto found_service = requested_services_.find(_service.service_); found_service != requested_services_.end()) {
+            if (auto found_instance = found_service->second.find(_service.instance_); found_instance != found_service->second.end()) {
+                if (auto found_major = found_instance->second.find(_service.major_); found_major != found_instance->second.end()) {
+                    for (auto minor_it = found_major->second.begin(); minor_it != found_major->second.end(); ++minor_it) {
                         if (minor_it->second.erase(_client) == 0) {
                             continue;
                         }
-                        its_client_major = major_it->first;
                         found = true;
                         if (minor_it->second.empty()) {
-                            minor_it = major_it->second.erase(minor_it); // assign to allow the loop check
-                            if (major_it->second.empty()) {
+                            minor_it = found_major->second.erase(minor_it);
+                            if (found_major->second.empty()) {
                                 // The service request itself is independent of the availability of the service,
                                 // but subscriptions are dealt with below, as those can only be given for a currently
                                 // available service
                                 if (discovery_) {
-                                    discovery_->release_service(_service, _instance, its_client_major);
+                                    discovery_->release_service(_service.service_, _service.instance_, _service.major_);
                                 }
-                                major_it = found_instance->second.erase(major_it);
+                                found_instance->second.erase(found_major);
                             }
                         }
-                        break;
-                    }
-                    // major_it may already have been erased-and-reassigned above (pointing at the next
-                    // element, or end()) -- must not let the outer for's own ++major_it run again on it.
-                    if (found) {
                         break;
                     }
                 }
@@ -412,12 +405,12 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
         }
     }
     if (!found) {
-        VSOMEIP_ERROR_P << "Client " << get_client_info(_client) << " tried to release the service [" << hex4(_service) << "."
-                        << hex4(_instance) << "] that had not been requested before";
+        VSOMEIP_ERROR_P << "Client " << get_client_info(_client) << " tried to release the service [" << _service
+                        << "] that had not been requested before";
         return;
     }
 
-    remove_pending_requests(pending_request_removal_type_e::REQUESTING_ONLY, _client, _service, _instance);
+    remove_pending_requests(pending_request_removal_type_e::REQUESTING_ONLY, _client, _service.service_, _service.instance_);
     // A client releasing a concrete major only ever affects that one major's bookkeeping -- the
     // loop below runs exactly once for it, unchanged from before this was a loop. A client
     // releasing ANY_MAJOR, however, could have been counted as a requester of ANY currently-known
@@ -430,23 +423,23 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
     // thing keeping it looking "still requested". So: check every currently-known major
     // individually and release each one that, on its own, has no requester left -- never just
     // whichever single major this client happened to resolve to.
-    std::vector<major_version_t> its_majors_to_check;
-    if (its_client_major != ANY_MAJOR) {
-        its_majors_to_check.push_back(its_client_major);
+    std::vector<major_version_t> majors_to_check;
+    if (_service.major_ != ANY_MAJOR) {
+        majors_to_check.push_back(_service.major_);
     } else {
-        for (const auto& [major, info] : find_services(_service, _instance)) {
+        for (const auto& [major, info] : find_services(_service.service_, _service.instance_)) {
             (void)info;
-            its_majors_to_check.push_back(major);
+            majors_to_check.push_back(major);
         }
     }
 
-    for (major_version_t const its_major : its_majors_to_check) {
-        std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance, its_major));
+    for (major_version_t const major : majors_to_check) {
+        std::shared_ptr<serviceinfo> its_info(find_service(_service.service_, _service.instance_, major));
 
         if (its_info && !its_info->is_local()) {
-            if (!has_requester(_service, _instance, its_major, ANY_MINOR)) {
+            if (!has_requester(_service.service_, _service.instance_, major, ANY_MINOR)) {
                 // toc-tou race we now act as if we don't have requesters, but the mutex is unlocked
-                auto its_eventgroups = find_eventgroups(_service, _instance);
+                auto its_eventgroups = find_eventgroups(_service.service_, _service.instance_);
                 for (const auto& eg : its_eventgroups) {
                     auto its_events = eg->get_events();
                     for (auto& e : its_events) {
@@ -455,15 +448,15 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
                 }
 
                 if (discovery_) {
-                    discovery_->unsubscribe_all(_service, _instance);
+                    discovery_->unsubscribe_all(_service.service_, _service.instance_);
                 }
-                ep_mgr_impl_->clear_client_endpoints(_service, _instance, its_major, true, std::nullopt);
-                ep_mgr_impl_->clear_client_endpoints(_service, _instance, its_major, false, std::nullopt);
+                ep_mgr_impl_->clear_client_endpoints(_service.service_, _service.instance_, major, true, std::nullopt);
+                ep_mgr_impl_->clear_client_endpoints(_service.service_, _service.instance_, major, false, std::nullopt);
                 its_info->set_endpoint(nullptr, true);
                 its_info->set_endpoint(nullptr, false);
-                unset_all_eventpayloads(_service, _instance);
+                unset_all_eventpayloads(_service.service_, _service.instance_);
             } else {
-                auto its_eventgroups = find_eventgroups(_service, _instance);
+                auto its_eventgroups = find_eventgroups(_service.service_, _service.instance_);
                 for (const auto& eg : its_eventgroups) {
                     auto its_id = eg->get_eventgroup();
                     auto its_events = eg->get_events();
@@ -475,13 +468,13 @@ void routing_manager_impl::release_service(client_t _client, service_t _service,
                         }
                     }
                     if (discovery_) {
-                        discovery_->unsubscribe(_service, _instance, its_id, _client);
+                        discovery_->unsubscribe(_service.service_, _service.instance_, its_id, _client);
                     }
                     if (!eg_has_subscribers) {
                         for (const auto& e : its_events) {
                             if (e->is_set()) {
-                                VSOMEIP_INFO_P << "Unsetting payload for [" << hex4(_service) << "." << hex4(_instance) << "."
-                                               << hex4(e->get_event()) << "]";
+                                VSOMEIP_INFO_P << "Unsetting payload for [" << hex4(_service.service_) << "." << hex4(_service.instance_)
+                                               << "." << hex4(e->get_event()) << "]";
                             }
                             e->unset_payload(true);
                         }
@@ -1673,7 +1666,7 @@ void routing_manager_impl::remove_local(client_t _client) {
     }
 
     for (const auto& s : get_requested_services(_client)) {
-        release_service(_client, s.service_, s.instance_);
+        release_service(_client, s);
     }
     ep_mgr_impl_->remove_routing_endpoint(_client);
 }
@@ -3218,29 +3211,23 @@ void routing_manager_impl::remove_requested_service(client_t _client, service_t 
     }
 }
 
-std::vector<protocol::service> routing_manager_impl::get_requested_services(client_t _client) const {
+std::vector<protocol::service_key> routing_manager_impl::get_requested_services(client_t _client) const {
     std::scoped_lock ist_lock{requested_services_mutex_};
-    std::vector<protocol::service> its_requests;
+    std::vector<protocol::service_key> its_requests;
     for (const auto& [service, instances] : requested_services_) {
         for (const auto& [instance, majors] : instances) {
             bool requested = false;
-            major_version_t its_major = ANY_MAJOR;
-            minor_version_t its_minor = ANY_MINOR;
             for (const auto& [major, minors] : majors) {
                 for (const auto& [minor, clients] : minors) {
                     if (clients.count(_client) > 0) {
+                        its_requests.push_back(protocol::service_key{.service_ = service, .instance_ = instance, .major_ = major});
                         requested = true;
-                        its_minor = minor;
                         break;
                     }
                 }
                 if (requested) {
-                    its_major = major;
                     break;
                 }
-            }
-            if (requested) {
-                its_requests.emplace_back(service, instance, its_major, its_minor);
             }
         }
     }
@@ -4568,9 +4555,9 @@ bool routing_manager_impl::is_subscribe_to_any_event_allowed(const vsomeip_sec_c
         for (const auto& e : its_eventgroup->get_events()) {
             if (VSOMEIP_SEC_OK != get_security()->is_client_allowed_to_access_member(_sec_client, _service, _instance, e->get_event())) {
                 VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(_client)
-                              << " : routing_manager_impl::is_subscribe_to_any_event_allowed: " << "subscribes to service/instance/event "
-                              << hex4(_service) << "/" << hex4(_instance) << "/" << hex4(e->get_event())
-                              << " which violates the security policy!";
+                              << " : routing_manager_impl::is_subscribe_to_any_event_allowed: "
+                              << "subscribes to service/instance/event " << hex4(_service) << "/" << hex4(_instance) << "/"
+                              << hex4(e->get_event()) << " which violates the security policy!";
                 is_allowed = false;
                 break;
             }

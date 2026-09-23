@@ -10,6 +10,7 @@
 #include <vsomeip/primitive_types.hpp>
 #include <vsomeip/vsomeip_sec.h>
 #include "types.hpp"
+#include "../../protocol/include/command_types.hpp"
 
 #include <memory>
 
@@ -35,7 +36,7 @@ public:
     virtual void request_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                  minor_version_t _minor) = 0;
 
-    virtual void release_service(client_t _client, service_t _service, instance_t _instance) = 0;
+    virtual void release_service(client_t _client, protocol::service_key const& _service) = 0;
 
     virtual void register_shadow_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
                                        const std::set<eventgroup_t>& _eventgroups, event_type_e _type, reliability_type_e _reliability,
@@ -88,8 +89,6 @@ public:
 
     virtual bool is_subscribe_to_any_event_allowed(const vsomeip_sec_client_t* _sec_client, client_t _client, service_t _service,
                                                    instance_t _instance, eventgroup_t _eventgroup) = 0;
-
-    virtual std::vector<protocol::service> get_requested_services(client_t _client) const = 0;
 
     /// @brief Has _client requested the concrete instance [_service._instance]?
     ///
