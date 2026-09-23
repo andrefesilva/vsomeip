@@ -1518,8 +1518,12 @@ void application_impl::invoke_handler(std::unique_lock<std::mutex>& _lock, std::
                         VSOMEIP_INFO << "Won't start new dispatcher thread as Client=" << hex4(get_client()) << " is shutting down";
                     }
                 } else {
-                    VSOMEIP_ERROR << "Maximum number of dispatchers exceeded. Configuration: Max dispatchers: " << max_dispatchers_
-                                  << " Max dispatch time: " << max_dispatch_time_;
+                    VSOMEIP_ERROR << "Maximum number of dispatchers exceeded. Application [" << hex4(get_client()) << ", '" << get_name()
+                                  << "'] handler " << its_sync_handler << " has been running longer than " << max_dispatch_time_
+                                  << "ms and no dispatcher thread is free. " << handlers_.size()
+                                  << " queued handler(s) are delayed until an application handler returns. "
+                                  << "Check the application for blocking calls in its callbacks. Configuration: max_dispatchers="
+                                  << (max_dispatchers_ - 1) << " (+1 main), max_dispatch_time=" << max_dispatch_time_ << "ms";
                 }
             }
         }
