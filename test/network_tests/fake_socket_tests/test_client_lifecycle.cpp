@@ -2145,6 +2145,21 @@ TEST_F(test_pending_event_registration_split, same_event_offered_and_consumed_by
     EXPECT_TRUE(b_->message_record_.wait_for(notification_checker(s1_, ev1_.event_id_, s1_payload_)))
             << "B did not receive A's ev1: " << b_->message_record_;
 }
+TEST_F(test_pending_event_registration_split, resend_provided_events_from_non_router_is_ignored) {
+    /// RESEND_PROVIDED_EVENTS is a router-only command: when sent by a peer client it must be dropped
+
+    bring_up();
+
+    clear_command_record(a_name_, routingmanager_name_);
+    auto resend = make_resend_provided_events_command(b_->get_client());
+    ASSERT_TRUE(inject_command_tcp(b_name_, a_name_, resend, socket_role::server));
+    EXPECT_FALSE(wait_for_command(a_name_, routingmanager_name_, protocol::id_e::REGISTER_EVENT_ID, socket_role::server,
+                                  common::scaled_timeout(std::chrono::milliseconds(300))))
+            << "A resent its provided event registration on RESEND_PROVIDED_EVENTS from a non-router peer";
+    EXPECT_FALSE(wait_for_command(a_name_, routingmanager_name_, protocol::id_e::RESEND_PROVIDED_EVENTS_ID, socket_role::server,
+                                  common::scaled_timeout(std::chrono::milliseconds(300))))
+            << "A answered RESEND_PROVIDED_EVENTS from a non-router peer";
+}
 
 // A single app A that both offers and self-subscribes to ev1_, used to probe what notify()'s and
 // notify_one()'s _force argument actually does: bypass the FIELD no-change dedup in
