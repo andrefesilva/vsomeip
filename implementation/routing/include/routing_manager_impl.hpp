@@ -83,7 +83,7 @@ public:
 
     void request_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
 
-    void release_service(client_t _client, service_t _service, instance_t _instance);
+    void release_service(client_t _client, protocol::service_key const& _service);
 
     void subscribe(client_t _client, const vsomeip_sec_client_t* _sec_client, service_t _service, instance_t _instance,
                    eventgroup_t _eventgroup, major_version_t _major, event_t _event,
@@ -218,7 +218,7 @@ public:
 
     void remove_subscriptions(port_t _local_port, const boost::asio::ip::address& _remote_address, port_t _remote_port) override;
 
-    std::vector<protocol::service> get_requested_services(client_t _client) const;
+    std::vector<protocol::service_key> get_requested_services(client_t _client) const;
 
     bool has_client_requested(client_t _client, service_t _service, instance_t _instance);
 

@@ -411,9 +411,8 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
     }
 
     case protocol::id_e::RELEASE_SERVICE_ID: {
-        if (protocol::service_key its_release_data;
-            protocol::deserialize(its_release_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-            host_->release_service(its_client, its_release_data.service_, its_release_data.instance_);
+        if (protocol::service_key service; protocol::deserialize(service, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
+            host_->release_service(its_client, service);
         } else {
             VSOMEIP_ERROR_P << "Release service deserialization failed, memory: " << utility::dump(_data, _size);
         }
