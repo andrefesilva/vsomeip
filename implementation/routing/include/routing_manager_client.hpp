@@ -356,7 +356,7 @@ private:
 
     /// True while a pending provided registration still awaits its major, i.e. must not be put on the
     /// wire yet. Provider-only: a provider never offers ANY_MAJOR, whereas a consumer may request it.
-    static bool awaits_major(protocol::register_event_data const& _registration) { return _registration.service_key_.major_ == ANY_MAJOR; }
+    static bool awaits_major(protocol::register_event_data const& _registration) { return _registration.service_key_.major == ANY_MAJOR; }
 
     /**
      * @brief Moves the consumed-event registrations pending for (_service, _instance) into

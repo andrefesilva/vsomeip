@@ -10,10 +10,10 @@
 namespace vsomeip_v3::testing {
 
 protocol::service_data convert(protocol::service const& _in) {
-    return {.key_ = {.service_ = _in.service_, .instance_ = _in.instance_, .major_ = _in.major_}, .minor_version_ = _in.minor_};
+    return {.key_ = {.service = _in.service_, .instance = _in.instance_, .major = _in.major_}, .minor_version_ = _in.minor_};
 }
 protocol::service convert(protocol::service_data const& _in) {
-    return {_in.key_.service_, _in.key_.instance_, _in.key_.major_, _in.minor_version_};
+    return {_in.key_.service, _in.key_.instance, _in.key_.major, _in.minor_version_};
 }
 
 struct ut_sanity_check : ::testing::Test {
@@ -35,12 +35,12 @@ struct ut_sanity_check : ::testing::Test {
 };
 
 TEST_F(ut_sanity_check, check_book_keeping) {
-    auto service_d = protocol::service_data{.key_ = {.service_ = 0xd, .instance_ = 2, .major_ = 2}, .minor_version_ = 1};
+    auto service_d = protocol::service_data{.key_ = {.service = 0xd, .instance = 2, .major = 2}, .minor_version_ = 1};
     std::vector<protocol::service_data> many{
-            {.key_ = {.service_ = 0xc, .instance_ = 1, .major_ = 1}, .minor_version_ = 0},
-            {.key_ = {.service_ = 0xc, .instance_ = 3, .major_ = 1}, .minor_version_ = 0},
-            {.key_ = {.service_ = 0xc, .instance_ = 3, .major_ = 1}, .minor_version_ = 1}, // this should be removed
-            {.key_ = {.service_ = 0xc, .instance_ = 3, .major_ = 2}, .minor_version_ = 0}, // this should be removed unfortunately atm.
+            {.key_ = {.service = 0xc, .instance = 1, .major = 1}, .minor_version_ = 0},
+            {.key_ = {.service = 0xc, .instance = 3, .major = 1}, .minor_version_ = 0},
+            {.key_ = {.service = 0xc, .instance = 3, .major = 1}, .minor_version_ = 1}, // this should be removed
+            {.key_ = {.service = 0xc, .instance = 3, .major = 2}, .minor_version_ = 0}, // this should be removed unfortunately atm.
             service_d};
 
     for (auto const& s : many) {
@@ -52,7 +52,7 @@ TEST_F(ut_sanity_check, check_book_keeping) {
     ASSERT_EQ(table_.size(), 3); // this should change, once we support multiple major versions
 
     // this is a new feature.. removing any instance should really realse _any_ instance..
-    table_.remove({.key_ = {.service_ = 0xc, .instance_ = ANY_INSTANCE, .major_ = ANY_MAJOR}, .minor_version_ = ANY_MINOR});
+    table_.remove({.key_ = {.service = 0xc, .instance = ANY_INSTANCE, .major = ANY_MAJOR}, .minor_version_ = ANY_MINOR});
 
     auto new_content = table_content();
     std::vector<protocol::service_data> cleaned{service_d};

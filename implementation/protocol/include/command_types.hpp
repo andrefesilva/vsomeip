@@ -36,6 +36,12 @@
 
 namespace vsomeip_v3::protocol {
 
+using service_key = versioned_service_instance_t;
+
+constexpr uint32_t wire_size(service_key const&) {
+    return sizeof(service_t) + sizeof(instance_t) + sizeof(major_version_t);
+}
+
 struct command_header {
     auto operator<=>(command_header const&) const = default;
 
@@ -71,20 +77,10 @@ struct simple_command_data {
     command_header header_;
 };
 
-struct service_key {
-    auto operator<=>(service_key const&) const = default;
-
-    static constexpr uint32_t wire_size_{sizeof(service_t) + sizeof(instance_t) + sizeof(major_version_t)};
-
-    service_t service_;
-    instance_t instance_;
-    major_version_t major_;
-};
-
 struct service_data {
     auto operator<=>(service_data const&) const = default;
 
-    static constexpr uint32_t wire_size_{service_key::wire_size_ + sizeof(minor_version_t)};
+    static constexpr uint32_t wire_size_{wire_size(service_key{}) + sizeof(minor_version_t)};
 
     service_key key_;
     minor_version_t minor_version_;
@@ -115,7 +111,7 @@ struct release_service_command_data {
     auto operator<=>(release_service_command_data const&) const = default;
 
     static release_service_command_data create(client_t _client, service_key const& _key) {
-        return {.header_ = command_header::create(id_e::RELEASE_SERVICE_ID, service_key::wire_size_, _client), .payload_ = _key};
+        return {.header_ = command_header::create(id_e::RELEASE_SERVICE_ID, wire_size(service_key{}), _client), .payload_ = _key};
     }
 
     command_header header_;
@@ -158,7 +154,7 @@ struct assign_client_command_data {
 struct register_event_data {
     auto operator<=>(register_event_data const&) const = default;
 
-    static constexpr uint32_t fixed_wire_size_{service_key::wire_size_ + sizeof(event_t) + sizeof(event_type_e) + sizeof(bool)
+    static constexpr uint32_t fixed_wire_size_{wire_size(service_key{}) + sizeof(event_t) + sizeof(event_type_e) + sizeof(bool)
                                                + sizeof(reliability_type_e) + sizeof(bool) + sizeof(uint16_t)};
 
     uint32_t payload_size() const {
@@ -206,7 +202,7 @@ struct send_command_raw {
 struct unregister_event_data {
     auto operator<=>(unregister_event_data const&) const = default;
 
-    static constexpr uint32_t wire_size_{service_key::wire_size_ + sizeof(event_t) + sizeof(uint8_t)};
+    static constexpr uint32_t wire_size_{wire_size(service_key{}) + sizeof(event_t) + sizeof(uint8_t)};
     service_key service_key_;
     event_t event_;
     bool is_provided_;
@@ -240,7 +236,7 @@ struct unregister_event_command_data {
 struct subscribe_data {
     auto operator<=>(subscribe_data const&) const = default;
 
-    static constexpr uint32_t wire_size_{service_key::wire_size_ + sizeof(eventgroup_t) + sizeof(event_t) + sizeof(pending_id_t)};
+    static constexpr uint32_t wire_size_{wire_size(service_key{}) + sizeof(eventgroup_t) + sizeof(event_t) + sizeof(pending_id_t)};
 
     service_key service_key_;
     eventgroup_t eventgroup_;
@@ -274,7 +270,7 @@ struct subscribe_command_data {
 struct subscribe_answer_data {
     auto operator<=>(subscribe_answer_data const&) const = default;
 
-    static constexpr uint32_t wire_size_{service_key::wire_size_ + sizeof(eventgroup_t) + sizeof(client_t) + sizeof(event_t)
+    static constexpr uint32_t wire_size_{wire_size(service_key{}) + sizeof(eventgroup_t) + sizeof(client_t) + sizeof(event_t)
                                          + sizeof(pending_id_t)};
 
     service_key service_key_;
@@ -294,7 +290,7 @@ struct subscribe_answer_command_data {
 struct unsubscribe_ack_data {
     auto operator<=>(unsubscribe_ack_data const&) const = default;
 
-    static constexpr uint32_t wire_size_{service_key::wire_size_ + sizeof(eventgroup_t) + sizeof(pending_id_t)};
+    static constexpr uint32_t wire_size_{wire_size(service_key{}) + sizeof(eventgroup_t) + sizeof(pending_id_t)};
 
     service_key service_key_;
     eventgroup_t eventgroup_;

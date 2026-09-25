@@ -128,13 +128,13 @@ TEST(ut_commands_roundtrip, pong_roundtrip) {
 
 TEST(ut_commands_roundtrip, offer_service_roundtrip) {
     auto cmd = create_offer_service_cmd(0x1234,
-                                        {.key_ = {.service_ = 0xABCD, .instance_ = 0x0001, .major_ = 0x02}, .minor_version_ = 0x00000003});
+                                        {.key_ = {.service = 0xABCD, .instance = 0x0001, .major = 0x02}, .minor_version_ = 0x00000003});
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
 
 TEST(ut_commands_roundtrip, stop_offer_service_roundtrip) {
     auto cmd = create_stop_offer_service_cmd(
-            0x5678, {.key_ = {.service_ = 0x1111, .instance_ = 0x2222, .major_ = 0x01}, .minor_version_ = 0x00000000});
+            0x5678, {.key_ = {.service = 0x1111, .instance = 0x2222, .major = 0x01}, .minor_version_ = 0x00000000});
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
 
@@ -178,17 +178,17 @@ TEST(ut_commands_roundtrip, resend_provided_events_roundtrip) {
 // --- Service commands (composite payload) ---
 
 TEST(ut_commands_roundtrip, release_service_roundtrip) {
-    auto cmd = create_release_service_cmd(0x1234, {.service_ = 0xABCD, .instance_ = 0x0001, .major_ = 0x1});
+    auto cmd = create_release_service_cmd(0x1234, {.service = 0xABCD, .instance = 0x0001, .major = 0x1});
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
 
 TEST(ut_commands_roundtrip, unregister_event_roundtrip) {
-    auto cmd = create_unregister_event_cmd(0x1234, {.service_ = 0xABCD, .instance_ = 0x0001, .major_ = 0x02}, 0x4242, true);
+    auto cmd = create_unregister_event_cmd(0x1234, {.service = 0xABCD, .instance = 0x0001, .major = 0x02}, 0x4242, true);
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
 
 TEST(ut_commands_roundtrip, unsubscribe_ack_roundtrip) {
-    auto cmd = create_unsubscribe_ack_cmd(0x1234, {.service_ = 0xABCD, .instance_ = 0x0001, .major_ = 0x02}, 0x0005, 0x1111);
+    auto cmd = create_unsubscribe_ack_cmd(0x1234, {.service = 0xABCD, .instance = 0x0001, .major = 0x02}, 0x0005, 0x1111);
     EXPECT_EQ(roundtrip(cmd), cmd);
 }
 
@@ -208,7 +208,7 @@ TEST(ut_commands_roundtrip, remove_security_policy_response_roundtrip) {
 }
 TEST(ut_commands_roundtrip, subscribe_ack_command) {
     auto cmd = create_subscribe_ack_cmd(0x1234,
-                                        {.service_key_ = {.service_ = 0x98, .instance_ = 0x97, .major_ = 0x1},
+                                        {.service_key_ = {.service = 0x98, .instance = 0x97, .major = 0x1},
                                          .eventgroup_ = 0x96,
                                          .subscriber_ = 0x95,
                                          .event_ = 0x94,
@@ -217,7 +217,7 @@ TEST(ut_commands_roundtrip, subscribe_ack_command) {
 }
 TEST(ut_commands_roundtrip, subscribe_nack_command) {
     auto cmd = create_subscribe_nack_cmd(0x1234,
-                                         {.service_key_ = {.service_ = 0x121, .instance_ = 0x122, .major_ = 0x13},
+                                         {.service_key_ = {.service = 0x121, .instance = 0x122, .major = 0x13},
                                           .eventgroup_ = 0x123,
                                           .subscriber_ = 0x124,
                                           .event_ = 0x125,
@@ -227,7 +227,7 @@ TEST(ut_commands_roundtrip, subscribe_nack_command) {
 
 TEST(ut_commands_roundtrip, expire_command) {
     auto cmd = protocol::create_expire_cmd(0x7,
-                                           subscribe_data{.service_key_ = {.service_ = 0x1, .instance_ = 0x2, .major_ = 0x4},
+                                           subscribe_data{.service_key_ = {.service = 0x1, .instance = 0x2, .major = 0x4},
                                                           .eventgroup_ = 0x3,
                                                           .event_ = 0x5,
                                                           .pending_id_ = 0x6});
@@ -236,7 +236,7 @@ TEST(ut_commands_roundtrip, expire_command) {
 }
 TEST(ut_commands_roundtrip, unsubscribe_command) {
     auto cmd = protocol::create_unsubscribe_cmd(0x14,
-                                                subscribe_data{.service_key_ = {.service_ = 0x8, .instance_ = 0x9, .major_ = 0x11},
+                                                subscribe_data{.service_key_ = {.service = 0x8, .instance = 0x9, .major = 0x11},
                                                                .eventgroup_ = 0x10,
                                                                .event_ = 0x12,
                                                                .pending_id_ = 0x13});
@@ -245,7 +245,7 @@ TEST(ut_commands_roundtrip, unsubscribe_command) {
 }
 TEST(ut_commands_roundtrip, subscribe_command) {
     auto data = subscribe_data{
-            .service_key_ = {.service_ = 0x13, .instance_ = 0x42, .major_ = 0x12}, .eventgroup_ = 0x11, .event_ = 0x13, .pending_id_ = 0x1};
+            .service_key_ = {.service = 0x13, .instance = 0x42, .major = 0x12}, .eventgroup_ = 0x11, .event_ = 0x13, .pending_id_ = 0x1};
 
     std::shared_ptr<debounce_filter_impl_t> no_filter = nullptr;
     std::shared_ptr<debounce_filter_impl_t> no_map = std::make_shared<debounce_filter_impl_t>();
@@ -373,9 +373,9 @@ TEST(ut_commands_roundtrip, distribute_security_policy) {
 TEST(ut_commands_roundtrip, request_service_command) {
     std::vector<protocol::service_data> no{};
     std::vector<protocol::service_data> one{
-            {.key_ = {.service_ = 0x12, .instance_ = 1, .major_ = DEFAULT_MAJOR}, .minor_version_ = ANY_MINOR}};
-    std::vector<protocol::service_data> many{{.key_ = {.service_ = 0xa, .instance_ = 2, .major_ = 1}, .minor_version_ = 0},
-                                             {.key_ = {.service_ = 0xb, .instance_ = 3, .major_ = 2}, .minor_version_ = 1}};
+            {.key_ = {.service = 0x12, .instance = 1, .major = DEFAULT_MAJOR}, .minor_version_ = ANY_MINOR}};
+    std::vector<protocol::service_data> many{{.key_ = {.service = 0xa, .instance = 2, .major = 1}, .minor_version_ = 0},
+                                             {.key_ = {.service = 0xb, .instance = 3, .major = 2}, .minor_version_ = 1}};
 
     for (auto const& payload : {no, one, many}) {
         auto cmd = create_request_service_cmd(0x1, payload);
@@ -388,9 +388,9 @@ TEST(ut_commands_roundtrip, request_service_command) {
 TEST(ut_commands_roundtrip, offered_services_response_cmd) {
     std::vector<protocol::service_data> no{};
     std::vector<protocol::service_data> one{
-            {.key_ = {.service_ = 0x21, .instance_ = 2, .major_ = ANY_MAJOR}, .minor_version_ = DEFAULT_MINOR}};
-    std::vector<protocol::service_data> many{{.key_ = {.service_ = 0xc, .instance_ = 1, .major_ = 1}, .minor_version_ = 0},
-                                             {.key_ = {.service_ = 0xd, .instance_ = 2, .major_ = 2}, .minor_version_ = 1}};
+            {.key_ = {.service = 0x21, .instance = 2, .major = ANY_MAJOR}, .minor_version_ = DEFAULT_MINOR}};
+    std::vector<protocol::service_data> many{{.key_ = {.service = 0xc, .instance = 1, .major = 1}, .minor_version_ = 0},
+                                             {.key_ = {.service = 0xd, .instance = 2, .major = 2}, .minor_version_ = 1}};
 
     for (auto const& payload : {no, one, many}) {
         auto cmd = create_offered_services_response_cmd(0x1, payload);
@@ -402,21 +402,21 @@ TEST(ut_commands_roundtrip, offered_services_response_cmd) {
 
 TEST(ut_commands_roundtrip, register_events_command) {
     std::vector<protocol::register_event_data> no{};
-    std::vector<protocol::register_event_data> one{{.service_key_ = {.service_ = 0x1234, .instance_ = 0x0001, .major_ = 0x1},
+    std::vector<protocol::register_event_data> one{{.service_key_ = {.service = 0x1234, .instance = 0x0001, .major = 0x1},
                                                     .event_ = 0x8001,
                                                     .event_type_ = event_type_e::ET_FIELD,
                                                     .is_provided_ = true,
                                                     .reliability_ = reliability_type_e::RT_RELIABLE,
                                                     .is_cyclic_ = false,
                                                     .eventgroups_ = {0x0010, 0x0020}}};
-    std::vector<protocol::register_event_data> many{{.service_key_ = {.service_ = 0xaaaa, .instance_ = 0x0002, .major_ = 0x2},
+    std::vector<protocol::register_event_data> many{{.service_key_ = {.service = 0xaaaa, .instance = 0x0002, .major = 0x2},
                                                      .event_ = 0x8002,
                                                      .event_type_ = event_type_e::ET_EVENT,
                                                      .is_provided_ = false,
                                                      .reliability_ = reliability_type_e::RT_UNRELIABLE,
                                                      .is_cyclic_ = true,
                                                      .eventgroups_ = {}},
-                                                    {.service_key_ = {.service_ = 0xbbbb, .instance_ = 0x0003, .major_ = 0x10},
+                                                    {.service_key_ = {.service = 0xbbbb, .instance = 0x0003, .major = 0x10},
                                                      .event_ = 0x8003,
                                                      .event_type_ = event_type_e::ET_SELECTIVE_EVENT,
                                                      .is_provided_ = true,

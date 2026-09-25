@@ -26,6 +26,7 @@ namespace vsomeip_v3::protocol {
 uint32_t deserialize(std::map<size_t, byte_t>& _out, unsigned char const* _mem, uint32_t _size);
 uint32_t deserialize(std::shared_ptr<debounce_filter_impl_t>& _out, unsigned char const* _mem, uint32_t _size);
 uint32_t deserialize(std::vector<std::pair<uid_t, gid_t>>& _out, unsigned char const* _mem, uint32_t _size);
+uint32_t deserialize(vsomeip_v3::versioned_service_instance_t& _out, unsigned char const* _mem, uint32_t _size);
 
 template<typename T>
     requires(std::is_integral_v<T> || std::is_enum_v<T>)
@@ -74,8 +75,8 @@ inline uint32_t deserialize(command_header& _out, unsigned char const* _mem, uin
     return parse(_mem, _size, _out.id_, _out.version_, _out.client_, _out.length_);
 }
 
-inline uint32_t deserialize(service_key& _out, unsigned char const* _mem, uint32_t _size) {
-    return parse(_mem, _size, _out.service_, _out.instance_, _out.major_);
+inline uint32_t deserialize(vsomeip_v3::versioned_service_instance_t& _out, unsigned char const* _mem, uint32_t _size) {
+    return parse(_mem, _size, _out.service, _out.instance, _out.major);
 }
 inline uint32_t deserialize(service_data& _out, unsigned char const* _mem, uint32_t _size) {
     return parse(_mem, _size, _out.key_, _out.minor_version_);
