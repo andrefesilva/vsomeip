@@ -361,7 +361,7 @@ void routing_manager_impl::request_service(client_t _client, service_t _service,
     }
 }
 
-void routing_manager_impl::release_service(client_t _client, protocol::service_key const& _service) {
+void routing_manager_impl::release_service(client_t _client, versioned_service_instance_t const& _service) {
 
     VSOMEIP_INFO << "RELEASE(" << hex4(_client) << "): [" << _service << "]";
     bool found{false};
@@ -372,9 +372,9 @@ void routing_manager_impl::release_service(client_t _client, protocol::service_k
         // per-major FindService state can be released precisely for what this client gives up,
         // without touching another client's request for a different major of the same service.
         // (atm. no client is allowed to request multiple majors)
-        if (auto found_service = requested_services_.find(_service.service_); found_service != requested_services_.end()) {
-            if (auto found_instance = found_service->second.find(_service.instance_); found_instance != found_service->second.end()) {
-                if (auto found_major = found_instance->second.find(_service.major_); found_major != found_instance->second.end()) {
+        if (auto found_service = requested_services_.find(_service.service); found_service != requested_services_.end()) {
+            if (auto found_instance = found_service->second.find(_service.instance); found_instance != found_service->second.end()) {
+                if (auto found_major = found_instance->second.find(_service.major); found_major != found_instance->second.end()) {
                     for (auto minor_it = found_major->second.begin(); minor_it != found_major->second.end(); ++minor_it) {
                         if (minor_it->second.erase(_client) == 0) {
                             continue;
@@ -387,7 +387,7 @@ void routing_manager_impl::release_service(client_t _client, protocol::service_k
                                 // but subscriptions are dealt with below, as those can only be given for a currently
                                 // available service
                                 if (discovery_) {
-                                    discovery_->release_service(_service.service_, _service.instance_, _service.major_);
+                                    discovery_->release_service(_service.service, _service.instance, _service.major);
                                 }
                                 found_instance->second.erase(found_major);
                             }
@@ -410,7 +410,7 @@ void routing_manager_impl::release_service(client_t _client, protocol::service_k
         return;
     }
 
-    remove_pending_requests(pending_request_removal_type_e::REQUESTING_ONLY, _client, _service.service_, _service.instance_);
+    remove_pending_requests(pending_request_removal_type_e::REQUESTING_ONLY, _client, _service.service, _service.instance);
     // A client releasing a concrete major only ever affects that one major's bookkeeping -- the
     // loop below runs exactly once for it, unchanged from before this was a loop. A client
     // releasing ANY_MAJOR, however, could have been counted as a requester of ANY currently-known
@@ -424,22 +424,22 @@ void routing_manager_impl::release_service(client_t _client, protocol::service_k
     // individually and release each one that, on its own, has no requester left -- never just
     // whichever single major this client happened to resolve to.
     std::vector<major_version_t> majors_to_check;
-    if (_service.major_ != ANY_MAJOR) {
-        majors_to_check.push_back(_service.major_);
+    if (_service.major != ANY_MAJOR) {
+        majors_to_check.push_back(_service.major);
     } else {
-        for (const auto& [major, info] : find_services(_service.service_, _service.instance_)) {
+        for (const auto& [major, info] : find_services(_service.service, _service.instance)) {
             (void)info;
             majors_to_check.push_back(major);
         }
     }
 
     for (major_version_t const major : majors_to_check) {
-        std::shared_ptr<serviceinfo> its_info(find_service(_service.service_, _service.instance_, major));
+        std::shared_ptr<serviceinfo> its_info(find_service(_service.service, _service.instance, major));
 
         if (its_info && !its_info->is_local()) {
-            if (!has_requester(_service.service_, _service.instance_, major, ANY_MINOR)) {
+            if (!has_requester(_service.service, _service.instance, major, ANY_MINOR)) {
                 // toc-tou race we now act as if we don't have requesters, but the mutex is unlocked
-                auto its_eventgroups = find_eventgroups(_service.service_, _service.instance_);
+                auto its_eventgroups = find_eventgroups(_service.service, _service.instance);
                 for (const auto& eg : its_eventgroups) {
                     auto its_events = eg->get_events();
                     for (auto& e : its_events) {
@@ -448,15 +448,15 @@ void routing_manager_impl::release_service(client_t _client, protocol::service_k
                 }
 
                 if (discovery_) {
-                    discovery_->unsubscribe_all(_service.service_, _service.instance_);
+                    discovery_->unsubscribe_all(_service.service, _service.instance);
                 }
-                ep_mgr_impl_->clear_client_endpoints(_service.service_, _service.instance_, major, true, std::nullopt);
-                ep_mgr_impl_->clear_client_endpoints(_service.service_, _service.instance_, major, false, std::nullopt);
+                ep_mgr_impl_->clear_client_endpoints(_service.service, _service.instance, major, true, std::nullopt);
+                ep_mgr_impl_->clear_client_endpoints(_service.service, _service.instance, major, false, std::nullopt);
                 its_info->set_endpoint(nullptr, true);
                 its_info->set_endpoint(nullptr, false);
-                unset_all_eventpayloads(_service.service_, _service.instance_);
+                unset_all_eventpayloads(_service.service, _service.instance);
             } else {
-                auto its_eventgroups = find_eventgroups(_service.service_, _service.instance_);
+                auto its_eventgroups = find_eventgroups(_service.service, _service.instance);
                 for (const auto& eg : its_eventgroups) {
                     auto its_id = eg->get_eventgroup();
                     auto its_events = eg->get_events();
@@ -468,12 +468,12 @@ void routing_manager_impl::release_service(client_t _client, protocol::service_k
                         }
                     }
                     if (discovery_) {
-                        discovery_->unsubscribe(_service.service_, _service.instance_, its_id, _client);
+                        discovery_->unsubscribe(_service.service, _service.instance, its_id, _client);
                     }
                     if (!eg_has_subscribers) {
                         for (const auto& e : its_events) {
                             if (e->is_set()) {
-                                VSOMEIP_INFO_P << "Unsetting payload for [" << hex4(_service.service_) << "." << hex4(_service.instance_)
+                                VSOMEIP_INFO_P << "Unsetting payload for [" << hex4(_service.service) << "." << hex4(_service.instance)
                                                << "." << hex4(e->get_event()) << "]";
                             }
                             e->unset_payload(true);
@@ -2696,7 +2696,8 @@ bool routing_manager_impl::handle_service_rerequest(client_t _client, service_t 
                 if (stub_->send_ping(offering_client)) {
                     // Add to pending requests
                     pending_requests_[its_key] = std::pair(offering_client, std::set<client_t>{_client});
-                    VSOMEIP_WARNING << "REQUEST(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "] pending.";
+                    VSOMEIP_WARNING << "REQUEST(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "."
+                                    << static_cast<int>(_major) << "] pending.";
                     return false;
                 }
             }
@@ -3211,16 +3212,16 @@ void routing_manager_impl::remove_requested_service(client_t _client, service_t 
     }
 }
 
-std::vector<protocol::service_key> routing_manager_impl::get_requested_services(client_t _client) const {
+std::vector<versioned_service_instance_t> routing_manager_impl::get_requested_services(client_t _client) const {
     std::scoped_lock ist_lock{requested_services_mutex_};
-    std::vector<protocol::service_key> its_requests;
+    std::vector<versioned_service_instance_t> its_requests;
     for (const auto& [service, instances] : requested_services_) {
         for (const auto& [instance, majors] : instances) {
             bool requested = false;
             for (const auto& [major, minors] : majors) {
                 for (const auto& [minor, clients] : minors) {
                     if (clients.count(_client) > 0) {
-                        its_requests.push_back(protocol::service_key{.service_ = service, .instance_ = instance, .major_ = major});
+                        its_requests.push_back(versioned_service_instance_t{.service = service, .instance = instance, .major = major});
                         requested = true;
                         break;
                     }
@@ -3601,7 +3602,7 @@ void routing_manager_impl::on_unsubscribe_ack(client_t _client, service_t _servi
 void routing_manager_impl::send_subscription(const client_t _offering_client, const service_t _service, const instance_t _instance,
                                              const eventgroup_t _eventgroup, const major_version_t _major,
                                              const std::set<client_t>& _clients, const remote_subscription_id_t _id) {
-    protocol::subscribe_data data{.service_key_ = {.service_ = _service, .instance_ = _instance, .major_ = _major},
+    protocol::subscribe_data data{.service_key_ = {.service = _service, .instance = _instance, .major = _major},
                                   .eventgroup_ = _eventgroup,
                                   .event_ = ANY_EVENT,
                                   .pending_id_ = _id};
@@ -3750,7 +3751,7 @@ void routing_manager_impl::send_unsubscription(client_t _offering_client, servic
     for (const auto its_client : _removed) {
         if (!target->send(protocol::create_unsubscribe_cmd(
                     its_client,
-                    protocol::subscribe_data{.service_key_ = {.service_ = _service, .instance_ = _instance, .major_ = ANY_MAJOR},
+                    protocol::subscribe_data{.service_key_ = {.service = _service, .instance = _instance, .major = ANY_MAJOR},
                                              .eventgroup_ = _eventgroup,
                                              .event_ = ANY_EVENT,
                                              .pending_id_ = _id}))) {
@@ -3777,7 +3778,7 @@ void routing_manager_impl::send_expired_subscription(client_t _offering_client, 
             if (auto target = find_routing_endpoint(_offering_client); !target
                 || !target->send(protocol::create_expire_cmd(
                         its_client,
-                        protocol::subscribe_data{.service_key_ = {.service_ = _service, .instance_ = _instance, .major_ = ANY_MAJOR},
+                        protocol::subscribe_data{.service_key_ = {.service = _service, .instance = _instance, .major = ANY_MAJOR},
                                                  .eventgroup_ = _eventgroup,
                                                  .event_ = ANY_EVENT,
                                                  .pending_id_ = _id}))) {

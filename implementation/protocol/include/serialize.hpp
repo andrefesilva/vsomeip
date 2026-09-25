@@ -103,7 +103,7 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
     } else if constexpr (std::is_same_v<T, command_header>) {
         return write_fields(_mem, _value.id_, _value.version_, _value.client_, _value.length_);
     } else if constexpr (std::is_same_v<T, service_key>) {
-        return write_fields(_mem, _value.service_, _value.instance_, _value.major_);
+        return write_fields(_mem, _value.service, _value.instance, _value.major);
     } else if constexpr (std::is_same_v<T, service_data>) {
         return write_fields(_mem, _value.key_, _value.minor_version_);
     } else if constexpr (std::is_same_v<T, std::string_view>) {

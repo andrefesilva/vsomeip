@@ -277,7 +277,7 @@ bool routing_manager_client::offer_service(client_t _client, service_t _service,
     std::scoped_lock its_lock(provider_mutex_, mutex_);
     if (auto its_info = offered_services_.find(protocol::service_data{.key_ = {_service, _instance, _major}, .minor_version_ = _minor});
         its_info) {
-        if (its_info->key_.major_ != _major || its_info->minor_version_ != _minor) {
+        if (its_info->key_.major != _major || its_info->minor_version_ != _minor) {
             VSOMEIP_ERROR_P << "Service property mismatch (" << hex4(_client) << "): " << *its_info
                             << " passed: " << static_cast<uint32_t>(_major) << ":" << _minor;
             return false;
@@ -302,7 +302,7 @@ bool routing_manager_client::offer_service(client_t _client, service_t _service,
     // otherwise:
     // state might be not be registered, but turn registered just after the check,
     // rushing ahead sending the pending offers that do not contain this offer yet.
-    protocol::service_data offer_data{.key_ = {.service_ = _service, .instance_ = _instance, .major_ = _major}, .minor_version_ = _minor};
+    protocol::service_data offer_data{.key_ = {.service = _service, .instance = _instance, .major = _major}, .minor_version_ = _minor};
     offered_services_.insert(offer_data);
     if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
         client_t const its_client = state_machine_->client();
@@ -312,8 +312,8 @@ bool routing_manager_client::offer_service(client_t _client, service_t _service,
             its_batch.add(protocol::create_register_events_cmd(its_client, its_resolved_registrations));
             for (auto const& its_registration : its_resolved_registrations) {
                 VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): ["
-                             << protocol::event_key{its_registration.service_key_, its_registration.event_}
-                             << ":is_provider=" << std::boolalpha << true << "]";
+                             << event_key{its_registration.service_key_, its_registration.event_} << ":is_provider=" << std::boolalpha
+                             << true << "]";
             }
         }
         its_batch.add(protocol::create_offer_service_cmd(its_client, offer_data));
@@ -338,7 +338,7 @@ void routing_manager_client::stop_offer_service(client_t _client, service_t _ser
     // otherwise it might happen that we don't send the stop offer,
     // but have not removed the offer when REGISTERED is entered
 
-    protocol::service_data offer_data{.key_ = {.service_ = _service, .instance_ = _instance, .major_ = _major}, .minor_version_ = _minor};
+    protocol::service_data offer_data{.key_ = {.service = _service, .instance = _instance, .major = _major}, .minor_version_ = _minor};
     offered_services_.remove(offer_data);
 
     // No cleanup of the provided-event registrations here: stopping the offer does not un-offer the
@@ -364,18 +364,17 @@ void routing_manager_client::request_service([[maybe_unused]] client_t _client, 
 
     {
         size_t request_debouncing_time = configuration_->get_request_debounce_time(host_->get_name());
-        protocol::service_data request = {.key_ = {.service_ = _service, .instance_ = _instance, .major_ = _major},
-                                          .minor_version_ = _minor};
+        protocol::service_data request = {.key_ = {.service = _service, .instance = _instance, .major = _major}, .minor_version_ = _minor};
         std::scoped_lock its_lock{consumer_mutex_};
         if (auto const* existing = requests_.find(request); existing) {
-            if (existing->key_.major_ != _major) {
+            if (existing->key_.major != _major) {
                 VSOMEIP_ERROR_P << "Dropping request for: " << request.key_ << ", already requested: " << existing->key_
                                 << " and multiple major versions can not be requested";
             }
             return;
         }
         if (auto const* existing = requests_to_debounce_.find(request); existing) {
-            if (existing->key_.major_ != _major) {
+            if (existing->key_.major != _major) {
                 VSOMEIP_ERROR_P << "Dropping request for: " << request.key_ << ", already requested: " << existing->key_
                                 << " and multiple major versions can not be requested";
             }
@@ -437,7 +436,7 @@ void routing_manager_client::release_service(client_t _client, service_t _servic
             }
             std::erase_if(its_si->second, [](const auto& kv) { return !kv.second.event_; });
         }
-        protocol::service_data request{.key_ = {.service_ = _service, .instance_ = _instance, .major_ = ANY_MAJOR},
+        protocol::service_data request{.key_ = {.service = _service, .instance = _instance, .major = ANY_MAJOR},
                                        .minor_version_ = ANY_MINOR};
         requests_to_debounce_.remove(request);
         already_requested = requests_.remove(request);
@@ -448,7 +447,7 @@ void routing_manager_client::release_service(client_t _client, service_t _servic
         // entry while that request is still active would make the next stop-offer look like a
         // no-op (available_services_.remove() returning false), silently dropping the AS_UNAVAILABLE
         // notification for that other, still-interested requester.
-        protocol::service_data const wildcard_request{.key_ = {.service_ = _service, .instance_ = ANY_INSTANCE, .major_ = ANY_MAJOR},
+        protocol::service_data const wildcard_request{.key_ = {.service = _service, .instance = ANY_INSTANCE, .major = ANY_MAJOR},
                                                       .minor_version_ = ANY_MINOR};
         const bool other_local_interest =
                 _instance != ANY_INSTANCE && (requests_.contains(wildcard_request) || requests_to_debounce_.contains(wildcard_request));
@@ -463,7 +462,7 @@ void routing_manager_client::release_service(client_t _client, service_t _servic
         client_t const its_client = state_machine_->client();
         if (sender_) {
             if (!sender_->send(protocol::create_release_service_cmd(its_client,
-                                                                    {.service_ = _service, .instance_ = _instance, .major_ = its_major}))) {
+                                                                    {.service = _service, .instance = _instance, .major = its_major}))) {
                 VSOMEIP_ERROR_P << "Failed to send RELEASE_SERVICE for client 0x" << hex4(_client) << " and service [" << hex4(_service)
                                 << "." << hex4(_instance) << "]";
             }
@@ -480,7 +479,7 @@ void routing_manager_client::register_event(client_t _client, service_t _service
 
     bool is_cyclic(_cycle != std::chrono::milliseconds::zero());
 
-    protocol::register_event_data reg_event_data{.service_key_ = {.service_ = _service, .instance_ = _instance, .major_ = ANY_MAJOR},
+    protocol::register_event_data reg_event_data{.service_key_ = {.service = _service, .instance = _instance, .major = ANY_MAJOR},
                                                  .event_ = _notifier,
                                                  .event_type_ = _type,
                                                  .is_provided_ = _is_provided,
@@ -494,7 +493,7 @@ void routing_manager_client::register_event(client_t _client, service_t _service
     // are the same registration even while their majors differ. Keep the tie in sync when a field is
     // added to register_event_data.
     auto identity = [](protocol::register_event_data const& _d) {
-        return std::tie(_d.service_key_.service_, _d.service_key_.instance_, _d.event_, _d.event_type_, _d.is_provided_, _d.reliability_,
+        return std::tie(_d.service_key_.service, _d.service_key_.instance, _d.event_, _d.event_type_, _d.is_provided_, _d.reliability_,
                         _d.is_cyclic_, _d.eventgroups_);
     };
     auto is_new = [&reg_event_data, &identity](std::vector<protocol::register_event_data> const& _regs) {
@@ -506,7 +505,7 @@ void routing_manager_client::register_event(client_t _client, service_t _service
         std::scoped_lock its_lock{provider_mutex_};
         // Expected order is events before the offer, which leaves ANY_MAJOR; only the late case
         // flagged below resolves here and can go out right away.
-        reg_event_data.service_key_.major_ = find_offered_major(_service, _instance, its_lock);
+        reg_event_data.service_key_.major = find_offered_major(_service, _instance, its_lock);
         is_pending = awaits_major(reg_event_data);
         new_registration = is_new(provided_event_registrations_);
         // Flag only the genuine late case - the offer is already on the wire. A re-registration
@@ -525,7 +524,7 @@ void routing_manager_client::register_event(client_t _client, service_t _service
         std::scoped_lock its_lock{consumer_mutex_};
         // Expected order is request before events, which already knows the major; otherwise the
         // registration is pending until request_service() supplies it.
-        reg_event_data.service_key_.major_ = find_requested_major(_service, _instance, its_lock);
+        reg_event_data.service_key_.major = find_requested_major(_service, _instance, its_lock);
         is_pending = !is_requested(_service, _instance, its_lock);
         new_registration = is_new(consumed_event_registrations_) && is_new(pending_consumed_event_registrations_);
         // Only subscribing first is an ordering mistake; registering after request_service() is the
@@ -535,7 +534,7 @@ void routing_manager_client::register_event(client_t _client, service_t _service
                            [this, _service, _instance, _notifier, &its_lock](eventgroup_t _eventgroup) {
                                return is_subscribed(_service, _instance, _eventgroup, _notifier, its_lock);
                            })) {
-            VSOMEIP_ERROR_P << "Event [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_notifier)
+            VSOMEIP_ERROR_P << "Event [" << event_key{reg_event_data.service_key_, _notifier}
                             << "] registered after subscribing to its eventgroup; register events before subscribing.";
         }
         if (new_registration) {
@@ -552,12 +551,11 @@ void routing_manager_client::register_event(client_t _client, service_t _service
         client_t const its_client = state_machine_->client();
         if (send_event_registrations(its_client, std::span{&reg_event_data, 1}, lock)) {
             if (_is_provided) {
-                VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): ["
-                             << protocol::event_key{reg_event_data.service_key_, _notifier} << ":is_provider=" << std::boolalpha
-                             << _is_provided << "]";
+                VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): [" << event_key{reg_event_data.service_key_, _notifier}
+                             << ":is_provider=" << std::boolalpha << _is_provided << "]";
             }
         } else {
-            VSOMEIP_ERROR_P << "Failed to send the event registration [" << protocol::event_key{reg_event_data.service_key_, _notifier}
+            VSOMEIP_ERROR_P << "Failed to send the event registration [" << event_key{reg_event_data.service_key_, _notifier}
                             << ":is_provider=" << std::boolalpha << _is_provided << "]";
         }
     }
@@ -576,7 +574,7 @@ void routing_manager_client::unregister_event(client_t _client, service_t _servi
     {
         auto erase_from = [&](std::vector<protocol::register_event_data>& _regs) {
             auto its_reg = std::find_if(_regs.begin(), _regs.end(), [&](protocol::register_event_data const& _reg) {
-                return _reg.service_key_.service_ == _service && _reg.service_key_.instance_ == _instance && _reg.event_ == _notifier;
+                return _reg.service_key_.service == _service && _reg.service_key_.instance == _instance && _reg.event_ == _notifier;
             });
             if (its_reg != _regs.end()) {
                 _regs.erase(its_reg);
@@ -596,9 +594,9 @@ void routing_manager_client::unregister_event(client_t _client, service_t _servi
     if (std::scoped_lock lock{mutex_}; state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
         client_t const its_client = state_machine_->client();
         if (sender_) {
-            protocol::service_key const its_key{.service_ = _service, .instance_ = _instance, .major_ = its_major};
+            protocol::service_key const its_key{.service = _service, .instance = _instance, .major = its_major};
             if (!sender_->send(protocol::create_unregister_event_cmd(its_client, its_key, _notifier, _is_provided))) {
-                VSOMEIP_ERROR_P << "Failed to send UNREGISTER_EVENT for event [" << protocol::event_key{its_key, _notifier}
+                VSOMEIP_ERROR_P << "Failed to send UNREGISTER_EVENT for event [" << event_key{its_key, _notifier}
                                 << ":is_provider=" << std::boolalpha << _is_provided << "]";
             }
         } else {
@@ -619,8 +617,9 @@ void routing_manager_client::subscribe(client_t _client, service_t _service, ins
         auto& its_consumed_event = consumed_events_[{_service, _instance}][_event];
         // A concrete event must be registered (register_event) before subscribe(); a null event_ here is a usage error.
         if (_event != ANY_EVENT && !its_consumed_event.event_) {
-            VSOMEIP_ERROR_P << "(" << hex4(get_client()) << "): [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup)
-                            << ":" << hex4(_event) << "] subscribe called before register_event ~> the event is not registered yet.";
+            VSOMEIP_ERROR_P << "(" << hex4(get_client()) << "): [" << versioned_service_instance_t{_service, _instance, _major} << ":"
+                            << hex4(_eventgroup) << ":" << hex4(_event)
+                            << "] subscribe called before register_event ~> the event is not registered yet.";
         }
         auto& its_subscriptions = its_consumed_event.subscriptions_;
         auto found_eg = its_subscriptions.find(_eventgroup);
@@ -692,7 +691,7 @@ void routing_manager_client::send_subscribe(client_t _client, service_t _service
 
     auto const cmd = protocol::create_subscribe_cmd(
             _client, _filter,
-            protocol::subscribe_data{.service_key_{.service_ = _service, .instance_ = _instance, .major_ = _major},
+            protocol::subscribe_data{.service_key_{.service = _service, .instance = _instance, .major = _major},
                                      .eventgroup_ = _eventgroup,
                                      .event_ = _event,
                                      .pending_id_ = PENDING_SUBSCRIPTION_ID});
@@ -727,9 +726,9 @@ void routing_manager_client::send_subscribe_nack(client_t _subscriber, service_t
 
     auto cmd = protocol::create_subscribe_nack_cmd(
             get_registered_client(),
-            protocol::subscribe_answer_data{.service_key_ = {.service_ = _service,
-                                                             .instance_ = _instance,
-                                                             .major_ = find_offered_major(_service, _instance, _provider_lock)},
+            protocol::subscribe_answer_data{.service_key_ = {.service = _service,
+                                                             .instance = _instance,
+                                                             .major = find_offered_major(_service, _instance, _provider_lock)},
                                             .eventgroup_ = _eventgroup,
                                             .subscriber_ = _subscriber,
                                             .event_ = _event,
@@ -766,9 +765,9 @@ void routing_manager_client::send_subscribe_ack(client_t _subscriber, service_t 
 
     auto cmd = protocol::create_subscribe_ack_cmd(
             get_registered_client(),
-            protocol::subscribe_answer_data{.service_key_ = {.service_ = _service,
-                                                             .instance_ = _instance,
-                                                             .major_ = find_offered_major(_service, _instance, _provider_lock)},
+            protocol::subscribe_answer_data{.service_key_ = {.service = _service,
+                                                             .instance = _instance,
+                                                             .major = find_offered_major(_service, _instance, _provider_lock)},
                                             .eventgroup_ = _eventgroup,
                                             .subscriber_ = _subscriber,
                                             .event_ = _event,
@@ -841,7 +840,7 @@ void routing_manager_client::unsubscribe(client_t _client, service_t _service, i
 
             auto cmd = protocol::create_unsubscribe_cmd(
                     its_client,
-                    protocol::subscribe_data{.service_key_ = {.service_ = _service, .instance_ = _instance, .major_ = its_major},
+                    protocol::subscribe_data{.service_key_ = {.service = _service, .instance = _instance, .major = its_major},
 
                                              .eventgroup_ = _eventgroup,
                                              .event_ = _event,
@@ -1034,10 +1033,10 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
         if (protocol::subscribe_with_filter_data its_data;
             protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            auto its_service = its_data.data_.service_key_.service_;
-            auto its_instance = its_data.data_.service_key_.instance_;
+            auto its_service = its_data.data_.service_key_.service;
+            auto its_instance = its_data.data_.service_key_.instance;
             auto its_eventgroup = its_data.data_.eventgroup_;
-            auto its_major = its_data.data_.service_key_.major_;
+            auto its_major = its_data.data_.service_key_.major;
             auto its_event = its_data.data_.event_;
             auto its_pending_id = its_data.data_.pending_id_;
             auto its_filter = its_data.filter_;
@@ -1172,8 +1171,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     case protocol::id_e::UNSUBSCRIBE_ID: {
         if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            auto its_service = its_data.service_key_.service_;
-            auto its_instance = its_data.service_key_.instance_;
+            auto its_service = its_data.service_key_.service;
+            auto its_instance = its_data.service_key_.instance;
             auto its_eventgroup = its_data.eventgroup_;
             auto its_event = its_data.event_;
             auto its_pending_id = its_data.pending_id_;
@@ -1209,7 +1208,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                             if (sender_) {
                                 if (!sender_->send(protocol::create_unsubscribe_ack_cmd(
                                             state_machine_->client(),
-                                            {.service_ = its_service, .instance_ = its_instance, .major_ = its_major}, its_eventgroup,
+                                            {.service = its_service, .instance = its_instance, .major = its_major}, its_eventgroup,
                                             its_pending_id))) {
                                     VSOMEIP_ERROR << VSOMEIP_LOG_PREFIX << "::on_message(UNSUBSCRIBE): Failed to send UNSUBSCRIBE_ACK"
                                                   << " for [" << hex4(its_service) << "." << hex4(its_instance) << "."
@@ -1235,8 +1234,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     case protocol::id_e::SUBSCRIBE_NACK_ID: {
         if (protocol::subscribe_answer_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service_, its_data.service_key_.instance_,
-                                 its_data.eventgroup_, its_data.event_, subscription_outcome_e::REJECTED);
+            on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service, its_data.service_key_.instance, its_data.eventgroup_,
+                                 its_data.event_, subscription_outcome_e::REJECTED);
             VSOMEIP_INFO << "SUBSCRIBE NACK(" << hex4(its_client) << "): [" << its_data.service_key_ << "." << hex4(its_data.eventgroup_)
                          << "." << hex4(its_data.event_) << "]";
         } else {
@@ -1247,8 +1246,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     case protocol::id_e::SUBSCRIBE_ACK_ID: {
         if (protocol::subscribe_answer_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service_, its_data.service_key_.instance_,
-                                 its_data.eventgroup_, its_data.event_, subscription_outcome_e::OK);
+            on_subscribe_outcome(its_data.subscriber_, its_data.service_key_.service, its_data.service_key_.instance, its_data.eventgroup_,
+                                 its_data.event_, subscription_outcome_e::OK);
             VSOMEIP_INFO << "SUBSCRIBE ACK(" << hex4(its_client) << "): [" << its_data.service_key_ << "." << hex4(its_data.eventgroup_)
                          << "." << hex4(its_data.event_) << "]";
         } else {
@@ -1304,8 +1303,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     case protocol::id_e::EXPIRE_ID: {
         if (protocol::subscribe_data its_data; protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
 
-            auto its_service = its_data.service_key_.service_;
-            auto its_instance = its_data.service_key_.instance_;
+            auto its_service = its_data.service_key_.service;
+            auto its_instance = its_data.service_key_.instance;
             auto its_eventgroup = its_data.eventgroup_;
             auto its_event = its_data.event_;
             auto its_pending_id = its_data.pending_id_;
@@ -1540,15 +1539,15 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
                     data.sec_client_ = its_reported_sec_client;
                 }
                 for (const auto& s : e.services_) {
-                    const auto its_service(s.key_.service_);
-                    const auto its_instance(s.key_.instance_);
-                    const auto its_major(s.key_.major_);
+                    const auto its_service(s.key_.service);
+                    const auto its_instance(s.key_.instance);
+                    const auto its_major(s.key_.major);
                     const auto its_minor(s.minor_version_);
 
                     // Ignore a stale RIE_ADD for a service this client no longer requests (e.g. it
                     // was in flight when release_service() ran).
                     auto const requested = [&](instance_t _instance) {
-                        protocol::service_data const sd{.key_ = {.service_ = its_service, .instance_ = _instance, .major_ = ANY_MAJOR},
+                        protocol::service_data const sd{.key_ = {.service = its_service, .instance = _instance, .major = ANY_MAJOR},
                                                         .minor_version_ = ANY_MINOR};
                         return requests_.contains(sd);
                     };
@@ -1584,8 +1583,8 @@ void routing_manager_client::on_routing_info(const byte_t* _data, uint32_t _size
         case protocol::routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE: {
             std::scoped_lock its_lock(consumer_mutex_);
             for (const auto& s : e.services_) {
-                const bool was_available = available_services_.remove(s.key_.service_, s.key_.instance_, s.key_.major_);
-                on_stop_offer_service(s.key_.service_, s.key_.instance_, s.key_.major_, s.minor_version_, was_available, its_lock);
+                const bool was_available = available_services_.remove(s.key_.service, s.key_.instance, s.key_.major);
+                on_stop_offer_service(s.key_.service, s.key_.instance, s.key_.major, s.minor_version_, was_available, its_lock);
             }
             break;
         }
@@ -1603,7 +1602,7 @@ void routing_manager_client::on_offered_services_info(std::vector<protocol::serv
     its_offered_services_info.reserve(_services.size());
 
     for (const auto& s : _services) {
-        its_offered_services_info.push_back(std::make_pair(s.key_.service_, s.key_.instance_));
+        its_offered_services_info.push_back(std::make_pair(s.key_.service, s.key_.instance));
     }
 
     host_->on_offered_services_info(its_offered_services_info);
@@ -2167,10 +2166,10 @@ void routing_manager_client::resend_provided_event_registrations() {
             continue;
         }
         if (send_event_registrations(its_client, std::span{&reg, 1}, inner_lock)) {
-            VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): [" << protocol::event_key{reg.service_key_, reg.event_}
+            VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): [" << event_key{reg.service_key_, reg.event_}
                          << ":is_provider=" << std::boolalpha << reg.is_provided_ << "]";
         } else {
-            VSOMEIP_ERROR_P << "Failed to resend the event registration [" << protocol::event_key{reg.service_key_, reg.event_}
+            VSOMEIP_ERROR_P << "Failed to resend the event registration [" << event_key{reg.service_key_, reg.event_}
                             << ":is_provider=" << std::boolalpha << reg.is_provided_ << "]";
         }
     }
@@ -2410,7 +2409,7 @@ void routing_manager_client::remove_local_consumer(client_t _client, bool _due_t
         for (auto const& [its_service, its_instance, its_major, its_minor, its_client] : removed) {
             // save the removed available services to re-request them from the router
             _requested_services.insert(protocol::service_data{
-                    .key_ = {.service_ = its_service, .instance_ = its_instance, .major_ = its_major}, .minor_version_ = its_minor});
+                    .key_ = {.service = its_service, .instance = its_instance, .major = its_major}, .minor_version_ = its_minor});
             on_stop_offer_service(its_service, its_instance, its_major, its_minor, true, its_lock);
         }
 
@@ -2884,7 +2883,7 @@ void routing_manager_client::register_provider_event(service_t _service, instanc
                         << "] registering events for [" << hex4(_service) << "." << hex4(_instance)
                         << "], after already offering the service is wrong behavior! Potentially missing major version on "
                            "following event messages";
-        event->set_version(service->key_.major_);
+        event->set_version(service->key_.major);
     }
 
     // Move over the subscribers (and their per-client debounce filters) that accumulated on the
@@ -3262,7 +3261,7 @@ bool routing_manager_client::is_requested(service_t _service, instance_t _instan
     // (service, instance), so contains() ignores the version fields. See local_service_table.hpp.
     // ANY_INSTANCE has to be probed separately; the RIE_ADD path in on_routing_info() does the same.
     for (const instance_t its_instance : {_instance, ANY_INSTANCE}) {
-        const protocol::service_data its_request{.key_ = {.service_ = _service, .instance_ = its_instance, .major_ = ANY_MAJOR},
+        const protocol::service_data its_request{.key_ = {.service = _service, .instance = its_instance, .major = ANY_MAJOR},
                                                  .minor_version_ = ANY_MINOR};
         if (requests_.contains(its_request) || requests_to_debounce_.contains(its_request)) {
             return true;
@@ -3274,19 +3273,19 @@ bool routing_manager_client::is_requested(service_t _service, instance_t _instan
 major_version_t routing_manager_client::find_offered_major(service_t _service, instance_t _instance,
                                                            std::scoped_lock<std::mutex> const&) const {
     auto const* its_offer = offered_services_.find({.key_ = {_service, _instance, ANY_MAJOR}, .minor_version_ = ANY_MINOR});
-    return its_offer ? its_offer->key_.major_ : ANY_MAJOR;
+    return its_offer ? its_offer->key_.major : ANY_MAJOR;
 }
 
 major_version_t routing_manager_client::find_requested_major(service_t _service, instance_t _instance,
                                                              std::scoped_lock<std::mutex> const&) const {
     for (const instance_t its_instance : {_instance, ANY_INSTANCE}) {
-        const protocol::service_data its_probe{.key_ = {.service_ = _service, .instance_ = its_instance, .major_ = ANY_MAJOR},
+        const protocol::service_data its_probe{.key_ = {.service = _service, .instance = its_instance, .major = ANY_MAJOR},
                                                .minor_version_ = ANY_MINOR};
         if (auto const* its_request = requests_.find(its_probe)) {
-            return its_request->key_.major_;
+            return its_request->key_.major;
         }
         if (auto const* its_request = requests_to_debounce_.find(its_probe)) {
-            return its_request->key_.major_;
+            return its_request->key_.major;
         }
     }
     return ANY_MAJOR;
@@ -3310,11 +3309,11 @@ routing_manager_client::stamp_provided_event_registrations(service_t _service, i
                                                            std::scoped_lock<std::mutex, std::mutex> const&) {
     std::vector<protocol::register_event_data> its_resolved;
     for (auto& its_registration : provided_event_registrations_) {
-        if (its_registration.service_key_.service_ != _service || its_registration.service_key_.instance_ != _instance
-            || its_registration.service_key_.major_ == _major) {
+        if (its_registration.service_key_.service != _service || its_registration.service_key_.instance != _instance
+            || its_registration.service_key_.major == _major) {
             continue;
         }
-        its_registration.service_key_.major_ = _major;
+        its_registration.service_key_.major = _major;
         its_resolved.push_back(its_registration);
     }
     return its_resolved;
@@ -3327,8 +3326,8 @@ routing_manager_client::release_consumed_event_registrations(service_t _service,
     // _instance == ANY_INSTANCE matches every pending instance of _service: a wildcard request covers
     // them all.
     auto const stays_pending = [_service, _instance](protocol::register_event_data const& _registration) {
-        return _registration.service_key_.service_ != _service
-                || (_instance != ANY_INSTANCE && _registration.service_key_.instance_ != _instance);
+        return _registration.service_key_.service != _service
+                || (_instance != ANY_INSTANCE && _registration.service_key_.instance != _instance);
     };
     // Filtered in place, keeps both orders, no temporary buffer.
     auto its_write = pending_consumed_event_registrations_.begin();
@@ -3340,7 +3339,7 @@ routing_manager_client::release_consumed_event_registrations(service_t _service,
             ++its_write;
             continue;
         }
-        it->service_key_.major_ = _major;
+        it->service_key_.major = _major;
         its_released.push_back(*it);
         consumed_event_registrations_.push_back(std::move(*it));
     }

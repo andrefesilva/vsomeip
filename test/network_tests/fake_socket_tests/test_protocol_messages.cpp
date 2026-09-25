@@ -389,7 +389,7 @@ TEST_F(test_command_major_version, provided_event_registration_is_held_until_the
     ASSERT_NE(its_registrations, nullptr);
     ASSERT_EQ(its_registrations->size(), 1u);
     EXPECT_EQ(its_registrations->front().event_, offered_event_.event_id_);
-    EXPECT_EQ(its_registrations->front().service_key_.major_, service_instance_.major_)
+    EXPECT_EQ(its_registrations->front().service_key_.major, service_instance_.major_)
             << "the held registration must be stamped with the major the service is offered with";
 
     // The router has to know the event before the service is advertised, so the flush must not slip
@@ -438,7 +438,7 @@ TEST_F(test_command_major_version, re_offering_under_a_different_major_re_regist
             last_payload<std::vector<vsomeip_v3::protocol::register_event_data>>(vsomeip_v3::protocol::id_e::REGISTER_EVENT_ID);
     ASSERT_NE(its_registrations, nullptr);
     ASSERT_FALSE(its_registrations->empty());
-    EXPECT_EQ(its_registrations->front().service_key_.major_, its_second_version.major_)
+    EXPECT_EQ(its_registrations->front().service_key_.major, its_second_version.major_)
             << "the re-offer must re-stamp the registrations with the new major";
 }
 
@@ -488,7 +488,7 @@ TEST_F(test_command_major_version, consumed_event_registration_carries_the_reque
     ASSERT_NE(its_registrations, nullptr);
     ASSERT_FALSE(its_registrations->empty());
     EXPECT_FALSE(its_registrations->front().is_provided_);
-    EXPECT_EQ(its_registrations->front().service_key_.major_, service_instance_.major_)
+    EXPECT_EQ(its_registrations->front().service_key_.major, service_instance_.major_)
             << "a consumed registration must carry the major the service was requested with";
 }
 
@@ -512,7 +512,7 @@ TEST_F(test_command_major_version, consumed_event_registration_is_held_until_the
     ASSERT_NE(its_registrations, nullptr);
     ASSERT_EQ(its_registrations->size(), 1u);
     EXPECT_EQ(its_registrations->front().event_, offered_event_.event_id_);
-    EXPECT_EQ(its_registrations->front().service_key_.major_, service_instance_.major_)
+    EXPECT_EQ(its_registrations->front().service_key_.major, service_instance_.major_)
             << "the held registration must be stamped with the major the service is requested with";
 }
 
@@ -537,7 +537,7 @@ TEST_F(test_command_major_version, consumed_event_registration_is_released_by_a_
     ASSERT_NE(its_registrations, nullptr);
     ASSERT_EQ(its_registrations->size(), 1u);
     EXPECT_EQ(its_registrations->front().event_, offered_event_.event_id_);
-    EXPECT_EQ(its_registrations->front().service_key_.major_, service_instance_.major_)
+    EXPECT_EQ(its_registrations->front().service_key_.major, service_instance_.major_)
             << "the wildcard request carries the major, so the released registration must be stamped with it";
 }
 
@@ -567,7 +567,7 @@ TEST_F(test_command_major_version, pending_consumed_event_registration_is_releas
     ASSERT_NE(its_registrations, nullptr);
     ASSERT_EQ(its_registrations->size(), 1u);
     EXPECT_EQ(its_registrations->front().event_, offered_event_.event_id_);
-    EXPECT_EQ(its_registrations->front().service_key_.major_, service_instance_.major_);
+    EXPECT_EQ(its_registrations->front().service_key_.major, service_instance_.major_);
 }
 
 TEST_F(test_command_major_version, release_service_carries_the_requested_major) {
@@ -586,7 +586,7 @@ TEST_F(test_command_major_version, release_service_carries_the_requested_major) 
 
     auto const* its_release = last_payload<vsomeip_v3::protocol::service_key>(vsomeip_v3::protocol::id_e::RELEASE_SERVICE_ID);
     ASSERT_NE(its_release, nullptr);
-    EXPECT_EQ(its_release->major_, service_instance_.major_) << "RELEASE_SERVICE must carry the major the service was requested with";
+    EXPECT_EQ(its_release->major, service_instance_.major_) << "RELEASE_SERVICE must carry the major the service was requested with";
 }
 
 TEST_F(test_command_major_version, unregister_event_carries_the_offered_major) {
@@ -603,7 +603,7 @@ TEST_F(test_command_major_version, unregister_event_carries_the_offered_major) {
 
     auto const* its_unregister = last_payload<vsomeip_v3::protocol::unregister_event_data>(vsomeip_v3::protocol::id_e::UNREGISTER_EVENT_ID);
     ASSERT_NE(its_unregister, nullptr);
-    EXPECT_EQ(its_unregister->service_key_.major_, service_instance_.major_)
+    EXPECT_EQ(its_unregister->service_key_.major, service_instance_.major_)
             << "UNREGISTER_EVENT must carry the major the providing service is offered with";
 }
 
@@ -622,7 +622,7 @@ TEST_F(test_command_major_version, unsubscribe_carries_the_subscribed_major) {
 
     auto const* its_unsubscribe = last_payload<vsomeip_v3::protocol::subscribe_data>(vsomeip_v3::protocol::id_e::UNSUBSCRIBE_ID);
     ASSERT_NE(its_unsubscribe, nullptr);
-    EXPECT_EQ(its_unsubscribe->service_key_.major_, service_instance_.major_)
+    EXPECT_EQ(its_unsubscribe->service_key_.major, service_instance_.major_)
             << "UNSUBSCRIBE must carry the same major as the SUBSCRIBE it withdraws";
 }
 
@@ -634,7 +634,7 @@ TEST_F(test_command_major_version, subscribe_ack_carries_the_offered_major) {
 
     auto const* its_ack = last_payload<vsomeip_v3::protocol::subscribe_answer_data>(vsomeip_v3::protocol::id_e::SUBSCRIBE_ACK_ID);
     ASSERT_NE(its_ack, nullptr);
-    EXPECT_EQ(its_ack->service_key_.major_, service_instance_.major_)
+    EXPECT_EQ(its_ack->service_key_.major, service_instance_.major_)
             << "SUBSCRIBE_ACK must carry the major the acknowledging provider offers";
 }
 

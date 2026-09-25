@@ -25,12 +25,12 @@ class local_service_table {
 private:
     struct less {
         [[nodiscard]] bool operator()(protocol::service_data const& _lhs, protocol::service_data const& _rhs) const {
-            static constexpr auto tie = [](auto const& _d) { return std::tie(_d.key_.service_, _d.key_.instance_); };
+            static constexpr auto tie = [](auto const& _d) { return std::tie(_d.key_.service, _d.key_.instance); };
             return tie(_lhs) < tie(_rhs);
         }
     };
     static bool similar(protocol::service_data const& _lhs, protocol::service_data const& _rhs) {
-        static constexpr auto tie = [](auto const& _d) { return std::tie(_d.key_.service_, _d.key_.instance_); };
+        static constexpr auto tie = [](auto const& _d) { return std::tie(_d.key_.service, _d.key_.instance); };
         return tie(_lhs) == tie(_rhs);
     };
 
@@ -42,8 +42,8 @@ public:
         if (it == services_.end()) {
             return nullptr;
         }
-        auto itE = find_next_service(it, _data.key_.service_);
-        it = find_instance(it, itE, _data.key_.instance_);
+        auto itE = find_next_service(it, _data.key_.service);
+        it = find_instance(it, itE, _data.key_.instance);
         // TODO this should be wrong as soon as one client can requests multiple major versions
         return it != itE ? &(*it) : nullptr;
     }
@@ -84,7 +84,7 @@ public:
     }
 
     bool remove(protocol::service_data const& _data) {
-        if (_data.key_.service_ == ANY_SERVICE) {
+        if (_data.key_.service == ANY_SERVICE) {
             services_.clear();
             return true;
         }
@@ -92,21 +92,21 @@ public:
         if (it == services_.end()) {
             return false;
         }
-        auto itE = find_next_service(it, _data.key_.service_);
-        if (_data.key_.instance_ == ANY_INSTANCE) {
+        auto itE = find_next_service(it, _data.key_.service);
+        if (_data.key_.instance == ANY_INSTANCE) {
             services_.erase(it, itE);
             return true;
         }
-        it = find_instance(it, itE, _data.key_.instance_);
+        it = find_instance(it, itE, _data.key_.instance);
         if (it == itE) {
             return false;
         }
-        itE = find_next_instance(it, itE, _data.key_.instance_);
-        if (_data.key_.major_ == ANY_MAJOR) {
+        itE = find_next_instance(it, itE, _data.key_.instance);
+        if (_data.key_.major == ANY_MAJOR) {
             services_.erase(it, itE);
             return true;
         }
-        it = find_major(it, itE, _data.key_.major_);
+        it = find_major(it, itE, _data.key_.major);
         if (it != itE) {
             services_.erase(it);
             return true;
@@ -121,19 +121,19 @@ private:
     using iterator = std::vector<protocol::service_data>::const_iterator;
     iterator find_service(protocol::service_data const& _data) const {
         return std::lower_bound(services_.begin(), services_.end(), _data,
-                                [](auto const& _lhs, auto const& _rhs) { return _lhs.key_.service_ < _rhs.key_.service_; });
+                                [](auto const& _lhs, auto const& _rhs) { return _lhs.key_.service < _rhs.key_.service; });
     }
     iterator find_next_service(iterator _iterator, service_t _service) const {
-        return std::find_if(_iterator, services_.end(), [&](auto const& _in) { return _service != _in.key_.service_; });
+        return std::find_if(_iterator, services_.end(), [&](auto const& _in) { return _service != _in.key_.service; });
     };
     static iterator find_instance(iterator _itB, iterator _itE, instance_t _instance) {
-        return std::find_if(_itB, _itE, [&](auto const& _in) { return _instance == _in.key_.instance_; });
+        return std::find_if(_itB, _itE, [&](auto const& _in) { return _instance == _in.key_.instance; });
     }
     static iterator find_next_instance(iterator _itB, iterator _itE, instance_t _instance) {
-        return std::find_if(_itB, _itE, [&](auto const& _in) { return _instance != _in.key_.instance_; });
+        return std::find_if(_itB, _itE, [&](auto const& _in) { return _instance != _in.key_.instance; });
     }
     static iterator find_major(iterator _itB, iterator _itE, major_version_t _version) {
-        return std::find_if(_itB, _itE, [&](auto const& _in) { return _version == _in.key_.major_; });
+        return std::find_if(_itB, _itE, [&](auto const& _in) { return _version == _in.key_.major; });
     }
     std::vector<protocol::service_data> services_;
 };

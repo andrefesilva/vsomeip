@@ -36,7 +36,7 @@ public:
     virtual void request_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                  minor_version_t _minor) = 0;
 
-    virtual void release_service(client_t _client, protocol::service_key const& _service) = 0;
+    virtual void release_service(client_t _client, versioned_service_instance_t const& _service) = 0;
 
     virtual void register_shadow_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
                                        const std::set<eventgroup_t>& _eventgroups, event_type_e _type, reliability_type_e _reliability,
