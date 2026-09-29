@@ -71,8 +71,8 @@ public:
 
     void subscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup, major_version_t _major, ttl_t _ttl, client_t _client,
                    const std::shared_ptr<eventgroupinfo>& _info);
-    void unsubscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup, client_t _client);
-    void unsubscribe_all(service_t _service, instance_t _instance);
+    void unsubscribe(service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup, client_t _client);
+    void unsubscribe_all(service_t _service, instance_t _instance, major_version_t _major);
     void unsubscribe_all_on_suspend();
     void reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major);
 
@@ -82,7 +82,8 @@ public:
 
     void start_offer_watchdog();
 
-    void on_endpoint_connected(service_t _service, instance_t _instance, const std::shared_ptr<boardnet_endpoint>& _endpoint);
+    void on_endpoint_connected(service_t _service, instance_t _instance, major_version_t _major,
+                               const std::shared_ptr<boardnet_endpoint>& _endpoint);
 
     void offer_service(const std::shared_ptr<serviceinfo>& _info) override;
     void stop_offer_service(const std::shared_ptr<serviceinfo>& _info) override;
@@ -153,8 +154,8 @@ private:
                                             ttl_t _ttl, uint8_t _counter, const std::set<client_t>& _clients,
                                             const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
                                             uint16_t _port);
-    void handle_eventgroup_subscription_nack(service_t _service, instance_t _instance, eventgroup_t _eventgroup, uint8_t _counter,
-                                             const std::set<client_t>& _clients);
+    void handle_eventgroup_subscription_nack(service_t _service, instance_t _instance, eventgroup_t _eventgroup, major_version_t _major,
+                                             uint8_t _counter, const std::set<client_t>& _clients);
 
     bool send(const std::vector<std::shared_ptr<message_impl>>& _messages);
     bool serialize_and_send(const std::vector<std::shared_ptr<message_impl>>& _messages, const boost::asio::ip::address& _address);
@@ -297,7 +298,8 @@ private:
 
     requests_t requested_;
     std::mutex requested_mutex_;
-    service_instance_map<std::map<eventgroup_t, std::shared_ptr<subscription>>> subscribed_;
+    // Keyed including the major: two majors of the same (service, instance) subscribe independently.
+    versioned_service_instance_map<std::map<eventgroup_t, std::shared_ptr<subscription>>> subscribed_;
     std::recursive_mutex subscribed_mutex_;
 
     std::mutex serialize_mutex_;

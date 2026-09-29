@@ -226,18 +226,14 @@ void service_discovery_impl::release_service(service_t _service, instance_t _ins
 
 void service_discovery_impl::reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major) {
     std::scoped_lock its_lock{requested_mutex_};
-    // Major-scoped: only the exact (service, instance, major) whose TTL actually expired goes
-    // back into the FindService repetition phase. A different, still-fully-available major of the
-    // same (service, instance) must keep its own "already found" state untouched, otherwise its
-    // request gets spuriously reset too and a stale Find entry reappears in the next SD message.
+    // Only the major whose TTL expired goes back into the FindService repetition phase; another,
+    // still-available major must keep its own "already found" state.
     if (auto it = requested_.find(versioned_service_instance_t{_service, _instance, _major}); it != requested_.end()) {
         it->second->set_sent_counter(0);
     }
-    // A request made with ANY_MAJOR is stored under its own {service, instance, ANY_MAJOR} key -- but TTL expiry is
-    // always reported for the concrete major that actually went away. Reset that ANY_MAJOR entry
-    // too, if present: it cares about any concrete major disappearing exactly as much as it cared
-    // about one appearing, otherwise its sent-counter is never reset and no further Find is ever
-    // sent again for it.
+    // Unlike an event, a FindService request may legitimately be made for ANY_MAJOR and is stored
+    // under that key. TTL expiry is always reported for a concrete major, but such a requester cares
+    // about any major disappearing exactly as much as it cared about one appearing.
     if (auto it = requested_.find(versioned_service_instance_t{_service, _instance, ANY_MAJOR}); it != requested_.end()) {
         it->second->set_sent_counter(0);
     }
@@ -245,16 +241,15 @@ void service_discovery_impl::reset_request_sent_counter(service_t _service, inst
 
 void service_discovery_impl::update_request(service_t _service, instance_t _instance, major_version_t _major) {
     std::scoped_lock its_lock(requested_mutex_);
-    if (auto find_instance = requested_.find({_service, _instance, _major}); find_instance != requested_.end()) {
-        find_instance->second->set_sent_counter(uint8_t(repetitions_max_ + 1));
+    const auto its_counter = uint8_t(repetitions_max_ + 1);
+    if (auto it = requested_.find(versioned_service_instance_t{_service, _instance, _major}); it != requested_.end()) {
+        it->second->set_sent_counter(its_counter);
     }
-    // A request made with ANY_MAJOR is stored under its own {service, instance, ANY_MAJOR} key -- but an
-    // incoming OfferService always carries the concrete major that satisfied it. Stop that ANY_MAJOR
-    // entry's repetition phase too, if present, the same way the exact-major entry above was just
-    // stopped -- otherwise it is left free to keep sending redundant FindService messages even
-    // though the service it was looking for is already available.
+    // An incoming OfferService carries a concrete major, but it also satisfies a request stored under
+    // ANY_MAJOR -- stop that one's repetition phase too, or it keeps sending redundant Finds for a
+    // service that is already available.
     if (auto it = requested_.find(versioned_service_instance_t{_service, _instance, ANY_MAJOR}); it != requested_.end()) {
-        it->second->set_sent_counter(uint8_t(repetitions_max_ + 1));
+        it->second->set_sent_counter(its_counter);
     }
 }
 
@@ -268,11 +263,9 @@ void service_discovery_impl::subscribe(service_t _service, instance_t _instance,
     }
 
     std::scoped_lock its_lock(subscribed_mutex_);
-    if (auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
+    if (auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
         if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
-            if (auto its_subscription = found_eventgroup->second; its_subscription->get_major() != _major) {
-                VSOMEIP_ERROR << "Subscriptions to different versions of the same service instance are not supported!";
-            } else if (its_subscription->is_selective()) {
+            if (auto its_subscription = found_eventgroup->second; its_subscription->is_selective()) {
                 if (its_subscription->add_client(_client, subscription_state_e::ST_NOT_ACKNOWLEDGED)) {
                     its_subscription->set_stop_subscribe_pending_since(std::chrono::steady_clock::now());
                     send_subscription(its_subscription, _service, _instance, _eventgroup, _client);
@@ -293,7 +286,7 @@ void service_discovery_impl::subscribe(service_t _service, instance_t _instance,
         return;
     }
 
-    subscribed_[{_service, _instance}][_eventgroup] = its_subscription;
+    subscribed_[{_service, _instance, _major}][_eventgroup] = its_subscription;
 
     its_subscription->add_client(_client, subscription_state_e::ST_NOT_ACKNOWLEDGED);
 
@@ -383,7 +376,8 @@ void service_discovery_impl::get_subscription_address(const std::shared_ptr<boar
     }
 }
 
-void service_discovery_impl::unsubscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup, client_t _client) {
+void service_discovery_impl::unsubscribe(service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
+                                         client_t _client) {
     if (is_suspended_) {
         VSOMEIP_WARNING_P << "Ignoring unsubscription from [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup)
                           << "] as we are suspended";
@@ -395,7 +389,7 @@ void service_discovery_impl::unsubscribe(service_t _service, instance_t _instanc
     boost::asio::ip::address its_address;
     {
         std::scoped_lock its_lock(subscribed_mutex_);
-        if (auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
+        if (auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
             if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
                 auto its_subscription = found_eventgroup->second;
                 if (its_subscription->remove_client(_client)) {
@@ -447,7 +441,7 @@ void service_discovery_impl::unsubscribe(service_t _service, instance_t _instanc
     serialize_and_send(its_current_message, its_address);
 }
 
-void service_discovery_impl::unsubscribe_all(service_t _service, instance_t _instance) {
+void service_discovery_impl::unsubscribe_all(service_t _service, instance_t _instance, major_version_t _major) {
     if (is_suspended_) {
         VSOMEIP_WARNING_P << "Ignoring unsubscription from all eventgroups of [" << hex4(_service) << "." << hex4(_instance)
                           << "] as we are suspended";
@@ -459,7 +453,7 @@ void service_discovery_impl::unsubscribe_all(service_t _service, instance_t _ins
 
     {
         std::scoped_lock its_lock(subscribed_mutex_);
-        if (auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
+        if (auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
             for (auto& [its_eventgroup_id, its_subscription] : found_si->second) {
                 its_subscription->set_ttl(0);
 
@@ -488,7 +482,8 @@ void service_discovery_impl::unsubscribe_all_on_suspend() {
     {
         std::scoped_lock its_lock(subscribed_mutex_);
         for (auto& [its_si, its_eventgroups] : subscribed_) {
-            const auto& [its_service, its_instance] = its_si;
+            const auto its_service = its_si.service;
+            const auto its_instance = its_si.instance;
             for (auto& [its_eventgroup_id, its_subscription] : its_eventgroups) {
                 boost::asio::ip::address its_address;
                 auto its_current_message = std::make_shared<message_impl>();
@@ -1288,7 +1283,7 @@ void service_discovery_impl::process_serviceentry(std::shared_ptr<serviceentry_i
         remove_remote_offer_type(its_service, its_instance, its_reliable_address, its_reliable_port, its_unreliable_address,
                                  its_unreliable_port);
         // erase subscriptions
-        subscribed_.erase({its_service, its_instance});
+        subscribed_.erase({its_service, its_instance, its_major});
         if (!is_suspended_) {
             host_->del_routing_info(its_service, its_instance, its_major, (its_reliable_port != ILLEGAL_PORT),
                                     (its_unreliable_port != ILLEGAL_PORT), true);
@@ -1397,9 +1392,9 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
                                  _received_via_multicast, its_offer_state.endpoints_changed)) {
         VSOMEIP_WARNING_P << "Offer type changed [" << hex4(_service) << "." << hex4(_instance) << "]";
         // Only update eventgroup reliability type if it was initially unknown
-        auto its_eventgroups = host_->get_subscribed_eventgroups(_service, _instance);
+        auto its_eventgroups = host_->get_subscribed_eventgroups(_service, _instance, _major);
         for (auto eg : its_eventgroups) {
-            auto its_info = host_->find_eventgroup(_service, _instance, eg);
+            auto its_info = host_->find_eventgroup(_service, _instance, _major, eg);
             if (its_info) {
                 if (its_info->is_reliability_auto_mode()) {
                     if (offer_type != reliability_type_e::RT_UNKNOWN && offer_type != its_info->get_reliability()) {
@@ -1419,7 +1414,7 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
 
     // No need to resubscribe for unicast offers
     if (_received_via_multicast) {
-        if (const auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
+        if (const auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
             for (const auto& [its_eventgroup_id, its_subscription] : found_si->second) {
                 std::shared_ptr<boardnet_endpoint> its_reliable, its_unreliable;
                 // TODO: horrifying - do we really need to lookup-and-set the endpoints for _every_ received offer?!
@@ -1524,28 +1519,25 @@ void service_discovery_impl::send_multicast_offer_service(const std::shared_ptr<
     send(its_messages);
 }
 
-void service_discovery_impl::on_endpoint_connected(service_t _service, instance_t _instance,
+void service_discovery_impl::on_endpoint_connected(service_t _service, instance_t _instance, major_version_t _major,
                                                    const std::shared_ptr<boardnet_endpoint>& _endpoint) {
 
     // TODO: Simplify this method! It is not clear, why we need to check
     // both endpoints here although the method is always called for a
     // single one.
 
-    std::vector<std::shared_ptr<message_impl>> its_messages;
-    its_messages.push_back(std::make_shared<message_impl>());
-    boost::asio::ip::address its_address;
-
-    std::shared_ptr<boardnet_endpoint> its_dummy;
-    if (_endpoint->is_reliable()) {
-        get_subscription_address(_endpoint, its_dummy, its_address);
-    } else {
-        get_subscription_address(its_dummy, _endpoint, its_address);
-    }
+    // Grouped by destination: two majors of the same (service, instance) are offered by different
+    // hosts, so their entries must not be batched into one message sent to a single address.
+    std::map<boost::asio::ip::address, std::vector<std::shared_ptr<message_impl>>> its_resubscribes;
 
     {
         std::scoped_lock its_lock(subscribed_mutex_);
-        if (const auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
-            for (const auto& [its_eventgroup_id, its_subscription] : found_si->second) {
+        for (const auto& [its_si, its_eventgroups] : subscribed_) {
+            // The endpoint belongs to _major only; the flags below would resend another major's subscriptions.
+            if (its_si.service != _service || its_si.instance != _instance || its_si.major != _major) {
+                continue;
+            }
+            for (const auto& [its_eventgroup_id, its_subscription] : its_eventgroups) {
                 if (its_subscription) {
                     if (!its_subscription->is_tcp_connection_established() || !its_subscription->is_udp_connection_established()) {
                         const std::shared_ptr<const boardnet_endpoint> its_reliable_endpoint(its_subscription->get_endpoint(true));
@@ -1570,6 +1562,7 @@ void service_discovery_impl::on_endpoint_connected(service_t _service, instance_
 
                             std::shared_ptr<boardnet_endpoint> its_unreliable;
                             std::shared_ptr<boardnet_endpoint> its_reliable;
+                            boost::asio::ip::address its_address;
                             get_subscription_endpoints(_service, _instance, its_subscription->get_major(), its_reliable, its_unreliable);
                             get_subscription_address(its_reliable, its_unreliable, its_address);
 
@@ -1585,6 +1578,10 @@ void service_discovery_impl::on_endpoint_connected(service_t _service, instance_
                                     create_eventgroup_entry(_service, _instance, its_eventgroup_id, its_subscription, its_reliability_type);
 
                             if (its_data.entry_) {
+                                auto& its_messages = its_resubscribes[its_address];
+                                if (its_messages.empty()) {
+                                    its_messages.push_back(std::make_shared<message_impl>());
+                                }
                                 add_entry_data(its_messages, its_data);
                             }
                         }
@@ -1594,7 +1591,9 @@ void service_discovery_impl::on_endpoint_connected(service_t _service, instance_
         }
     }
 
-    serialize_and_send(its_messages, its_address);
+    for (const auto& [its_address, its_messages] : its_resubscribes) {
+        serialize_and_send(its_messages, its_address);
+    }
 }
 
 std::shared_ptr<option_impl> service_discovery_impl::create_ip_option(const boost::asio::ip::address& _address, uint16_t _port,
@@ -1666,7 +1665,7 @@ void service_discovery_impl::process_eventgroupentry(std::shared_ptr<eventgroupe
     major_version_t its_major = _entry->get_major_version();
     ttl_t its_ttl = _entry->get_ttl();
 
-    auto its_info = host_->find_eventgroup(its_service, its_instance, its_eventgroup);
+    auto its_info = host_->find_eventgroup(its_service, its_instance, its_major, its_eventgroup);
     if (!its_info) {
         if (entry_type_e::SUBSCRIBE_EVENTGROUP == its_type) {
             // We received a subscription for a non-existing eventgroup.
@@ -1682,7 +1681,7 @@ void service_discovery_impl::process_eventgroupentry(std::shared_ptr<eventgroupe
         } else {
             // We received a subscription [n]ack for an eventgroup that does not exist.
             // --> Remove subscription.
-            unsubscribe(its_service, its_instance, its_eventgroup, VSOMEIP_ROUTING_CLIENT);
+            unsubscribe(its_service, its_instance, its_major, its_eventgroup, VSOMEIP_ROUTING_CLIENT);
 
             VSOMEIP_WARNING_P << "Received a SubscribeEventGroup[N]Ack entry for unknown eventgroup from: " << its_sender.to_string()
                               << " for: [" << hex4(its_service) << "." << hex4(its_instance) << "." << hex4(its_eventgroup)
@@ -1979,7 +1978,7 @@ void service_discovery_impl::process_eventgroupentry(std::shared_ptr<eventgroupe
                 handle_eventgroup_subscription_ack(its_service, its_instance, its_eventgroup, its_major, its_ttl, 0, its_clients, _sender,
                                                    its_first_address, its_first_port);
             } else {
-                handle_eventgroup_subscription_nack(its_service, its_instance, its_eventgroup, 0, its_clients);
+                handle_eventgroup_subscription_nack(its_service, its_instance, its_eventgroup, its_major, 0, its_clients);
             }
         }
     }
@@ -2157,14 +2156,15 @@ void service_discovery_impl::handle_eventgroup_subscription(
 }
 
 void service_discovery_impl::handle_eventgroup_subscription_nack(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
-                                                                 uint8_t _counter, const std::set<client_t>& _clients) {
+                                                                 major_version_t _major, uint8_t _counter,
+                                                                 const std::set<client_t>& _clients) {
     (void)_counter;
 
-    if (auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
+    if (auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
         if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
             auto its_subscription = found_eventgroup->second;
             for (const auto its_client : _clients) {
-                host_->on_subscribe_nack(its_client, _service, _instance, _eventgroup, true, PENDING_SUBSCRIPTION_ID);
+                host_->on_subscribe_nack(its_client, _service, _instance, _major, _eventgroup, true, PENDING_SUBSCRIPTION_ID);
             }
 
             if (!its_subscription->is_selective()) {
@@ -2181,21 +2181,20 @@ void service_discovery_impl::handle_eventgroup_subscription_ack(service_t _servi
                                                                 major_version_t _major, ttl_t _ttl, uint8_t _counter,
                                                                 const std::set<client_t>& _clients, const boost::asio::ip::address& _sender,
                                                                 const boost::asio::ip::address& _address, uint16_t _port) {
-    (void)_major;
     (void)_ttl;
     (void)_counter;
 
-    if (auto found_si = subscribed_.find({_service, _instance}); found_si != subscribed_.end()) {
+    if (auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
         if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
             for (const auto its_client : _clients) {
                 auto itr = found_eventgroup->second->get_clients().find(its_client);
                 if (itr != found_eventgroup->second->get_clients().end() && itr->second == subscription_state_e::ST_NOT_ACKNOWLEDGED) {
                     itr->second = subscription_state_e::ST_ACKNOWLEDGED;
-                    host_->on_subscribe_ack(its_client, _service, _instance, _eventgroup, ANY_EVENT, PENDING_SUBSCRIPTION_ID);
+                    host_->on_subscribe_ack(its_client, _service, _instance, _major, _eventgroup, ANY_EVENT, PENDING_SUBSCRIPTION_ID);
                 }
             }
             if (_address.is_multicast()) {
-                host_->on_subscribe_ack_with_multicast(_service, _instance, _sender, _address, _port);
+                host_->on_subscribe_ack_with_multicast(_service, _instance, _major, _sender, _address, _port);
             }
         }
     }
@@ -2958,7 +2957,7 @@ bool service_discovery_impl::is_subscribed(const std::shared_ptr<eventgroupentry
                                            const message_impl::options_t& _options) const {
     const auto its_service = _entry->get_service();
     const auto its_instance = _entry->get_instance();
-    auto its_info = host_->find_eventgroup(its_service, its_instance, _entry->get_eventgroup());
+    auto its_info = host_->find_eventgroup(its_service, its_instance, _entry->get_major_version(), _entry->get_eventgroup());
     if (its_info) {
         std::shared_ptr<endpoint_definition> its_reliable, its_unreliable;
         for (const auto& o : _options) {
@@ -3358,7 +3357,7 @@ reliability_type_e service_discovery_impl::get_eventgroup_reliability(service_t 
     } else {
         VSOMEIP_WARNING_P << "Couldn't lock eventgroupinfo [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup)
                           << "]";
-        auto its_eg_info = host_->find_eventgroup(_service, _instance, _eventgroup);
+        auto its_eg_info = host_->find_eventgroup(_service, _instance, _subscription->get_major(), _eventgroup);
         if (its_eg_info) {
             _subscription->set_eventgroupinfo(its_eg_info);
             its_reliability = its_eg_info->get_reliability();

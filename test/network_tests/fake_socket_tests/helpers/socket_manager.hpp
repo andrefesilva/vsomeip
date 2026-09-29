@@ -487,6 +487,12 @@ public:
                                             std::chrono::milliseconds _timeout = std::chrono::seconds(3));
 
     /**
+     * @brief Waits until @param _multicast group has at most @param _max_count sockets joined, or @param _timeout elapses.
+     */
+    [[nodiscard]] bool await_multicast_leave(boost::asio::ip::address const& _multicast, size_t _max_count = 0,
+                                             std::chrono::milliseconds _timeout = std::chrono::seconds(3));
+
+    /**
      * @brief Adds member @param _fd to virtual multicast group @param _multicast.
      *
      * @param _multicast Multicast address to be joined.

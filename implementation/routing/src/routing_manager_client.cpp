@@ -404,14 +404,20 @@ void routing_manager_client::request_service([[maybe_unused]] client_t _client, 
             }
         }
 
-        // The major is known from here on, so the registrations pending since register_event() can be
-        // resolved and forwarded. Deliberately not tied to the request debouncing above: the version
-        // does not depend on when the request goes out, and the events must reach the routing manager
-        // before any subscription. Order matches send_pending_commands(): requests, then consumed events.
-        if (auto const its_resolved = release_consumed_event_registrations(_service, _instance, _major, its_lock); !its_resolved.empty()) {
-            std::scoped_lock lock{mutex_};
-            if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
-                send_event_registrations(state_machine_->client(), its_resolved, lock);
+        // A concrete major is known from here on, so the registrations pending since register_event()
+        // can be resolved and forwarded. Deliberately not tied to the request debouncing above: the
+        // version does not depend on when the request goes out, and the events must reach the routing
+        // manager before any subscription. Order matches send_pending_commands(): requests, then
+        // consumed events. A request that names no major resolves nothing here -- an event belongs to
+        // one major's interface, and only the subscription names it -- so those registrations stay
+        // pending until subscribe() supplies a concrete major.
+        if (_major != ANY_MAJOR) {
+            if (auto const its_resolved = release_consumed_event_registrations(_service, _instance, _major, its_lock);
+                !its_resolved.empty()) {
+                std::scoped_lock lock{mutex_};
+                if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
+                    send_event_registrations(state_machine_->client(), its_resolved, lock);
+                }
             }
         }
     }
@@ -523,9 +529,16 @@ void routing_manager_client::register_event(client_t _client, service_t _service
     } else {
         std::scoped_lock its_lock{consumer_mutex_};
         // Expected order is request before events, which already knows the major; otherwise the
-        // registration is pending until request_service() supplies it.
+        // registration is pending until request_service() supplies it. A request made with ANY_MAJOR
+        // supplies nothing usable -- an event belongs to one major's interface -- so the major is
+        // taken from the subscription, which is where the application does name one. Registering
+        // before subscribing is the expected order, so this resolves only when the event is
+        // registered late; otherwise the registration stays pending until subscribe() releases it.
         reg_event_data.service_key_.major = find_requested_major(_service, _instance, its_lock);
-        is_pending = !is_requested(_service, _instance, its_lock);
+        if (awaits_major(reg_event_data)) {
+            reg_event_data.service_key_.major = find_subscribed_major(_service, _instance, its_lock);
+        }
+        is_pending = !is_requested(_service, _instance, its_lock) || awaits_major(reg_event_data);
         new_registration = is_new(consumed_event_registrations_) && is_new(pending_consumed_event_registrations_);
         // Only subscribing first is an ordering mistake; registering after request_service() is the
         // expected consumer order (the opposite of the offer path) and is not flagged.
@@ -572,13 +585,18 @@ void routing_manager_client::unregister_event(client_t _client, service_t _servi
     // 2. Try to send the unregister command
     // Otherwise we might not send the command, but request it when entering REGISTERED
     {
+        // Returns the major the erased registration was registered with, so UNREGISTER_EVENT names
+        // the same one as its REGISTER_EVENT: a consumer request may have named no major at all.
         auto erase_from = [&](std::vector<protocol::register_event_data>& _regs) {
             auto its_reg = std::find_if(_regs.begin(), _regs.end(), [&](protocol::register_event_data const& _reg) {
                 return _reg.service_key_.service == _service && _reg.service_key_.instance == _instance && _reg.event_ == _notifier;
             });
+            std::optional<major_version_t> its_major_found;
             if (its_reg != _regs.end()) {
+                its_major_found = its_reg->service_key_.major;
                 _regs.erase(its_reg);
             }
+            return its_major_found;
         };
         if (_is_provided) {
             std::scoped_lock its_lock(provider_mutex_);
@@ -586,9 +604,9 @@ void routing_manager_client::unregister_event(client_t _client, service_t _servi
             erase_from(provided_event_registrations_);
         } else {
             std::scoped_lock its_lock(consumer_mutex_);
-            its_major = find_requested_major(_service, _instance, its_lock);
-            erase_from(consumed_event_registrations_);
+            auto const its_registered_major = erase_from(consumed_event_registrations_);
             erase_from(pending_consumed_event_registrations_);
+            its_major = its_registered_major.value_or(find_requested_major(_service, _instance, its_lock));
         }
     }
     if (std::scoped_lock lock{mutex_}; state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
@@ -636,6 +654,25 @@ void routing_manager_client::subscribe(client_t _client, service_t _service, ins
         // Always register in pending_subscriptions_ so we re-subscribe on reconnect
         subscription_data_t subscription = {service_instance_t{_service, _instance}, _eventgroup, _major, _event, _filter};
         pending_subscriptions_.insert(subscription);
+
+        // The subscription names the major the events of (_service, _instance) belong to, so this is
+        // where registrations held back by a request that named none resolve. Sent here, before the
+        // SUBSCRIBE below, and re-sent from consumed_event_registrations_ when not registered yet.
+        if (_major != ANY_MAJOR) {
+            if (auto const its_resolved = release_consumed_event_registrations(_service, _instance, _major, its_lock);
+                !its_resolved.empty()) {
+                std::scoped_lock inner_lock{mutex_};
+                if (state_machine_->state() == routing_client_state_e::ST_REGISTERED) {
+                    send_event_registrations(state_machine_->client(), its_resolved, inner_lock);
+                }
+            }
+        } else if (find_requested_major(_service, _instance, its_lock) == ANY_MAJOR) {
+            // Neither the request nor the subscription names a major, so the events of this
+            // eventgroup cannot be bound to an interface version and stay unregistered.
+            VSOMEIP_ERROR_P << "(" << hex4(get_client()) << "): [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup)
+                            << "] subscribed with ANY_MAJOR after requesting with ANY_MAJOR ~> the major of its "
+                            << "events is not deducible; subscribe with the major they belong to.";
+        }
 
         // Check/update subscription state
         if (found_eg != its_subscriptions.end()) {

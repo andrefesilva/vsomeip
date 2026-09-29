@@ -182,6 +182,14 @@ TEST_F(local_offering_table_test, find_clients_any_instance_deduplicates) {
     EXPECT_EQ(table_.find_clients(0x1111, ANY_INSTANCE, ANY_MAJOR), (std::set<client_t>{0x10}));
 }
 
+TEST_F(local_offering_table_test, find_clients_concrete_instance_collects_every_major) {
+    table_.add(0x1111, 0x1, 0x1, 0x3, 0x10);
+    table_.add(0x1111, 0x1, 0x2, 0x3, 0x11);
+
+    EXPECT_EQ(table_.find_clients(0x1111, 0x1, ANY_MAJOR), (std::set<client_t>{0x10, 0x11}));
+    EXPECT_EQ(table_.find_clients(0x1111, 0x1, 0x2), (std::set<client_t>{0x11}));
+}
+
 TEST_F(local_offering_table_test, find_clients_unknown_service_is_empty) {
     table_.add(0x1111, 0x1, 0x2, 0x3, 0x10);
     EXPECT_TRUE(table_.find_clients(0x2222, ANY_INSTANCE, ANY_MAJOR).empty());
@@ -200,6 +208,15 @@ TEST_F(local_offering_table_test, is_available_major_matching) {
     EXPECT_FALSE(table_.is_available(0x1111, 0x1, 0x5)); // wrong major
     EXPECT_FALSE(table_.is_available(0x1111, 0x9, 0x2)); // wrong instance
     EXPECT_FALSE(table_.is_available(0x2222, 0x1, 0x2)); // wrong service
+}
+
+TEST_F(local_offering_table_test, is_available_finds_every_major_of_one_instance) {
+    table_.add(0x1111, 0x1, 0x1, 0x3, 0x10);
+    table_.add(0x1111, 0x1, 0x2, 0x3, 0x11);
+
+    EXPECT_TRUE(table_.is_available(0x1111, 0x1, 0x1));
+    EXPECT_TRUE(table_.is_available(0x1111, 0x1, 0x2)); // not the first entry of the instance
+    EXPECT_FALSE(table_.is_available(0x1111, 0x1, 0x5));
 }
 
 TEST_F(local_offering_table_test, is_available_any_service) {
@@ -270,6 +287,36 @@ TEST_F(local_offering_table_test, for_each_available_stops_when_callback_returns
     table_.for_each_available(0x1111, ANY_INSTANCE, ANY_MAJOR, ANY_MINOR, [&count](const entry&) {
         ++count;
         return false; // stop after the first match
+    });
+    EXPECT_EQ(count, 1);
+}
+
+TEST_F(local_offering_table_test, for_each_available_concrete_instance_visits_every_major) {
+    table_.add(0x1111, 0x1, 0x1, 0x0, 0x10);
+    table_.add(0x1111, 0x1, 0x2, 0x0, 0x11);
+    table_.add(0x1111, 0x2, 0x1, 0x0, 0x12);
+
+    std::vector<entry> visited;
+    table_.for_each_available(0x1111, 0x1, ANY_MAJOR, ANY_MINOR, [&visited](const entry& _e) {
+        visited.push_back(_e);
+        return true;
+    });
+
+    std::vector<entry> expected{
+            make_entry(0x1111, 0x1, 0x1, 0x0, 0x10),
+            make_entry(0x1111, 0x1, 0x2, 0x0, 0x11),
+    };
+    EXPECT_EQ(visited, expected);
+}
+
+TEST_F(local_offering_table_test, for_each_available_concrete_instance_stops_when_callback_returns_false) {
+    table_.add(0x1111, 0x1, 0x1, 0x0, 0x10);
+    table_.add(0x1111, 0x1, 0x2, 0x0, 0x11);
+
+    int count = 0;
+    table_.for_each_available(0x1111, 0x1, ANY_MAJOR, ANY_MINOR, [&count](const entry&) {
+        ++count;
+        return false;
     });
     EXPECT_EQ(count, 1);
 }

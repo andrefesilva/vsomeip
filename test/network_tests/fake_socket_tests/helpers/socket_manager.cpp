@@ -849,6 +849,16 @@ void socket_manager::leave_multicast_group(boost::asio::ip::address _multicast, 
             multicast_to_fds_.erase(it_address);
         }
     }
+    multicast_join_cv_.notify_all();
+}
+
+[[nodiscard]] bool socket_manager::await_multicast_leave(boost::asio::ip::address const& _multicast, size_t _max_count,
+                                                         std::chrono::milliseconds _timeout) {
+    auto lock = std::unique_lock(mtx_);
+    return multicast_join_cv_.wait_for(lock, _timeout, [&] {
+        auto it = multicast_to_fds_.find(_multicast);
+        return it == multicast_to_fds_.end() || it->second.size() <= _max_count;
+    });
 }
 
 namespace {

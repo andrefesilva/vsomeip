@@ -103,6 +103,9 @@ struct base_fake_socket_fixture : ::testing::Test {
     [[nodiscard]] bool await_multicast_join(boost::asio::ip::address const& _multicast, size_t _min_count = 1,
                                             std::chrono::milliseconds _timeout = std::chrono::seconds(3));
 
+    [[nodiscard]] bool await_multicast_leave(boost::asio::ip::address const& _multicast, size_t _max_count = 0,
+                                             std::chrono::milliseconds _timeout = std::chrono::seconds(3));
+
     /**
      * Waits until _timeout expires or the application identified by _client and _server established a
      * connection. The direction matters. It is awaited that _client connects on an accepting _server.
