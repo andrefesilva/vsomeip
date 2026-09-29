@@ -42,8 +42,8 @@ std::unique_ptr<abstract_timer> asio_socket_factory::create_timer(boost::asio::i
 }
 
 std::shared_ptr<abstract_clock> asio_socket_factory::get_clock() {
-    static auto clock = std::make_shared<steady_clock>();
-    return clock;
+    static auto* const clock = new std::shared_ptr<abstract_clock>(std::make_shared<steady_clock>()); // NOSONAR
+    return *clock;
 }
 
 #if defined(__linux__) || defined(__QNX__)

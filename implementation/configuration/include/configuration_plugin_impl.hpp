@@ -51,7 +51,6 @@ protected:
 private:
     std::string get_cache_key(const std::string& _name, const std::string& _path) const;
 
-    static std::shared_ptr<configuration_plugin_impl> the_configuration_plugin__;
     std::mutex mutex_;
     std::map<std::string, std::shared_ptr<cfg::configuration_impl>> configurations_;
 

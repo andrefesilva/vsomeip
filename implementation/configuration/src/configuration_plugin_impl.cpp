@@ -10,11 +10,10 @@
 
 namespace vsomeip_v3 {
 
-std::shared_ptr<configuration_plugin_impl> configuration_plugin_impl::the_configuration_plugin__ =
-        std::make_shared<configuration_plugin_impl>();
-
 std::shared_ptr<configuration_plugin_impl> configuration_plugin_impl::get() {
-    return the_configuration_plugin__;
+    static auto* const the_configuration_plugin =
+            new std::shared_ptr<configuration_plugin_impl>(std::make_shared<configuration_plugin_impl>()); // NOSONAR
+    return *the_configuration_plugin;
 }
 
 configuration_plugin_impl::configuration_plugin_impl() { }

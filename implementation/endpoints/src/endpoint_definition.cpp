@@ -3,31 +3,44 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#include <map>
+#include <mutex>
+
 #include <vsomeip/constants.hpp>
 
 #include "../include/endpoint_definition.hpp"
 
 namespace vsomeip_v3 {
 
-std::map<std::tuple<service_t, instance_t, boost::asio::ip::address, uint16_t, bool>, std::shared_ptr<endpoint_definition>>
-        endpoint_definition::definitions_;
+namespace {
 
-std::mutex endpoint_definition::definitions_mutex_;
+struct registry {
+    std::mutex mutex;
+    std::map<std::tuple<service_t, instance_t, boost::asio::ip::address, uint16_t, bool>, std::shared_ptr<endpoint_definition>> entries;
+};
+
+registry& definitions() {
+    static auto* const its_registry = new registry{}; // NOSONAR
+    return *its_registry;
+}
+
+}
 
 std::shared_ptr<endpoint_definition> endpoint_definition::get(const boost::asio::ip::address& _address, uint16_t _port, bool _is_reliable,
                                                               service_t _service, instance_t _instance) {
     auto key = std::make_tuple(_service, _instance, _address, _port, _is_reliable);
-    std::scoped_lock its_lock(definitions_mutex_);
+    auto& its_definitions = definitions();
+    std::scoped_lock its_lock(its_definitions.mutex);
     std::shared_ptr<endpoint_definition> its_result;
 
-    auto found_endpoint = definitions_.find(key);
-    if (found_endpoint != definitions_.end()) {
+    auto found_endpoint = its_definitions.entries.find(key);
+    if (found_endpoint != its_definitions.entries.end()) {
         its_result = found_endpoint->second;
     }
 
     if (!its_result) {
         its_result = std::make_shared<endpoint_definition>(_address, _port, _is_reliable);
-        definitions_[key] = its_result;
+        its_definitions.entries[key] = its_result;
     }
 
     return its_result;

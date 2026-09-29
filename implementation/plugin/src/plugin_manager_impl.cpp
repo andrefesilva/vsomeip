@@ -29,10 +29,9 @@
 
 namespace vsomeip_v3 {
 
-std::shared_ptr<plugin_manager_impl> plugin_manager_impl::the_plugin_manager__ = std::make_shared<plugin_manager_impl>();
-
 std::shared_ptr<plugin_manager_impl> plugin_manager_impl::get() {
-    return the_plugin_manager__;
+    static auto* const the_plugin_manager = new std::shared_ptr<plugin_manager_impl>(std::make_shared<plugin_manager_impl>()); // NOSONAR
+    return *the_plugin_manager;
 }
 
 plugin_manager_impl::plugin_manager_impl() { }
