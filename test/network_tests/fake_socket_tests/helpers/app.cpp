@@ -101,6 +101,11 @@ void app::offer_field(service_instance _si, event_spec const& _ei) {
     offer(_si, _ei, vsomeip::event_type_e::ET_FIELD);
 }
 
+void app::offer_selective(service_instance _si, event_spec const& _ei) {
+    TEST_LOG << "[app] \"" << app_->get_name() << "\" is offering selectively: " << _ei;
+    offer(_si, _ei, vsomeip::event_type_e::ET_SELECTIVE_EVENT);
+}
+
 void app::subscribe(interface const& _interface) {
     request_service(_interface.instance_);
 

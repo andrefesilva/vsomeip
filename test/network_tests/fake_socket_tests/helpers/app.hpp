@@ -110,6 +110,13 @@ public:
     void offer_field(service_instance _si, event_spec const& _ei);
 
     /**
+     * Forwards the request to the vsomeip::application::offer() with ET_SELECTIVE_EVENT, i.e. the
+     * event is notified per subscriber with vsomeip::application::notify_one (@see send_event_one).
+     * An eventgroup only counts as selective while it holds exactly one event.
+     */
+    void offer_selective(service_instance _si, event_spec const& _ei);
+
+    /**
      * Forwards the request to the vsomeip::application::stop_offer_service()
      */
     void stop_offer(service_instance const& _si);
