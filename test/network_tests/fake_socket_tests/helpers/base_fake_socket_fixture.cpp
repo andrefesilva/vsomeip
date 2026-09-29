@@ -113,6 +113,11 @@ void base_fake_socket_fixture::stop_client(std::string const _name) {
     return socket_manager_->await_multicast_join(_multicast, _min_count, _timeout);
 }
 
+[[nodiscard]] bool base_fake_socket_fixture::await_multicast_leave(boost::asio::ip::address const& _multicast, size_t _max_count,
+                                                                   std::chrono::milliseconds _timeout) {
+    return socket_manager_->await_multicast_leave(_multicast, _max_count, _timeout);
+}
+
 [[nodiscard]] bool base_fake_socket_fixture::await_connection(std::string const& _client, std::string const& _server,
                                                               std::chrono::milliseconds _timeout) {
     return socket_manager_->await_connection(_client, _server, _timeout);

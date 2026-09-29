@@ -61,7 +61,7 @@ public:
     std::shared_ptr<boardnet_endpoint> find_server_endpoint(uint16_t _port, bool _reliable) const;
 
     std::shared_ptr<boardnet_endpoint> find_or_create_server_endpoint(uint16_t _port, bool _reliable, bool _start, service_t _service,
-                                                                      instance_t _instance, major_version_t _major, bool& _is_found,
+                                                                      instance_t _instance, major_version_t _major,
                                                                       bool _is_multicast = false);
     bool remove_server_endpoint(uint16_t _port, bool _reliable);
 
@@ -77,7 +77,7 @@ public:
                                            const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
                                            uint16_t _port);
 
-    void clear_multicast_endpoints(service_t _service, instance_t _instance);
+    void clear_multicast_endpoints(service_t _service, instance_t _instance, major_version_t _major);
 
     bool supports_selective(service_t _service, instance_t _instance) const;
 
@@ -91,7 +91,6 @@ public:
     instance_t find_instance_multicast(service_t _service, const boost::asio::ip::address& _sender) const;
 
     bool remove_instance(service_t _service, major_version_t _major, boardnet_endpoint* const _endpoint);
-    bool remove_instance_multicast(service_t _service, instance_t _instance);
 
     // boardnet_endpoint_host interface
     void on_connect(std::shared_ptr<boardnet_endpoint> _endpoint);
@@ -179,8 +178,12 @@ private:
     using server_endpoints_t = std::map<uint16_t, std::map<bool, std::shared_ptr<boardnet_endpoint>>>;
     server_endpoints_t server_endpoints_;
 
-    // Multicast endpoint info (notifications)
-    service_instance_map<std::shared_ptr<endpoint_definition>> multicast_info_;
+    // Multicast endpoint info (notifications), one per subscribed major
+    struct multicast_info_t {
+        std::shared_ptr<endpoint_definition> definition_;
+        boost::asio::ip::address sender_;
+    };
+    versioned_service_instance_map<multicast_info_t> multicast_info_;
     auxiliary_context auxiliary_context_;
 
     mutable std::mutex routing_endpoint_mtx_;

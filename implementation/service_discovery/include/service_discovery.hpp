@@ -35,8 +35,9 @@ public:
 
     virtual void subscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup, major_version_t _major, ttl_t _ttl,
                            client_t _client, const std::shared_ptr<eventgroupinfo>& _info) = 0;
-    virtual void unsubscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup, client_t _client) = 0;
-    virtual void unsubscribe_all(service_t _service, instance_t _instance) = 0;
+    virtual void unsubscribe(service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
+                             client_t _client) = 0;
+    virtual void unsubscribe_all(service_t _service, instance_t _instance, major_version_t _major) = 0;
     virtual void unsubscribe_all_on_suspend() = 0;
     virtual void reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major) = 0;
 
@@ -47,7 +48,8 @@ public:
 
     virtual void start_offer_watchdog() = 0;
 
-    virtual void on_endpoint_connected(service_t _service, instance_t _instance, const std::shared_ptr<boardnet_endpoint>& _endpoint) = 0;
+    virtual void on_endpoint_connected(service_t _service, instance_t _instance, major_version_t _major,
+                                       const std::shared_ptr<boardnet_endpoint>& _endpoint) = 0;
 
     virtual void offer_service(const std::shared_ptr<serviceinfo>& _info) = 0;
 

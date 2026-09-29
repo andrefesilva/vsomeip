@@ -1556,19 +1556,179 @@ TEST_F(test_multiversion_support_aggregate_consumption, any_major_request_does_n
     EXPECT_FALSE(seen_after_resume->has_v1_.load());
 }
 
-// the application-facing release_service() API
-// (vsomeip::application::release_service) takes no major -- only (service, instance). The router
-// works out its_client_major -- the concrete major *this client's own request* is bookkept under --
-// from requested_services_, then calls ep_mgr_impl_->clear_client_endpoints(service, instance,
-// its_client_major, reliable). request_service()'s own default major is ANY_MAJOR,
-// so when the client requested via ANY_MAJOR,
-// its_client_major recovered here is ANY_MAJOR too. But remote_services_ (which
-// clear_client_endpoints() looks up) is always keyed by the concrete major from the actual offer --
-// an exact {service, instance, ANY_MAJOR} lookup never matches a {service, instance, 0x2} entry, so
-// the client endpoint is never stopped and its reserved local port never released. Made observable
-// here through a reliable (TCP) event: releasing must tear down the underlying boardnet TCP
-// connection between the consumer and provider routers, exactly as it would if the client had
-// requested the concrete major instead.
+// Selective eventgroups carry real client ids in the SD subscription; a non-selective one holds only
+// VSOMEIP_ROUTING_CLIENT, so the per-client StopSubscribe on release is observable only here.
+struct test_multiversion_release_selective : public base_fake_socket_fixture {
+    void start_apps() {
+        consumer_ecu_.add_app(client_a_name_);
+        consumer_ecu_.add_app(client_b_name_);
+        provider_ecu_.add_app(server_name_);
+
+        consumer_ecu_.prepare();
+        provider_ecu_.prepare();
+
+        consumer_ecu_.start_apps();
+        provider_ecu_.start_apps();
+
+        client_a_ = consumer_ecu_.apps_[client_a_name_];
+        client_b_ = consumer_ecu_.apps_[client_b_name_];
+        server_ = provider_ecu_.apps_[server_name_];
+
+        ASSERT_TRUE(client_a_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_b_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    }
+
+    std::string const client_a_name_{"client_a"};
+    std::string const client_b_name_{"client_b"};
+    std::string const server_name_{"server"};
+
+    // One event in its own eventgroup, as selectivity requires.
+    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
+                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+                            {}};
+    event_ids event_{interface_v1_.instance_, interface_v1_.events_[0]};
+
+    std::shared_ptr<attribute_recorder<vsomeip::client_t>> subscribed_ = std::make_shared<attribute_recorder<vsomeip::client_t>>();
+    std::shared_ptr<attribute_recorder<vsomeip::client_t>> unsubscribed_ = std::make_shared<attribute_recorder<vsomeip::client_t>>();
+
+    ecu_setup provider_ecu_{"provider", ecu_config{boardnet::ecu_one_config}.add_interface({interface_v1_}), *socket_manager_};
+    ecu_setup consumer_ecu_{"consumer", boardnet::ecu_three_config, *socket_manager_};
+
+    app* client_a_;
+    app* client_b_;
+    app* server_;
+};
+
+// client_b_ still requests the service, so release_service() takes the has-requester branch, whose
+// only provider-visible effect is the per-client StopSubscribe for the released major.
+TEST_F(test_multiversion_release_selective, releasing_one_selective_subscriber_stops_only_that_client) {
+    start_apps();
+
+    server_->register_group_subscription_handler(
+            event_,
+            [its_subscribed = subscribed_, its_unsubscribed = unsubscribed_](vsomeip::client_t _client, vsomeip::uid_t, vsomeip::gid_t,
+                                                                             std::string const&, bool _is_subscribed) {
+                (_is_subscribed ? its_subscribed : its_unsubscribed)->record(_client);
+                return true;
+            });
+
+    server_->offer(interface_v1_);
+
+    client_a_->request_service(interface_v1_.instance_);
+    client_b_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_a_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_b_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    client_a_->subscribe_selective(event_);
+    client_b_->subscribe_selective(event_);
+    ASSERT_TRUE(subscribed_->wait_for_any(client_a_->get_client_id())) << subscribed_->to_string();
+    ASSERT_TRUE(subscribed_->wait_for_any(client_b_->get_client_id())) << subscribed_->to_string();
+
+    client_a_->release_service(interface_v1_.instance_);
+
+    EXPECT_TRUE(unsubscribed_->wait_for_any(client_a_->get_client_id()))
+            << "provider never saw the released client's StopSubscribe" << unsubscribed_->to_string();
+    EXPECT_FALSE(unsubscribed_->wait_for_any(client_b_->get_client_id(), common::scaled_timeout(std::chrono::milliseconds(250))))
+            << "the remaining subscriber was unsubscribed" << unsubscribed_->to_string();
+}
+
+// notify_one() to a selective remote subscriber reaches rmi::notify_one on the provider's router, which
+// resolves the event by major. Major 2 is used so that any other literal is a wrong major.
+TEST_F(test_multiversion_release_selective, notify_one_reaches_the_selective_subscriber_of_that_major) {
+    start_apps();
+
+    interface const its_v2{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
+                           {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+                           {}};
+    event_ids const its_event{its_v2.instance_, its_v2.events_[0]};
+
+    server_->register_group_subscription_handler(its_event,
+                                                 [its_subscribed = subscribed_](vsomeip::client_t _client, vsomeip::uid_t, vsomeip::gid_t,
+                                                                                std::string const&, bool _is_subscribed) {
+                                                     if (_is_subscribed) {
+                                                         its_subscribed->record(_client);
+                                                     }
+                                                     return true;
+                                                 });
+
+    server_->offer(its_v2);
+
+    client_a_->request_service(its_v2.instance_);
+    ASSERT_TRUE(client_a_->availability_record_.wait_for_last(service_availability::available(its_v2.instance_)));
+    client_a_->subscribe_selective(its_event);
+    ASSERT_TRUE(subscribed_->wait_for_any(client_a_->get_client_id())) << subscribed_->to_string();
+
+    std::vector<unsigned char> const its_payload{0x88, 0x88};
+    server_->send_event_one(its_event, its_payload, client_a_->get_client_id());
+
+    EXPECT_TRUE(client_a_->message_record_.wait_for_any(
+            message_checker{std::nullopt, its_v2.instance_, its_event.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, its_payload}))
+            << client_a_->message_record_;
+}
+
+// Unreliable eventgroups have no connection teardown; the SD StopSubscribe is the provider's only signal.
+struct test_multiversion_release_unreliable : public base_fake_socket_fixture {
+    void start_apps() {
+        consumer_ecu_.add_app(client_name_);
+        provider_ecu_.add_app(server_name_);
+
+        consumer_ecu_.prepare();
+        provider_ecu_.prepare();
+
+        consumer_ecu_.start_apps();
+        provider_ecu_.start_apps();
+
+        client_ = consumer_ecu_.apps_[client_name_];
+        server_ = provider_ecu_.apps_[server_name_];
+
+        ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    }
+
+    std::string const client_name_{"client"};
+    std::string const server_name_{"server"};
+
+    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
+                            {},
+                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
+    event_ids field_{interface_v1_.instance_, interface_v1_.fields_[0]};
+
+    // Declared before the ecu_setups: the provider's subscription handler holds a reference.
+    attribute_recorder<bool> subscribed_;
+
+    ecu_setup provider_ecu_{"provider", ecu_config{boardnet::ecu_one_config}.add_interface({interface_v1_}), *socket_manager_};
+    ecu_setup consumer_ecu_{"consumer", boardnet::ecu_three_config, *socket_manager_};
+
+    app* client_;
+    app* server_;
+};
+
+TEST_F(test_multiversion_release_unreliable, releasing_sends_the_stop_subscribe_for_the_released_major) {
+    start_apps();
+
+    server_->register_group_subscription_handler(
+            field_, [this](vsomeip::client_t, vsomeip::uid_t, vsomeip::gid_t, std::string const&, bool _is_subscribed) {
+                subscribed_.record(_is_subscribed);
+                return true;
+            });
+
+    server_->offer(interface_v1_);
+
+    client_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    client_->subscribe_field(field_);
+    ASSERT_TRUE(subscribed_.wait_for_any(true)) << "provider never saw the subscription";
+
+    client_->release_service(interface_v1_.instance_);
+
+    EXPECT_TRUE(subscribed_.wait_for_last(false)) << "provider never saw the StopSubscribe for the released major";
+}
+
+// release_service() takes no major, so the router recovers ANY_MAJOR from requested_services_, while
+// remote_services_ is keyed by the offered major: the exact lookup in clear_client_endpoints() misses
+// and the client endpoint is never stopped. Observable as the boardnet TCP connection staying up.
 struct test_multiversion_release_any_major_reliable : public base_fake_socket_fixture {
     void start_apps() {
         consumer_ecu_.add_app(client_name_);
@@ -1805,6 +1965,38 @@ TEST_F(test_multiversion_support_aggregate_offering, both_majors_offered_from_a_
     EXPECT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
     EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
 }
+// Both majors are offered from one ECU; a remote subscription to v2 must reach v2's provider, not
+// whichever local offerer find_local_client() returns first.
+TEST_F(test_multiversion_support_aggregate_offering, a_remote_subscription_reaches_the_provider_of_that_major) {
+    start_two_ecu_setup();
+
+    event_ids const field_v2{interface_v2_.instance_, interface_v2_.fields_[0]};
+    auto const its_subscribed = std::make_shared<attribute_recorder<bool>>();
+    provider_v2_->register_group_subscription_handler(
+            field_v2, [its_subscribed](vsomeip::client_t, vsomeip::uid_t, vsomeip::gid_t, std::string const&, bool _is_subscribed) {
+                its_subscribed->record(_is_subscribed);
+                return true;
+            });
+
+    auto const v2_available = std::make_shared<attribute_recorder<bool>>();
+    client_v2_->get_application()->register_availability_handler(
+            interface_v2_.instance_.service_, interface_v2_.instance_.instance_,
+            [v2_available](vsomeip::service_t, vsomeip::instance_t, vsomeip::availability_state_e _state) {
+                v2_available->record(_state == vsomeip::availability_state_e::AS_AVAILABLE);
+            },
+            interface_v2_.instance_.major_, vsomeip::ANY_MINOR);
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(v2_available->wait_for_last(true));
+
+    client_v2_->subscribe_field(field_v2);
+
+    EXPECT_TRUE(its_subscribed->wait_for_any(true)) << "provider_v2 never saw the remote subscription";
+}
+
 TEST_F(test_multiversion_support_aggregate_offering, releasing_v2_then_any_major_eventually_drops_v2s_connection_but_never_v1s) {
     consumer_v2_ecu_.add_app(client_any_name_);
     start_three_ecu_setup();
@@ -2302,5 +2494,883 @@ TEST_F(test_multiversion_support_aggregate_offering, v2_with_any_instance_become
     v2.instance_ = ANY_INSTANCE;
     client_v2_->request_service(v2);
     EXPECT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+}
+
+// Three-ECU topology of test_multiversion_support_aggregate_consumption, with both majors reusing
+// the same event id and the same eventgroup id.
+struct test_multiversion_support_aggregate_events : public base_fake_socket_fixture {
+    void start_apps() {
+        provider_v1_ecu_.add_app(provider_v1_name_);
+        provider_v2_ecu_.add_app(provider_v2_name_);
+        consumer_ecu_.add_app(client_v1_name_);
+        consumer_ecu_.add_app(client_v2_name_);
+
+        provider_v1_ecu_.prepare();
+        provider_v2_ecu_.prepare();
+        consumer_ecu_.prepare();
+
+        provider_v1_ecu_.start_apps();
+        provider_v2_ecu_.start_apps();
+        consumer_ecu_.start_apps();
+
+        provider_v1_ = provider_v1_ecu_.apps_[provider_v1_name_];
+        provider_v2_ = provider_v2_ecu_.apps_[provider_v2_name_];
+        client_v1_ = consumer_ecu_.apps_[client_v1_name_];
+        client_v2_ = consumer_ecu_.apps_[client_v2_name_];
+
+        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    }
+
+    void offer_and_subscribe_both() {
+        record_remote_subscriptions(provider_v1_, field_v1_, subscribed_at_v1_);
+        record_remote_subscriptions(provider_v2_, field_v2_, subscribed_at_v2_);
+
+        provider_v1_->offer(interface_v1_);
+        provider_v2_->offer(interface_v2_);
+
+        client_v1_->request_service(interface_v1_.instance_);
+        client_v2_->request_service(interface_v2_.instance_);
+        ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+        ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+        client_v1_->subscribe_field(field_v1_);
+        client_v2_->subscribe_field(field_v2_);
+        ASSERT_TRUE(subscribed_at_v1_.wait_for_any(true)) << "provider_v1 never saw client_v1's subscription";
+        ASSERT_TRUE(subscribed_at_v2_.wait_for_any(true)) << "provider_v2 never saw client_v2's subscription";
+    }
+
+    std::shared_ptr<someip_gate> sd_gate(udp_party _sender, udp_party _receiver) {
+        auto its_gate = someip_gate::create();
+        EXPECT_TRUE(set_udp_data_pipe(std::move(_sender), std::move(_receiver), its_gate->get_data_pipe()));
+        return its_gate;
+    }
+
+    // A cached value stops the StopSubscribe/Subscribe each offer sends for a field without one.
+    void publish_v1_field() {
+        provider_v1_->send_event(field_v1_, payload_v1_);
+        ASSERT_TRUE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_)))
+                << client_v1_->message_record_;
+    }
+
+    void expect_v2_still_notified() {
+        provider_v2_->send_event(field_v2_, payload_v2_);
+        EXPECT_TRUE(client_v2_->message_record_.wait_for_any(notification(interface_v2_.instance_, payload_v2_)))
+                << client_v2_->message_record_;
+    }
+
+    someip_sd_record_message const stop_subscribe_{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0};
+    someip_sd_record_message const nack_{sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK, 0};
+
+    // Each provider ECU hosts exactly one major, so a record here proves the subscription reached
+    // that major's provider. The consumer-side callback cannot be used: the local SUBSCRIBE_ACK is
+    // sent even when SD dropped the subscription.
+    void record_remote_subscriptions(app* _provider, event_ids const& _ei, attribute_recorder<bool>& _record) {
+        _provider->register_group_subscription_handler(_ei, [&_record](client_t, uid_t, gid_t, std::string const&, bool _is_subscribed) {
+            _record.record(_is_subscribed);
+            return true;
+        });
+    }
+
+    std::string const provider_v1_name_{"provider_v1"};
+    std::string const provider_v2_name_{"provider_v2"};
+    std::string const client_v1_name_{"client_v1"};
+    std::string const client_v2_name_{"client_v2"};
+
+    static constexpr vsomeip::event_t shared_event_{0x8001};
+    static constexpr vsomeip::eventgroup_t shared_eventgroup_{0x8001};
+
+    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
+                            {},
+                            {event_spec{shared_event_, {shared_eventgroup_}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
+                            {},
+                            {event_spec{shared_event_, {shared_eventgroup_}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+
+    event_ids field_v1_{interface_v1_.instance_, interface_v1_.fields_[0]};
+    event_ids field_v2_{interface_v2_.instance_, interface_v2_.fields_[0]};
+
+    std::vector<unsigned char> const payload_v1_{0x11, 0x11};
+    std::vector<unsigned char> const payload_v2_{0x22, 0x22};
+
+    // The recorded major is the received message's SOME/IP interface version (@see app::on_message).
+    message_checker notification(service_instance const& _si, std::vector<unsigned char> const& _payload) const {
+        return message_checker{std::nullopt, _si, shared_event_, vsomeip::message_type_e::MT_NOTIFICATION, _payload};
+    }
+
+    // Declared before the ecu_setups: the provider's subscription handler holds a reference, so
+    // these must outlive the apps.
+    attribute_recorder<bool> subscribed_at_v1_;
+    attribute_recorder<bool> subscribed_at_v2_;
+
+    ecu_setup provider_v1_ecu_{"provider_v1", ecu_config{boardnet::ecu_one_config}.add_interface({interface_v1_}), *socket_manager_};
+    ecu_setup provider_v2_ecu_{"provider_v2", ecu_config{boardnet::ecu_two_config}.add_interface({interface_v2_}), *socket_manager_};
+    ecu_setup consumer_ecu_{"consumer", boardnet::ecu_three_config, *socket_manager_};
+
+    app* provider_v1_;
+    app* provider_v2_;
+    app* client_v1_;
+    app* client_v2_;
+};
+
+// Both majors use the same eventgroup id, so each subscription has to survive
+// service_discovery_impl::subscribed_. offer_and_subscribe_both() asserts that each one reached its
+// own provider.
+TEST_F(test_multiversion_support_aggregate_events, both_majors_can_subscribe_to_the_same_eventgroup_id) {
+    start_apps();
+    offer_and_subscribe_both();
+}
+
+// A client that calls request_service() without a major registers its events under ANY_MAJOR,
+// so the host really does hold an ANY_MAJOR bucket. A StopOffer arrives with the concrete major
+// and must still clear that bucket's subscribers, otherwise the re-subscribe after the re-offer
+// is swallowed as "already subscribed".
+// PROBE: both majors are offered. A client that requested ANY_MAJOR registers its event before it
+// subscribes, so the registration major is deduced from what is offered. It must end up on the major
+// the client then subscribes with, not on whichever offer the lookup happened to visit first.
+TEST_F(test_multiversion_support_aggregate_events, any_major_requester_registers_the_major_it_subscribes_with) {
+    start_apps();
+
+    record_remote_subscriptions(provider_v2_, field_v2_, subscribed_at_v2_);
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    auto const v2_available = std::make_shared<attribute_recorder<bool>>();
+    client_v2_->get_application()->register_availability_handler(
+            interface_v2_.instance_.service_, interface_v2_.instance_.instance_,
+            [v2_available](vsomeip::service_t, vsomeip::instance_t, vsomeip::availability_state_e _state) {
+                v2_available->record(_state == vsomeip::availability_state_e::AS_AVAILABLE);
+            },
+            interface_v2_.instance_.major_, vsomeip::ANY_MINOR);
+
+    client_v2_->request_service(service_instance{.service_ = interface_v2_.instance_.service_,
+                                                 .instance_ = interface_v2_.instance_.instance_,
+                                                 .major_ = vsomeip::ANY_MAJOR,
+                                                 .minor_ = vsomeip::ANY_MINOR});
+    // The availability callback carries no major, so only a major-scoped handler identifies v2.
+    ASSERT_TRUE(v2_available->wait_for_last(true));
+
+    client_v2_->subscribe_field(field_v2_);
+    EXPECT_TRUE(subscribed_at_v2_.wait_for_any(true)) << "provider_v2 never saw the ANY_MAJOR requester's subscription";
+
+    provider_v2_->send_event(field_v2_, payload_v2_);
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_any(notification(interface_v2_.instance_, payload_v2_)))
+            << client_v2_->message_record_;
+}
+
+// A StopOffer must clear the subscribers of the re-offered major, or the re-subscribe is swallowed.
+TEST_F(test_multiversion_support_aggregate_events, any_major_requester_resubscribes_after_a_stop_offer) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+
+    client_v1_->get_application()->request_service(0x1000, 0x1);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    client_v1_->subscribe_field(field_v1_);
+    provider_v1_->send_event(field_v1_, payload_v1_);
+    ASSERT_TRUE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v1_->message_record_;
+
+    client_v1_->availability_record_.clear();
+    provider_v1_->stop_offer(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::unavailable(interface_v1_.instance_)));
+
+    provider_v1_->offer(interface_v1_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    client_v1_->subscribe_field(field_v1_);
+    client_v1_->message_record_.clear();
+    provider_v1_->send_event(field_v1_, payload_v1_, true);
+
+    EXPECT_TRUE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v1_->message_record_;
+}
+
+// A released client left in the subscriber set keeps eg_has_subscribers true, so the last real
+// unsubscribe no longer unsets the payload and the next subscriber gets the stale value replayed.
+TEST_F(test_multiversion_support_aggregate_events, releasing_lets_the_last_unsubscribe_unset_the_payload) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    client_v1_->subscribe_field(field_v1_);
+    client_v2_->subscribe_field(field_v1_);
+
+    provider_v1_->send_event(field_v1_, payload_v1_);
+    ASSERT_TRUE(client_v2_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v2_->message_record_;
+
+    client_v1_->release_service(interface_v1_.instance_);
+    client_v2_->unsubscribe_from_group(field_v1_);
+
+    std::vector<unsigned char> const its_later_payload{0x55, 0x55};
+    provider_v1_->send_event(field_v1_, its_later_payload, true);
+
+    client_v2_->message_record_.clear();
+    client_v2_->subscribe_field(field_v1_);
+
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_any(notification(interface_v1_.instance_, its_later_payload)))
+            << client_v2_->message_record_;
+    EXPECT_FALSE(client_v2_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_),
+                                                          common::scaled_timeout(std::chrono::milliseconds(250))))
+            << "the stale payload was replayed" << client_v2_->message_record_;
+}
+
+// rmi::unsubscribe picks the eventgroup by major; v2 shares the eventgroup id.
+TEST_F(test_multiversion_support_aggregate_events, unsubscribing_from_v1_leaves_v2_subscribed) {
+    start_apps();
+    offer_and_subscribe_both();
+
+    subscribed_at_v1_.clear();
+    client_v1_->unsubscribe_from_group(field_v1_);
+
+    EXPECT_TRUE(subscribed_at_v1_.wait_for_last(false)) << "provider_v1 never saw the StopSubscribe";
+
+    provider_v2_->send_event(field_v2_, payload_v2_);
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_any(notification(interface_v2_.instance_, payload_v2_)))
+            << "unsubscribing from v1 disturbed v2" << client_v2_->message_record_;
+}
+
+// A second subscriber to an already acknowledged eventgroup is acked from remote_subscription_state_,
+// which is keyed by major.
+TEST_F(test_multiversion_support_aggregate_events, a_second_subscriber_to_an_acknowledged_eventgroup_is_acked) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    client_v1_->subscribe_field(field_v1_);
+    ASSERT_TRUE(client_v1_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_v1_)))
+            << client_v1_->subscription_record_;
+
+    client_v2_->subscribe_field(field_v1_);
+
+    EXPECT_TRUE(client_v2_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_v1_)))
+            << client_v2_->subscription_record_;
+}
+
+// on_endpoint_connected() for v1's endpoint must not resend v2's subscription; v2 is offered once, as each offer resubscribes.
+TEST_F(test_multiversion_support_aggregate_events, connecting_one_majors_endpoint_does_not_resubscribe_the_other_major) {
+    provider_v2_ecu_.config().service_discovery_.repetitions_max_ = 0;
+    provider_v2_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(30);
+    provider_v2_ecu_.config().service_discovery_.ttl_ = 60;
+    start_apps();
+    boost::asio::ip::udp::endpoint const sd_multicast{boost::asio::ip::make_address("224.224.224.0"), 30490};
+    auto const v2_offers = someip_gate::create("v2_offers");
+    ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {sd_multicast, consumer_ecu_.router_name_}, v2_offers->get_data_pipe()));
+    auto const to_v2 = someip_gate::create("to_v2");
+    ASSERT_TRUE(set_udp_data_pipe({consumer_ecu_.sd_endpoint(), consumer_ecu_.router_name_}, {provider_v2_ecu_.sd_endpoint()},
+                                  to_v2->get_data_pipe()));
+    record_remote_subscriptions(provider_v2_, field_v2_, subscribed_at_v2_);
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+    ASSERT_TRUE(v2_offers->sd_record_.wait_for_any({sd::entry_type_e::OFFER_SERVICE, 60}));
+
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    client_v2_->subscribe_field(field_v2_);
+    ASSERT_TRUE(subscribed_at_v2_.wait_for_any(true));
+    to_v2->sd_record_.clear();
+
+    client_v1_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    EXPECT_FALSE(to_v2->sd_record_.wait_for_any({sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}, std::chrono::milliseconds(100)))
+            << to_v2->sd_record_.to_string();
+}
+
+// A failed connect to v1 must keep v2's acked state; single v2 offer and cached field avoid a resubscribe restoring it.
+TEST_F(test_multiversion_support_aggregate_events, a_failed_connect_to_one_major_keeps_the_other_majors_subscription_acked) {
+    provider_v2_ecu_.config().service_discovery_.repetitions_max_ = 0;
+    provider_v2_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(30);
+    provider_v2_ecu_.config().service_discovery_.ttl_ = 60;
+    std::string const second_v2_name{"second_client_v2"};
+    consumer_ecu_.add_app(second_v2_name);
+    start_apps();
+    auto* second_v2 = consumer_ecu_.apps_[second_v2_name];
+    ASSERT_TRUE(second_v2->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    boost::asio::ip::udp::endpoint const sd_multicast{boost::asio::ip::make_address("224.224.224.0"), 30490};
+    auto const v2_offers = someip_gate::create("v2_offers");
+    ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {sd_multicast, consumer_ecu_.router_name_}, v2_offers->get_data_pipe()));
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+    ASSERT_TRUE(v2_offers->sd_record_.wait_for_any({sd::entry_type_e::OFFER_SERVICE, 60}));
+
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    client_v2_->subscribe_field(field_v2_);
+    ASSERT_TRUE(client_v2_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_v2_)));
+    provider_v2_->send_event(field_v2_, payload_v2_);
+    ASSERT_TRUE(client_v2_->message_record_.wait_for_any(notification(interface_v2_.instance_, payload_v2_)));
+
+    report_on_connect(provider_v1_ecu_.router_name_ + "_auxiliary_context_", {boost::asio::error::connection_refused});
+    client_v1_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    second_v2->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(second_v2->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    second_v2->subscribe_field(field_v2_);
+
+    EXPECT_TRUE(second_v2->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_v2_)))
+            << second_v2->subscription_record_;
+}
+
+// A NACK from v1's provider restarts v1's connection only, which resubscribes v1.
+TEST_F(test_multiversion_support_aggregate_events, a_nack_of_v1_resubscribes_only_v1) {
+    // Offered once, so only the NACK path resubscribes.
+    provider_v1_ecu_.config().service_discovery_.repetitions_max_ = 0;
+    provider_v1_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(30);
+    provider_v1_ecu_.config().service_discovery_.ttl_ = 60;
+    start_apps();
+    auto const v1_answers = sd_gate({provider_v1_ecu_.sd_endpoint(), provider_v1_ecu_.router_name_}, {consumer_ecu_.sd_endpoint()});
+    provider_v1_->register_group_subscription_handler(field_v1_, [this](client_t, uid_t, gid_t, std::string const&, bool _is_subscribed) {
+        subscribed_at_v1_.record(_is_subscribed);
+        return false;
+    });
+    record_remote_subscriptions(provider_v2_, field_v2_, subscribed_at_v2_);
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+    client_v1_->subscribe_field(field_v1_);
+    client_v2_->subscribe_field(field_v2_);
+
+    EXPECT_TRUE(v1_answers->sd_record_.wait_for_any(nack_)) << v1_answers->sd_record_.to_string();
+    EXPECT_TRUE(subscribed_at_v1_.wait_for_count(true, 2)) << "v1 was not resubscribed after its NACK";
+    EXPECT_TRUE(client_v2_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_v2_)));
+    expect_v2_still_notified();
+}
+
+// Losing v1's TCP connection stop-subscribes v1 only.
+TEST_F(test_multiversion_support_aggregate_events, losing_v1s_connection_stop_subscribes_only_v1) {
+    start_apps();
+    offer_and_subscribe_both();
+    publish_v1_field();
+    auto const to_v1 = sd_gate({consumer_ecu_.sd_endpoint(), consumer_ecu_.router_name_}, {provider_v1_ecu_.sd_endpoint()});
+
+    ASSERT_TRUE(disconnect(consumer_ecu_.router_name_, boost::asio::error::connection_reset, provider_v1_ecu_.router_name_,
+                           boost::asio::error::connection_reset));
+
+    EXPECT_TRUE(to_v1->sd_record_.wait_for_any(stop_subscribe_)) << to_v1->sd_record_.to_string();
+    expect_v2_still_notified();
+}
+
+// The v1 offer's TTL expiry stop-subscribes v1 only; v2's offer and subscription outlive the blocked offers.
+TEST_F(test_multiversion_support_aggregate_events, v1s_offer_expiry_stop_subscribes_only_v1) {
+    provider_v2_ecu_.config().service_discovery_.ttl_ = 60;
+    consumer_ecu_.config().service_discovery_.ttl_ = 60;
+    start_apps();
+    offer_and_subscribe_both();
+    auto const to_v1 = sd_gate({consumer_ecu_.sd_endpoint(), consumer_ecu_.router_name_}, {provider_v1_ecu_.sd_endpoint()});
+    auto const offers = sd_gate(
+            udp_party::any(),
+            udp_party{boost::asio::ip::udp::endpoint{boost::asio::ip::make_address("224.224.224.0"), 30490}, consumer_ecu_.router_name_});
+    offers->block(true);
+
+    EXPECT_TRUE(to_v1->sd_record_.wait_for_any(stop_subscribe_, common::scaled_timeout(std::chrono::seconds(10))))
+            << to_v1->sd_record_.to_string();
+    expect_v2_still_notified();
+    offers->block(false);
+}
+
+// client_v1 losing its router connection stop-subscribes v1 only; v1 is offered once and kept requested, so only remove_local() can.
+TEST_F(test_multiversion_support_aggregate_events, losing_the_v1_client_stop_subscribes_only_v1) {
+    provider_v1_ecu_.config().service_discovery_.repetitions_max_ = 0;
+    provider_v1_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::seconds(30);
+    provider_v1_ecu_.config().service_discovery_.ttl_ = 60;
+    std::string const v1_requester_name{"v1_requester"};
+    consumer_ecu_.add_app(v1_requester_name);
+    start_apps();
+    auto* v1_requester = consumer_ecu_.apps_[v1_requester_name];
+    ASSERT_TRUE(v1_requester->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    offer_and_subscribe_both();
+    v1_requester->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(v1_requester->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    publish_v1_field();
+    auto const to_v1 = sd_gate({consumer_ecu_.sd_endpoint(), consumer_ecu_.router_name_}, {provider_v1_ecu_.sd_endpoint()});
+
+    ASSERT_TRUE(disconnect(client_v1_name_, boost::asio::error::connection_reset, consumer_ecu_.router_name_,
+                           boost::asio::error::connection_reset));
+
+    EXPECT_TRUE(to_v1->sd_record_.wait_for_any(stop_subscribe_)) << to_v1->sd_record_.to_string();
+    expect_v2_still_notified();
+}
+
+// An expired remote subscription is reported to v1's provider only.
+TEST_F(test_multiversion_support_aggregate_events, an_expired_v1_subscription_reaches_only_v1s_provider) {
+    start_apps();
+    offer_and_subscribe_both();
+    auto const to_v1 = sd_gate({consumer_ecu_.sd_endpoint(), consumer_ecu_.router_name_}, {provider_v1_ecu_.sd_endpoint()});
+    to_v1->block(true);
+
+    EXPECT_TRUE(subscribed_at_v1_.wait_for_last(false, common::scaled_timeout(std::chrono::seconds(10))))
+            << "provider_v1 was not told about the expiry";
+    expect_v2_still_notified();
+    to_v1->block(false);
+}
+
+// Each provider ECU also consumes the other major. find_local_client() ignores the major, so the local
+// offer of one major must not make the router treat a subscription to the remote other major as local.
+TEST_F(test_multiversion_support_aggregate_events, an_ecu_offering_one_major_can_subscribe_to_the_other) {
+    std::string const v2_consumer_name{"v2_consumer_on_v1_ecu"};
+    std::string const v1_consumer_name{"v1_consumer_on_v2_ecu"};
+    provider_v1_ecu_.add_app(v2_consumer_name);
+    provider_v2_ecu_.add_app(v1_consumer_name);
+    start_apps();
+
+    auto* v2_consumer = provider_v1_ecu_.apps_[v2_consumer_name];
+    auto* v1_consumer = provider_v2_ecu_.apps_[v1_consumer_name];
+    ASSERT_TRUE(v2_consumer->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    ASSERT_TRUE(v1_consumer->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+
+    // The availability callback carries no major, so only a major-scoped handler identifies one.
+    auto const await_major = [](app* _app, service_instance const& _si) {
+        auto its_available = std::make_shared<attribute_recorder<bool>>();
+        _app->get_application()->register_availability_handler(
+                _si.service_, _si.instance_,
+                [its_available](vsomeip::service_t, vsomeip::instance_t, vsomeip::availability_state_e _state) {
+                    its_available->record(_state == vsomeip::availability_state_e::AS_AVAILABLE);
+                },
+                _si.major_, vsomeip::ANY_MINOR);
+        return its_available;
+    };
+    auto const v1_available = await_major(v1_consumer, interface_v1_.instance_);
+    auto const v2_available = await_major(v2_consumer, interface_v2_.instance_);
+
+    record_remote_subscriptions(provider_v1_, field_v1_, subscribed_at_v1_);
+    record_remote_subscriptions(provider_v2_, field_v2_, subscribed_at_v2_);
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    v1_consumer->request_service(interface_v1_.instance_);
+    v2_consumer->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(v1_available->wait_for_last(true));
+    ASSERT_TRUE(v2_available->wait_for_last(true));
+
+    v1_consumer->subscribe_field(field_v1_);
+    v2_consumer->subscribe_field(field_v2_);
+
+    EXPECT_TRUE(subscribed_at_v1_.wait_for_any(true)) << "provider_v1 never saw the subscription from the v2 ECU";
+    EXPECT_TRUE(subscribed_at_v2_.wait_for_any(true)) << "provider_v2 never saw the subscription from the v1 ECU";
+}
+
+// release_service() must unset the released major's cached field values; notify_one_current_value()
+// replays a stale one to the next subscriber.
+TEST_F(test_multiversion_support_aggregate_events, a_released_majors_cached_field_value_is_not_replayed) {
+    start_apps();
+    offer_and_subscribe_both();
+
+    std::vector<unsigned char> const its_later_payload{0x33, 0x33};
+
+    provider_v1_->send_event(field_v1_, payload_v1_);
+    ASSERT_TRUE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v1_->message_record_;
+
+    client_v1_->release_service(interface_v1_.instance_);
+
+    provider_v1_->send_event(field_v1_, its_later_payload, true);
+
+    client_v1_->message_record_.clear();
+    client_v1_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    client_v1_->subscribe_field(field_v1_);
+
+    EXPECT_TRUE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, its_later_payload)))
+            << client_v1_->message_record_;
+    EXPECT_FALSE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_),
+                                                          common::scaled_timeout(std::chrono::milliseconds(250))))
+            << "the released major's stale field value was replayed" << client_v1_->message_record_;
+}
+
+// release_service() must clear the released major's subscriber sets: a stale entry makes
+// event::add_subscriber() return false, so the re-subscribe never reaches SD.
+TEST_F(test_multiversion_support_aggregate_events, resubscribing_after_a_release_reaches_the_provider_again) {
+    start_apps();
+    offer_and_subscribe_both();
+
+    provider_v1_->send_event(field_v1_, payload_v1_);
+    ASSERT_TRUE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v1_->message_record_;
+
+    client_v1_->release_service(interface_v1_.instance_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    client_v1_->subscribe_field(field_v1_);
+
+    client_v1_->message_record_.clear();
+    provider_v1_->send_event(field_v1_, payload_v1_, true);
+
+    EXPECT_TRUE(client_v1_->message_record_.wait_for_any(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v1_->message_record_;
+}
+
+TEST_F(test_multiversion_support_aggregate_events, notification_from_v1_reaches_only_client_v1) {
+    start_apps();
+    offer_and_subscribe_both();
+
+    provider_v1_->send_event(field_v1_, payload_v1_);
+
+    EXPECT_TRUE(client_v1_->message_record_.wait_for_last(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v1_->message_record_;
+    EXPECT_FALSE(
+            client_v2_->message_record_.wait_for_last(notification(interface_v2_.instance_, payload_v1_), std::chrono::milliseconds(250)))
+            << client_v2_->message_record_;
+}
+
+// Mirror of notification_from_v1_reaches_only_client_v1; ANY_MAJOR resolves to the lowest offered major.
+TEST_F(test_multiversion_support_aggregate_events, notification_from_v2_reaches_only_client_v2) {
+    start_apps();
+    offer_and_subscribe_both();
+
+    provider_v2_->send_event(field_v2_, payload_v2_);
+
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_last(notification(interface_v2_.instance_, payload_v2_)))
+            << client_v2_->message_record_;
+    EXPECT_FALSE(
+            client_v1_->message_record_.wait_for_last(notification(interface_v1_.instance_, payload_v2_), std::chrono::milliseconds(250)))
+            << client_v1_->message_record_;
+}
+
+TEST_F(test_multiversion_support_aggregate_events, each_major_gets_its_own_initial_field_value) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+    provider_v1_->send_event(field_v1_, payload_v1_);
+    provider_v2_->send_event(field_v2_, payload_v2_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_v1_->subscribe_field(field_v1_);
+    client_v2_->subscribe_field(field_v2_);
+
+    EXPECT_TRUE(client_v1_->message_record_.wait_for_last(notification(interface_v1_.instance_, payload_v1_)))
+            << client_v1_->message_record_;
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_last(notification(interface_v2_.instance_, payload_v2_)))
+            << client_v2_->message_record_;
+}
+
+TEST_F(test_multiversion_support_aggregate_events, stopping_v1_offer_keeps_v2_notifications_flowing) {
+    start_apps();
+    offer_and_subscribe_both();
+
+    provider_v1_->stop_offer(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::unavailable(interface_v1_.instance_)));
+
+    client_v2_->message_record_.clear();
+    provider_v2_->send_event(field_v2_, payload_v2_);
+
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_last(notification(interface_v2_.instance_, payload_v2_)))
+            << client_v2_->message_record_;
+}
+
+// Same three-ECU topology, but each major defines an event the other one does not. No eventgroup id
+// is shared, so the two subscriptions never meet in service_discovery_impl::subscribed_.
+struct test_multiversion_support_exclusive_events : public base_fake_socket_fixture {
+    void start_apps() {
+        provider_v1_ecu_.add_app(provider_v1_name_);
+        provider_v2_ecu_.add_app(provider_v2_name_);
+        consumer_ecu_.add_app(client_v1_name_);
+        consumer_ecu_.add_app(client_v2_name_);
+
+        provider_v1_ecu_.prepare();
+        provider_v2_ecu_.prepare();
+        consumer_ecu_.prepare();
+
+        provider_v1_ecu_.start_apps();
+        provider_v2_ecu_.start_apps();
+        consumer_ecu_.start_apps();
+
+        provider_v1_ = provider_v1_ecu_.apps_[provider_v1_name_];
+        provider_v2_ = provider_v2_ecu_.apps_[provider_v2_name_];
+        client_v1_ = consumer_ecu_.apps_[client_v1_name_];
+        client_v2_ = consumer_ecu_.apps_[client_v2_name_];
+
+        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    }
+
+    // Each provider ECU hosts exactly one major, so a record here proves the subscription reached
+    // that major's provider. The consumer-side callback cannot be used: the local SUBSCRIBE_ACK is
+    // sent even when the subscription was dropped or NACKed.
+    void record_remote_subscriptions(app* _provider, event_ids const& _ei, attribute_recorder<bool>& _record) {
+        _provider->register_group_subscription_handler(_ei, [&_record](client_t, uid_t, gid_t, std::string const&, bool _is_subscribed) {
+            _record.record(_is_subscribed);
+            return true;
+        });
+    }
+
+    std::string const provider_v1_name_{"provider_v1"};
+    std::string const provider_v2_name_{"provider_v2"};
+    std::string const client_v1_name_{"client_v1"};
+    std::string const client_v2_name_{"client_v2"};
+
+    static constexpr vsomeip::event_t exclusive_event_v1_{0x9001};
+    static constexpr vsomeip::eventgroup_t exclusive_group_v1_{0x9001};
+    static constexpr vsomeip::event_t exclusive_event_v2_{0x9002};
+    static constexpr vsomeip::eventgroup_t exclusive_group_v2_{0x9002};
+    static constexpr auto reliable_{vsomeip::reliability_type_e::RT_RELIABLE};
+
+    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
+                            {event_spec{exclusive_event_v1_, {exclusive_group_v1_}, reliable_}},
+                            {}};
+    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
+                            {event_spec{exclusive_event_v2_, {exclusive_group_v2_}, reliable_}},
+                            {}};
+
+    event_ids only_v1_{interface_v1_.instance_, exclusive_event_v1_, exclusive_group_v1_};
+    event_ids only_v2_{interface_v2_.instance_, exclusive_event_v2_, exclusive_group_v2_};
+
+    std::vector<unsigned char> const payload_v1_{0x11, 0x11};
+    std::vector<unsigned char> const payload_v2_{0x22, 0x22};
+
+    // A plain event only reaches subscribers that exist at notify() time, so the notification tests
+    // must wait for the subscription to be established before sending.
+    [[nodiscard]] bool subscribe_and_await_provider(app* _client, app* _provider, event_ids const& _ei, attribute_recorder<bool>& _record) {
+        record_remote_subscriptions(_provider, _ei, _record);
+        _client->subscribe_event(_ei);
+        return _record.wait_for_any(true);
+    }
+
+    // Pins the major, so a match also asserts the notification carried the right interface version.
+    message_checker notification(event_ids const& _ei, std::vector<unsigned char> const& _payload) const {
+        return message_checker{std::nullopt, _ei.si_, _ei.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, _payload};
+    }
+
+    // Ignores service/instance/major: a leak carrying the *other* major must still be caught.
+    message_checker any_notification(vsomeip::event_t _event, std::vector<unsigned char> const& _payload) const {
+        return message_checker{std::nullopt, std::nullopt, _event, vsomeip::message_type_e::MT_NOTIFICATION, _payload};
+    }
+
+    // Declared before the ecu_setups: the provider's subscription handler holds a reference, so
+    // these must outlive the apps.
+    attribute_recorder<bool> subscribed_at_v1_;
+    attribute_recorder<bool> subscribed_at_v2_;
+
+    ecu_setup provider_v1_ecu_{"provider_v1", ecu_config{boardnet::ecu_one_config}.add_interface({interface_v1_}), *socket_manager_};
+    ecu_setup provider_v2_ecu_{"provider_v2", ecu_config{boardnet::ecu_two_config}.add_interface({interface_v2_}), *socket_manager_};
+    ecu_setup consumer_ecu_{"consumer", boardnet::ecu_three_config, *socket_manager_};
+
+    app* provider_v1_;
+    app* provider_v2_;
+    app* client_v1_;
+    app* client_v2_;
+};
+
+TEST_F(test_multiversion_support_exclusive_events, subscription_to_an_exclusive_event_reaches_only_its_own_provider) {
+    start_apps();
+    record_remote_subscriptions(provider_v1_, only_v1_, subscribed_at_v1_);
+    record_remote_subscriptions(provider_v2_, only_v2_, subscribed_at_v2_);
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    client_v1_->subscribe_event(only_v1_);
+    client_v2_->subscribe_event(only_v2_);
+
+    EXPECT_TRUE(subscribed_at_v1_.wait_for_any(true)) << "provider_v1 never saw a subscription to its exclusive event";
+    EXPECT_TRUE(subscribed_at_v2_.wait_for_any(true)) << "provider_v2 never saw a subscription to its exclusive event";
+}
+
+TEST_F(test_multiversion_support_exclusive_events, exclusive_event_notification_reaches_only_its_own_major) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    ASSERT_TRUE(subscribe_and_await_provider(client_v1_, provider_v1_, only_v1_, subscribed_at_v1_));
+    ASSERT_TRUE(subscribe_and_await_provider(client_v2_, provider_v2_, only_v2_, subscribed_at_v2_));
+
+    provider_v1_->send_event(only_v1_, payload_v1_);
+    provider_v2_->send_event(only_v2_, payload_v2_);
+
+    EXPECT_TRUE(client_v1_->message_record_.wait_for_any(notification(only_v1_, payload_v1_))) << client_v1_->message_record_;
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_any(notification(only_v2_, payload_v2_))) << client_v2_->message_record_;
+
+    EXPECT_FALSE(
+            client_v2_->message_record_.wait_for_any(any_notification(exclusive_event_v1_, payload_v1_), std::chrono::milliseconds(250)))
+            << client_v2_->message_record_;
+    EXPECT_FALSE(
+            client_v1_->message_record_.wait_for_any(any_notification(exclusive_event_v2_, payload_v2_), std::chrono::milliseconds(250)))
+            << client_v1_->message_record_;
+}
+
+TEST_F(test_multiversion_support_exclusive_events, subscribing_to_v1_exclusive_event_keeps_v2_working) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    ASSERT_TRUE(subscribe_and_await_provider(client_v2_, provider_v2_, only_v2_, subscribed_at_v2_));
+    provider_v2_->send_event(only_v2_, payload_v2_);
+    ASSERT_TRUE(client_v2_->message_record_.wait_for_any(notification(only_v2_, payload_v2_))) << client_v2_->message_record_;
+
+    ASSERT_TRUE(subscribe_and_await_provider(client_v1_, provider_v1_, only_v1_, subscribed_at_v1_));
+
+    client_v2_->message_record_.clear();
+    provider_v2_->send_event(only_v2_, payload_v2_, true);
+
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_any(notification(only_v2_, payload_v2_))) << client_v2_->message_record_;
+}
+
+TEST_F(test_multiversion_support_exclusive_events, unsubscribing_from_v1_exclusive_event_keeps_v2_working) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+    provider_v2_->offer(interface_v2_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    client_v2_->request_service(interface_v2_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+    ASSERT_TRUE(client_v2_->availability_record_.wait_for_last(service_availability::available(interface_v2_.instance_)));
+
+    ASSERT_TRUE(subscribe_and_await_provider(client_v1_, provider_v1_, only_v1_, subscribed_at_v1_));
+    ASSERT_TRUE(subscribe_and_await_provider(client_v2_, provider_v2_, only_v2_, subscribed_at_v2_));
+
+    provider_v2_->send_event(only_v2_, payload_v2_);
+    ASSERT_TRUE(client_v2_->message_record_.wait_for_any(notification(only_v2_, payload_v2_))) << client_v2_->message_record_;
+
+    client_v1_->unsubscribe(only_v1_);
+
+    client_v2_->message_record_.clear();
+    provider_v2_->send_event(only_v2_, payload_v2_, true);
+
+    EXPECT_TRUE(client_v2_->message_record_.wait_for_any(notification(only_v2_, payload_v2_))) << client_v2_->message_record_;
+}
+
+// "must not require anything from the other major": major 2 is never offered and never consumed.
+TEST_F(test_multiversion_support_exclusive_events, an_exclusive_event_is_consumable_while_the_other_major_is_absent) {
+    start_apps();
+
+    provider_v1_->offer(interface_v1_);
+
+    client_v1_->request_service(interface_v1_.instance_);
+    ASSERT_TRUE(client_v1_->availability_record_.wait_for_last(service_availability::available(interface_v1_.instance_)));
+
+    ASSERT_TRUE(subscribe_and_await_provider(client_v1_, provider_v1_, only_v1_, subscribed_at_v1_));
+
+    provider_v1_->send_event(only_v1_, payload_v1_);
+
+    EXPECT_TRUE(client_v1_->message_record_.wait_for_any(notification(only_v1_, payload_v1_))) << client_v1_->message_record_;
+}
+
+// One provider, one consumer that requests without naming a major (so its events land in the
+// ANY_MAJOR bucket). Two fields share an eventgroup; the consumer subscribes to the group with
+// ANY_EVENT but only ever registers field_a_, so a notification for field_b_ arrives for an event
+// the host does not know -- deliver_notification()'s caching branch, gated by
+// has_subscribed_eventgroup().
+struct test_multiversion_any_major_requester : public base_fake_socket_fixture {
+    void start_apps() {
+        provider_ecu_.add_app(provider_name_);
+        consumer_ecu_.add_app(client_name_);
+
+        provider_ecu_.prepare();
+        consumer_ecu_.prepare();
+
+        provider_ecu_.start_apps();
+        consumer_ecu_.start_apps();
+
+        provider_ = provider_ecu_.apps_[provider_name_];
+        client_ = consumer_ecu_.apps_[client_name_];
+
+        ASSERT_TRUE(provider_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+    }
+
+    std::string const provider_name_{"provider_v1"};
+    std::string const client_name_{"client_v1"};
+
+    static constexpr vsomeip::event_t event_a_{0x8001};
+    static constexpr vsomeip::event_t event_b_{0x8002};
+    static constexpr vsomeip::eventgroup_t shared_group_{0x8001};
+    static constexpr auto reliable_{vsomeip::reliability_type_e::RT_RELIABLE};
+
+    interface interface_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
+                         {},
+                         {event_spec{event_a_, {shared_group_}, reliable_}, event_spec{event_b_, {shared_group_}, reliable_}}};
+
+    event_ids field_a_{interface_.instance_, event_a_, shared_group_};
+    event_ids field_b_{interface_.instance_, event_b_, shared_group_};
+
+    std::vector<unsigned char> const payload_b_{0xbb, 0xbb};
+
+    message_checker notification(vsomeip::event_t _event, std::vector<unsigned char> const& _payload) const {
+        return message_checker{std::nullopt, std::nullopt, _event, vsomeip::message_type_e::MT_NOTIFICATION, _payload};
+    }
+
+    ecu_setup provider_ecu_{"provider_v1", ecu_config{boardnet::ecu_one_config}.add_interface({interface_}), *socket_manager_};
+    ecu_setup consumer_ecu_{"consumer", boardnet::ecu_three_config, *socket_manager_};
+
+    app* provider_;
+    app* client_;
+};
+
+TEST_F(test_multiversion_any_major_requester, unregistered_event_is_cached_for_an_any_major_requester) {
+    start_apps();
+
+    provider_->offer(interface_);
+
+    client_->get_application()->request_service(0x1000, 0x1);
+    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::available(interface_.instance_)));
+
+    // Registers only field_a_, subscribes the whole eventgroup (ANY_EVENT).
+    client_->subscribe_eventgroup_field(field_a_);
+    ASSERT_TRUE(client_->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(field_a_)));
+
+    // field_b_ is unknown to the consumer host at this point.
+    provider_->send_event(field_b_, payload_b_);
+    ASSERT_FALSE(client_->message_record_.wait_for_any(notification(event_b_, payload_b_), std::chrono::milliseconds(250)))
+            << "the caching branch must not forward" << client_->message_record_;
+
+    // Registering field_b_ must surface the cached value at once. Without the cache the value is
+    // not lost -- SD notices the missing initial field value and forces a StopSubscribe/Subscribe --
+    // but that repair costs time (SD traffic)
+    client_->get_application()->request_event(0x1000, 0x1, event_b_, {shared_group_}, vsomeip::event_type_e::ET_FIELD, reliable_);
+    client_->get_application()->subscribe(0x1000, 0x1, shared_group_, 0x1, event_b_);
+
+    EXPECT_TRUE(client_->message_record_.wait_for_any(notification(event_b_, payload_b_),
+                                                      common::scaled_timeout(std::chrono::milliseconds(250))))
+            << client_->message_record_;
 }
 }

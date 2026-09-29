@@ -29,9 +29,15 @@ struct event_config {
     bool is_field_{false};
     bool is_reliable_{false};
 };
+struct eventgroup_multicast_config {
+    std::string address_;
+    port_t port_{};
+    uint8_t threshold_{};
+};
 struct eventgroup_config {
     vsomeip::eventgroup_t eventgroup_id_{};
     std::vector<vsomeip::event_t> event_ids_;
+    std::optional<eventgroup_multicast_config> multicast_;
 };
 struct reliable_port_config {
     port_t port_{};
@@ -135,6 +141,10 @@ struct ecu_config {
     ecu_config& add_interface(std::vector<interface> offered, vsomeip::port_t base_port = 30501);
 
     ecu_config& with_initial_delay(uint32_t min, uint32_t max);
+
+    /// Delivers eventgroup @p _eventgroup of the offered @p _si via multicast.
+    ecu_config& with_eventgroup_multicast(service_instance _si, vsomeip::eventgroup_t _eventgroup, std::string _address, port_t _port,
+                                          uint8_t _threshold = 1);
 
     /// Adds an "acceptances" entry, i.e. the SD acceptance rules of one remote device.
     ecu_config& add_acceptance(acceptance_config rule);

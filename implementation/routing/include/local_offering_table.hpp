@@ -95,7 +95,6 @@ public:
             for (auto it = first; it != last; ++it) {
                 if (it->instance == _instance && (it->major == _major || _major == ANY_MAJOR)) {
                     clients.insert(it->client);
-                    break;
                 }
             }
         }
@@ -119,9 +118,11 @@ public:
         // Returns false to request stopping the outer service iteration.
         auto visit_instances = [&](const_iterator _first, const_iterator _last) {
             if (_instance != ANY_INSTANCE) {
+                // One (service, instance) can hold an entry per offered major, so every one of them
+                // has to be visited; stopping at the first hides the other majors.
                 for (auto it = _first; it != _last; ++it) {
-                    if (it->instance == _instance) {
-                        return !matches_version(*it) || _callback(*it);
+                    if (it->instance == _instance && matches_version(*it) && !_callback(*it)) {
+                        return false;
                     }
                 }
                 return true;

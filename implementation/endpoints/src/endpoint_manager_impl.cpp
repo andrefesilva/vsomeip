@@ -354,15 +354,12 @@ std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_server_endpoint(u
 
 std::shared_ptr<boardnet_endpoint> endpoint_manager_impl::find_or_create_server_endpoint(uint16_t _port, bool _reliable, bool _start,
                                                                                          service_t _service, instance_t _instance,
-                                                                                         major_version_t _major, bool& _is_found,
-                                                                                         bool _is_multicast) {
+                                                                                         major_version_t _major, bool _is_multicast) {
     auto its_endpoint = find_server_endpoint(_port, _reliable);
-    _is_found = false;
     if (!its_endpoint) {
         its_endpoint = create_server_endpoint(_port, _reliable, _start);
-    } else {
-        _is_found = true;
     }
+
     if (its_endpoint) {
         std::scoped_lock its_lock(endpoint_mutex_);
         if (!_is_multicast) {
@@ -515,80 +512,89 @@ void endpoint_manager_impl::clear_client_endpoints(service_t _service, instance_
 void endpoint_manager_impl::find_or_create_multicast_endpoint(service_t _service, instance_t _instance, major_version_t _major,
                                                               const boost::asio::ip::address& _sender,
                                                               const boost::asio::ip::address& _address, uint16_t _port) {
-    bool is_known_multicast(false);
+    const bool is_someip = configuration_->is_someip(_service, _instance);
+    // Create multicast endpoint & join multicase group
+    auto its_endpoint = find_or_create_server_endpoint(_port, false, is_someip, _service, _instance, _major, true);
+    if (!its_endpoint) {
+        VSOMEIP_ERROR << "Could not find/create multicast endpoint!";
+        return;
+    }
     {
         std::scoped_lock its_lock(endpoint_mutex_);
-
-        if (const auto found_si = multicast_info_.find({_service, _instance}); found_si != multicast_info_.end()) {
-            const auto& endpoint_def = found_si->second;
-            if (endpoint_def->get_address() == _address && endpoint_def->get_port() == _port) {
-                // Multicast info and endpoint already created before
-                // This can happen when more than one client subscribe on the same instance!
-                is_known_multicast = true;
-            }
-        }
+        multicast_info_[{_service, _instance, _major}] = {endpoint_definition::get(_address, _port, false, _service, _instance), _sender};
+        service_instances_multicast_[_service][_sender] = _instance;
     }
-    const bool is_someip = configuration_->is_someip(_service, _instance);
-    bool _is_found(false);
-    // Create multicast endpoint & join multicase group
-    auto its_endpoint = find_or_create_server_endpoint(_port, false, is_someip, _service, _instance, _major, _is_found, true);
-    if (!_is_found) {
-        // Only save multicast info if we created a new endpoint
-        // to be able to delete the new endpoint
-        // as soon as the instance stops offering its service
-        std::scoped_lock its_lock(endpoint_mutex_);
-        std::shared_ptr<endpoint_definition> endpoint_def = endpoint_definition::get(_address, _port, false, _service, _instance);
-        multicast_info_[{_service, _instance}] = endpoint_def;
-    }
-
-    if (its_endpoint) {
-        if (!is_known_multicast) {
-            std::scoped_lock its_lock(endpoint_mutex_);
-            service_instances_multicast_[_service][_sender] = _instance;
-        }
-
-        auto its_udp_server_endpoint = std::dynamic_pointer_cast<udp_server_endpoint_impl>(its_endpoint);
-        if (its_udp_server_endpoint) {
-            its_udp_server_endpoint->join(_address.to_string());
-        }
-    } else {
-        VSOMEIP_ERROR << "Could not find/create multicast endpoint!";
+    if (auto its_udp_server_endpoint = std::dynamic_pointer_cast<udp_server_endpoint_impl>(its_endpoint)) {
+        its_udp_server_endpoint->join(_address.to_string());
     }
 }
 
-void endpoint_manager_impl::clear_multicast_endpoints(service_t _service, instance_t _instance) {
-    std::shared_ptr<boardnet_endpoint> its_multicast_endpoint;
-    std::string its_address;
-
+void endpoint_manager_impl::clear_multicast_endpoints(service_t _service, instance_t _instance, major_version_t _major) {
+    std::shared_ptr<boardnet_endpoint> its_endpoint;
+    multicast_info_t its_info;
+    bool is_group_used(false);
     {
         std::scoped_lock its_lock(endpoint_mutex_);
-        // Clear multicast info and endpoint and multicast instance (remote service)
-        if (auto found_si = multicast_info_.find({_service, _instance}); found_si != multicast_info_.end()) {
-            its_address = found_si->second->get_address().to_string();
-            uint16_t its_port = found_si->second->get_port();
-            if (auto found_port = server_endpoints_.find(its_port); found_port != server_endpoints_.end()) {
-                if (auto found_unreliable = found_port->second.find(false); found_unreliable != found_port->second.end()) {
-                    its_multicast_endpoint = found_unreliable->second;
-                    server_endpoints_[its_port].erase(false);
-                }
-                if (found_port->second.count(true) == 0) {
-                    server_endpoints_.erase(its_port);
+        const auto found_si = multicast_info_.find({_service, _instance, _major});
+        if (found_si == multicast_info_.end()) {
+            return;
+        }
+        its_info = found_si->second;
+        multicast_info_.erase(found_si);
+
+        // Another major (or service) may still receive on the same group or from the same sender.
+        bool is_sender_used(false);
+        for (const auto& [its_si, its_other] : multicast_info_) {
+            is_group_used = is_group_used
+                    || (its_other.definition_->get_port() == its_info.definition_->get_port()
+                        && its_other.definition_->get_address() == its_info.definition_->get_address());
+            is_sender_used = is_sender_used || (its_si.service == _service && its_other.sender_ == its_info.sender_);
+        }
+        if (!is_sender_used) {
+            if (auto found_service = service_instances_multicast_.find(_service); found_service != service_instances_multicast_.end()) {
+                found_service->second.erase(its_info.sender_);
+                if (found_service->second.empty()) {
+                    service_instances_multicast_.erase(found_service);
                 }
             }
-            multicast_info_.erase(found_si);
-            (void)remove_instance_multicast(_service, _instance);
+        }
+        if (auto found_port = server_endpoints_.find(its_info.definition_->get_port()); found_port != server_endpoints_.end()) {
+            if (auto found_unreliable = found_port->second.find(false); found_unreliable != found_port->second.end()) {
+                its_endpoint = found_unreliable->second;
+            }
         }
     }
-    if (its_multicast_endpoint) {
-        auto its_udp_server_endpoint = std::dynamic_pointer_cast<udp_server_endpoint_impl>(its_multicast_endpoint);
-        if (its_udp_server_endpoint) {
-            its_udp_server_endpoint->leave(its_address);
-        }
-
-        if (!is_used_endpoint(its_multicast_endpoint.get())) {
-            its_multicast_endpoint->stop(false);
+    if (!its_endpoint) {
+        return;
+    }
+    if (!is_group_used) {
+        if (auto its_udp_server_endpoint = std::dynamic_pointer_cast<udp_server_endpoint_impl>(its_endpoint)) {
+            its_udp_server_endpoint->leave(its_info.definition_->get_address().to_string());
         }
     }
+    // Kept while it serves a local offer or another joined group.
+    if (is_used_endpoint(its_endpoint.get())) {
+        return;
+    }
+    {
+        std::scoped_lock its_lock(endpoint_mutex_);
+        const uint16_t its_port = its_info.definition_->get_port();
+        // A SubscribeAck may have joined this port again since the check above.
+        if (std::any_of(multicast_info_.begin(), multicast_info_.end(),
+                        [its_port](const auto& _entry) { return _entry.second.definition_->get_port() == its_port; })) {
+            return;
+        }
+        if (auto found_port = server_endpoints_.find(its_port); found_port != server_endpoints_.end()) {
+            if (auto found_unreliable = found_port->second.find(false);
+                found_unreliable != found_port->second.end() && found_unreliable->second == its_endpoint) {
+                found_port->second.erase(found_unreliable);
+            }
+            if (found_port->second.empty()) {
+                server_endpoints_.erase(found_port);
+            }
+        }
+    }
+    its_endpoint->stop(false);
 }
 
 void endpoint_manager_impl::print_status() const {
@@ -873,24 +879,6 @@ bool endpoint_manager_impl::remove_instance(service_t _service, major_version_t 
         }
     }
     return !is_used_endpoint(_endpoint);
-}
-
-bool endpoint_manager_impl::remove_instance_multicast(service_t _service, instance_t _instance) {
-    std::scoped_lock its_lock(endpoint_mutex_);
-    auto found_service = service_instances_multicast_.find(_service);
-    if (found_service != service_instances_multicast_.end()) {
-        for (auto& its_sender : found_service->second) {
-            if (its_sender.second == _instance) {
-                if (found_service->second.erase(its_sender.first)) {
-                    if (!found_service->second.size()) {
-                        service_instances_multicast_.erase(_service);
-                    }
-                }
-                return true;
-            }
-        }
-    }
-    return false;
 }
 
 void endpoint_manager_impl::on_connect(std::shared_ptr<boardnet_endpoint> _endpoint) {

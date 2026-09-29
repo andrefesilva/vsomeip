@@ -59,7 +59,7 @@ ecu_config& ecu_config::add_interface(std::vector<interface> offered, vsomeip::p
             }
         }
         for (auto const& [egid, event_ids] : groups) {
-            svc.event_groups_.push_back({egid, event_ids});
+            svc.event_groups_.push_back({egid, event_ids, {}});
         }
 
         if (iface.tp_ && needs_unreliable) {
@@ -69,6 +69,21 @@ ecu_config& ecu_config::add_interface(std::vector<interface> offered, vsomeip::p
         services_.push_back(std::move(svc));
     }
 
+    return *this;
+}
+
+ecu_config& ecu_config::with_eventgroup_multicast(service_instance _si, vsomeip::eventgroup_t _eventgroup, std::string _address,
+                                                  port_t _port, uint8_t _threshold) {
+    for (auto& svc : services_) {
+        if (svc.si_.service_ != _si.service_ || svc.si_.instance_ != _si.instance_ || svc.si_.major_ != _si.major_) {
+            continue;
+        }
+        for (auto& eg : svc.event_groups_) {
+            if (eg.eventgroup_id_ == _eventgroup) {
+                eg.multicast_ = eventgroup_multicast_config{_address, _port, _threshold};
+            }
+        }
+    }
     return *this;
 }
 
@@ -131,6 +146,10 @@ void to_json(std::ostringstream& o, vsomeip::event_t event_id) {
 void to_json(std::ostringstream& o, const eventgroup_config& eg) {
     o << R"({ "eventgroup" : ")" << to_hex(eg.eventgroup_id_) << R"(", "events" : )";
     write_array(o, eg.event_ids_);
+    if (eg.multicast_) {
+        o << R"(, "multicast" : { "address" : ")" << eg.multicast_->address_ << R"(", "port" : ")" << eg.multicast_->port_ << R"(" })";
+        o << R"(, "threshold" : ")" << static_cast<int>(eg.multicast_->threshold_) << R"(")";
+    }
     o << " }";
 }
 

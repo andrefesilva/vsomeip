@@ -83,7 +83,7 @@ struct remote_offer_endpoint_change : public base_fake_socket_fixture {
             svc.reliable_port_ = reliable_port_config{_tcp, false};
         }
         svc.events_.push_back(event_config{0x8001, false, false});
-        svc.event_groups_.push_back(eventgroup_config{0x1, {0x8001}});
+        svc.event_groups_.push_back(eventgroup_config{0x1, {0x8001}, {}});
         _base.services_.push_back(std::move(svc));
         return _base;
     }

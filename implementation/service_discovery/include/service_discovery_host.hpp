@@ -38,7 +38,8 @@ public:
 
     virtual versioned_services_t get_offered_services() const = 0;
 
-    virtual std::shared_ptr<eventgroupinfo> find_eventgroup(service_t _service, instance_t _instance, eventgroup_t _eventgroup) const = 0;
+    virtual std::shared_ptr<eventgroupinfo> find_eventgroup(service_t _service, instance_t _instance, major_version_t _major,
+                                                            eventgroup_t _eventgroup) const = 0;
 
     virtual bool send_notification(client_t _client, std::shared_ptr<message> _message, bool _force) = 0;
 
@@ -66,11 +67,12 @@ public:
 
     virtual void on_remote_unsubscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
 
-    virtual void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
-                                  remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                  eventgroup_t _eventgroup, event_t _event, remote_subscription_id_t _subscription_id) = 0;
 
-    virtual void on_subscribe_ack_with_multicast(service_t _service, instance_t _instance, const boost::asio::ip::address& _sender,
-                                                 const boost::asio::ip::address& _address, uint16_t _port) = 0;
+    virtual void on_subscribe_ack_with_multicast(service_t _service, instance_t _instance, major_version_t _major,
+                                                 const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
+                                                 uint16_t _port) = 0;
 
     virtual std::shared_ptr<boardnet_endpoint> find_or_create_remote_client(service_t _service, instance_t _instance,
                                                                             major_version_t _major, bool _reliable) = 0;
@@ -80,15 +82,15 @@ public:
 
     virtual void on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
 
-    virtual void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, bool _remove,
-                                   remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                   eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _subscription_id) = 0;
 
     virtual std::chrono::steady_clock::time_point expire_subscriptions(bool _force) = 0;
 
     virtual std::shared_ptr<serviceinfo> get_offered_service(service_t _service, instance_t _instance) const = 0;
     virtual std::vector<std::shared_ptr<serviceinfo>> get_offered_service_instances(service_t _service) const = 0;
 
-    virtual std::set<eventgroup_t> get_subscribed_eventgroups(service_t _service, instance_t _instance) = 0;
+    virtual std::set<eventgroup_t> get_subscribed_eventgroups(service_t _service, instance_t _instance, major_version_t _major) = 0;
 };
 
 } // namespace sd

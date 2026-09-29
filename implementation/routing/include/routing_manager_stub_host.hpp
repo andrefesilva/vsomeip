@@ -38,33 +38,35 @@ public:
 
     virtual void release_service(client_t _client, versioned_service_instance_t const& _service) = 0;
 
-    virtual void register_shadow_event(client_t _client, service_t _service, instance_t _instance, event_t _notifier,
-                                       const std::set<eventgroup_t>& _eventgroups, event_type_e _type, reliability_type_e _reliability,
-                                       bool _is_provided, bool _is_cyclic) = 0;
+    virtual void register_shadow_event(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                       event_t _notifier, const std::set<eventgroup_t>& _eventgroups, event_type_e _type,
+                                       reliability_type_e _reliability, bool _is_provided, bool _is_cyclic) = 0;
 
-    virtual void unregister_shadow_event(client_t _client, service_t _service, instance_t _instance, event_t _event, bool _is_provided) = 0;
+    virtual void unregister_shadow_event(client_t _client, service_t _service, instance_t _instance, major_version_t _major, event_t _event,
+                                         bool _is_provided) = 0;
 
     virtual void subscribe(client_t _client, const vsomeip_sec_client_t* _sec_client, service_t _service, instance_t _instance,
                            eventgroup_t _eventgroup, major_version_t _major, event_t _event,
                            const std::shared_ptr<debounce_filter_impl_t>& _filter) = 0;
 
-    virtual void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
-                                  remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                  eventgroup_t _eventgroup, event_t _event, remote_subscription_id_t _subscription_id) = 0;
 
-    virtual void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, bool _remove,
-                                   remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                   eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _subscription_id) = 0;
 
-    virtual void unsubscribe(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event) = 0;
+    virtual void unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
+                             event_t _event) = 0;
 
-    virtual void on_unsubscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup,
-                                    remote_subscription_id_t _unsubscription_id) = 0;
+    virtual void on_unsubscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                    eventgroup_t _eventgroup, remote_subscription_id_t _unsubscription_id) = 0;
 
-    virtual bool on_message(service_t _service, instance_t _instance, const byte_t* _data, length_t _size, bool _reliable,
-                            client_t _bound_client, const vsomeip_sec_client_t* _sec_client, uint8_t _status_check = 0,
+    virtual bool on_message(service_t _service, instance_t _instance, major_version_t _major, const byte_t* _data, length_t _size,
+                            bool _reliable, client_t _bound_client, const vsomeip_sec_client_t* _sec_client, uint8_t _status_check = 0,
                             bool _is_from_remote = false) = 0;
 
-    virtual void on_notification(client_t _client, service_t _service, instance_t _instance, const byte_t* _data, length_t _size,
-                                 bool _notify_one = false) = 0;
+    virtual void on_notification(client_t _client, service_t _service, instance_t _instance, major_version_t _major, const byte_t* _data,
+                                 length_t _size, bool _notify_one = false) = 0;
 
     virtual void on_stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                        minor_version_t _minor) = 0;
@@ -88,7 +90,7 @@ public:
     virtual std::set<client_t> find_local_clients(service_t _service, instance_t _instance, major_version_t _major) = 0;
 
     virtual bool is_subscribe_to_any_event_allowed(const vsomeip_sec_client_t* _sec_client, client_t _client, service_t _service,
-                                                   instance_t _instance, eventgroup_t _eventgroup) = 0;
+                                                   instance_t _instance, major_version_t _major, eventgroup_t _eventgroup) = 0;
 
     /// @brief Has _client requested the concrete instance [_service._instance]?
     ///
