@@ -5,14 +5,11 @@
 
 #pragma once
 
-#include <map>
 #include <memory>
 #include <atomic>
-#include <mutex>
 
 #include <boost/asio/ip/address.hpp>
 #include <vsomeip/primitive_types.hpp>
-
 
 namespace vsomeip_v3 {
 
@@ -37,10 +34,6 @@ private:
     uint16_t port_;
     std::atomic<uint16_t> remote_port_;
     bool is_reliable_;
-
-    static std::mutex definitions_mutex_;
-    static std::map<std::tuple<service_t, instance_t, boost::asio::ip::address, uint16_t, bool>, std::shared_ptr<endpoint_definition>>
-            definitions_;
 };
 
 } // namespace vsomeip_v3

@@ -34,22 +34,34 @@ namespace vsomeip_v3 {
  * Q: Wouldn't it be more convinient to allow the adjustment of the shared_ptr at any time?
  * A: Maybe. But it would come along the cost of mutual exclusive access, which was considered a
  *non-neglectable cost to pay during production run-time for enabling these tests.
+ *
+ * Q: Why is nothing here ever destroyed?
+ * A: Because an application that is not stopped keeps its io threads running past the return of
+ *    main(), and every endpoint constructor starts by asking this factory for a socket. A factory
+ *    that dies with the exit handlers is dereferenced afterwards. Referencing the allocations
+ *    through static pointers also keeps leak checkers from reporting them as lost - the same
+ *    trade-off the logger singleton makes.
  **/
-static std::shared_ptr<abstract_socket_factory> _factory;
+static std::shared_ptr<abstract_socket_factory>& factory_storage() {
+    static auto* const storage = new std::shared_ptr<abstract_socket_factory>(); // NOSONAR
+    return *storage;
+}
+
 static std::shared_ptr<abstract_socket_factory> init() {
-    if (!_factory) {
-        _factory = std::make_shared<asio_socket_factory>();
+    auto& its_factory = factory_storage();
+    if (!its_factory) {
+        its_factory = std::make_shared<asio_socket_factory>();
     }
-    return _factory;
+    return its_factory;
 }
 
 void set_abstract_factory(std::shared_ptr<abstract_socket_factory> ptr) {
-    _factory = ptr;
+    factory_storage() = std::move(ptr);
 }
 
 abstract_socket_factory* abstract_socket_factory::get() {
-    static auto const factory = init();
-    return factory.get();
+    static auto* const factory = new std::shared_ptr<abstract_socket_factory>(init()); // NOSONAR
+    return factory->get();
 }
 
 }

@@ -33,8 +33,8 @@ void runtime_impl::set_property(const std::string& _name, const std::string& _va
 }
 
 std::shared_ptr<runtime> runtime_impl::get() {
-    static std::shared_ptr<runtime> the_runtime_ = std::make_shared<runtime_impl>();
-    return the_runtime_;
+    static auto* const the_runtime = new std::shared_ptr<runtime>(std::make_shared<runtime_impl>()); // NOSONAR
+    return *the_runtime;
 }
 
 std::shared_ptr<application> runtime_impl::create_application(const std::string& _name) {
