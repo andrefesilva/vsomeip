@@ -264,6 +264,14 @@ bool eventgroupinfo::update_remote_subscription(const std::shared_ptr<remote_sub
                         // New clients:
                         // Let this be a child subscription
                         _subscription->set_parent(its_item.second);
+                        // Since clients are inherited from the parent subscription,
+                        // to only include the new clients in the child subscription
+                        // the previously existing clients are removed.
+                        for (const auto its_client : _subscription->get_clients()) {
+                            if (_changed.find(its_client) == _changed.end()) {
+                                _subscription->remove_client(its_client);
+                            }
+                        }
                         update_id();
                         _subscription->set_id(id_);
                         subscriptions_[id_] = _subscription;

@@ -675,6 +675,71 @@ TEST_F(test_selective_subscription, unacknowledged_client_forces_a_resubscribe_f
             << client_two->get_client_id() << ", recorded: " << selective_clients_->to_string();
 }
 
+// Ensure that when a second selective subscription is received while the first is still pending,
+// the subscription does not expire when its TTL is reached and the service consumer does not re-subscribe.
+// Previously, if this situation happened a child subscription would be created and never deleted or updated.
+// Eventually, this subscription would expire and the service consumer would send a Subscribe NACK to the client.
+TEST_F(test_selective_subscription, joining_client_while_the_first_is_pending_keeps_the_subscription_alive) {
+    prepare_ecus_and_apps();
+
+    auto* client_one = ecu_one_.router_;
+    auto* client_two = ecu_one_.apps_[subscriber_name_];
+    auto* server = ecu_two_.apps_[ecu_two_server_name_];
+
+    // Hold the acceptance of the first subscription until the provider receives the second one.
+    // The child subscription is created before the subscribe is answered, so the first client is still
+    // pending exactly when the child copies its state.
+    auto accept_mutex = std::make_shared<std::mutex>();
+    auto held_accept = std::make_shared<std::function<void(bool)>>();
+    server->get_application()->register_async_subscription_handler(
+            selective_event_.si_.service_, selective_event_.si_.instance_, selective_event_.eventgroup_id_,
+            [its_subscribing_clients = subscribing_clients_, accept_mutex,
+             held_accept](vsomeip::client_t _client, const vsomeip_sec_client_t*, std::string const&, bool _is_subscribed,
+                          std::function<void(bool)> _accept) {
+                if (!_is_subscribed) {
+                    _accept(true);
+                    return;
+                }
+
+                its_subscribing_clients->record(_client);
+
+                std::function<void(bool)> its_first_accept;
+                {
+                    std::scoped_lock its_lock{*accept_mutex};
+                    if (!*held_accept) {
+                        *held_accept = _accept;
+                        return;
+                    }
+                    its_first_accept = *held_accept;
+                }
+
+                its_first_accept(true);
+                _accept(true);
+            });
+
+    server->offer(iface_);
+
+    client_one->request_service(iface_.instance_);
+    client_two->request_service(iface_.instance_);
+
+    client_one->subscribe_selective(selective_event_);
+    std::set<vsomeip::client_t> const its_first_client{client_one->get_client_id()};
+    ASSERT_TRUE(selective_clients_->wait_for_last(its_first_client))
+            << "the first Subscribe carried no selective option, expected client " << client_one->get_client_id()
+            << ", recorded: " << selective_clients_->to_string();
+
+    client_two->subscribe_selective(selective_event_);
+    std::set<vsomeip::client_t> const its_clients{client_one->get_client_id(), client_two->get_client_id()};
+    ASSERT_TRUE(selective_clients_->wait_for_last(its_clients))
+            << "both clients were never part of the same subscription, expected " << client_one->get_client_id() << " and "
+            << client_two->get_client_id() << ", recorded: " << selective_clients_->to_string();
+
+    // A second notification for a client means its subscription was torn down and re-established.
+    EXPECT_FALSE(subscribing_clients_->wait_for_count(client_one->get_client_id(), 2, std::chrono::seconds(4)))
+            << "the provider was told about the first client twice, so the subscription expired and was re-established, recorded: "
+            << subscribing_clients_->to_string();
+}
+
 const interface service_3344_instance_2{0x3344,
                                         {event_spec{0x8001, {0x1}, vsomeip::reliability_type_e::RT_UNRELIABLE}},
                                         {event_spec{0x8002, {0x1}, vsomeip::reliability_type_e::RT_UNRELIABLE}},
