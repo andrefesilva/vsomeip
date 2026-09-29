@@ -827,4 +827,206 @@ TEST_F(test_event_subscription_callback_local, stale_subscription_callback_does_
     // 500 ms is a generous window.
     EXPECT_FALSE(s2c_gate_->wait_for_blocked(common::scaled_timeout(std::chrono::milliseconds(500))));
 }
+
+struct selective_subscriber_report {
+    client_t client_{};
+    bool subscribed_{};
+
+    bool operator==(selective_subscriber_report const& _other) const = default;
+};
+
+inline std::ostream& operator<<(std::ostream& _out, selective_subscriber_report const& _report) {
+    return _out << "{0x" << hex4(_report.client_) << (_report.subscribed_ ? " subscribed}" : " unsubscribed}");
+}
+
+/// An eventgroup only counts as selective while it holds exactly one event, hence the single event.
+/// The derived fixtures differ only in how the three apps are distributed over the ECUs.
+struct selective_events_base : public base_fake_socket_fixture {
+    interface iface_{0x3346, {event_spec{0x8001, {0x1}, vsomeip::reliability_type_e::RT_UNRELIABLE}}, {}};
+    event_ids selective_event_{iface_.instance_, iface_.events_[0]};
+
+    std::vector<unsigned char> const payload_one_{0x01};
+    std::vector<unsigned char> const payload_two_{0x02};
+    std::vector<unsigned char> const payload_three_{0x03};
+
+    [[nodiscard]] message_checker checker(std::vector<unsigned char> const& _payload) const {
+        return {std::nullopt, iface_.instance_, selective_event_.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, _payload};
+    }
+
+    [[nodiscard]] bool subscribe_selectively(app* _client) {
+        _client->request_service(iface_.instance_);
+        _client->subscribe_selective(selective_event_);
+        return _client->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(selective_event_));
+    }
+
+    /// Takes the apps the derived fixture started and puts the selective offer on the wire.
+    void offer_selectively(app* _server, app* _client_one, app* _client_two) {
+        server_ = _server;
+        client_one_ = _client_one;
+        client_two_ = _client_two;
+        ASSERT_NE(server_, nullptr);
+        ASSERT_NE(client_one_, nullptr);
+        ASSERT_NE(client_two_, nullptr);
+
+        server_->register_group_subscription_handler(selective_event_,
+                                                     [this](client_t _client, uid_t, gid_t, std::string const&, bool _subscribed) {
+                                                         provider_subscriptions_.record({_client, _subscribed});
+                                                         return true;
+                                                     });
+        server_->offer_selective(iface_.instance_, iface_.events_[0]);
+        server_->offer(iface_.instance_);
+    }
+
+    void notify_each_subscriber_individually() {
+        ASSERT_TRUE(subscribe_selectively(client_one_));
+        ASSERT_TRUE(subscribe_selectively(client_two_));
+
+        auto const its_client_one = client_one_->get_client_id();
+        auto const its_client_two = client_two_->get_client_id();
+
+        ASSERT_TRUE(provider_subscriptions_.wait_for_any({its_client_one, true})) << provider_subscriptions_;
+        ASSERT_TRUE(provider_subscriptions_.wait_for_any({its_client_two, true})) << provider_subscriptions_;
+
+        server_->send_event_one(selective_event_, payload_one_, its_client_one);
+        ASSERT_TRUE(client_one_->message_record_.wait_for(checker(payload_one_))) << client_one_->message_record_;
+
+        server_->send_event_one(selective_event_, payload_two_, its_client_two);
+        ASSERT_TRUE(client_two_->message_record_.wait_for(checker(payload_two_))) << client_two_->message_record_;
+        EXPECT_FALSE(client_two_->message_record_.wait_for(checker(payload_one_), already_arrived_)) << client_two_->message_record_;
+
+        server_->send_event_one(selective_event_, payload_three_, its_client_one);
+        ASSERT_TRUE(client_one_->message_record_.wait_for(checker(payload_three_))) << client_one_->message_record_;
+        EXPECT_FALSE(client_one_->message_record_.wait_for(checker(payload_two_), already_arrived_)) << client_one_->message_record_;
+    }
+
+    void unsubscribe_one_and_notify_the_other() {
+        ASSERT_TRUE(subscribe_selectively(client_one_));
+        ASSERT_TRUE(subscribe_selectively(client_two_));
+
+        auto const its_client_one = client_one_->get_client_id();
+        auto const its_client_two = client_two_->get_client_id();
+        ASSERT_TRUE(provider_subscriptions_.wait_for_any({its_client_two, true})) << provider_subscriptions_;
+
+        client_one_->unsubscribe_from_group(selective_event_);
+        ASSERT_TRUE(provider_subscriptions_.wait_for_any({its_client_one, false})) << provider_subscriptions_;
+        await_subscription_renewal(its_client_two);
+
+        server_->send_event_one(selective_event_, payload_one_, its_client_one);
+        server_->send_event_one(selective_event_, payload_two_, its_client_two);
+
+        ASSERT_TRUE(client_two_->message_record_.wait_for(checker(payload_two_))) << client_two_->message_record_;
+        EXPECT_FALSE(client_one_->message_record_.wait_for(checker(payload_one_), not_notified())) << client_one_->message_record_;
+    }
+
+    /// Only a remote subscription is taken down by the other subscriber's StopSubscribe.
+    virtual void await_subscription_renewal(client_t /*_client*/) { }
+
+    /// An unwanted notification was sent before one already awaited on the same connection, so it
+    /// is either in the record or was never delivered.
+    static constexpr std::chrono::milliseconds already_arrived_{0};
+
+    /// A subscriber that must not be notified has nothing to anchor on.
+    static std::chrono::milliseconds not_notified() { return common::scaled_timeout(std::chrono::milliseconds(200)); }
+
+    attribute_recorder<selective_subscriber_report> provider_subscriptions_;
+
+    std::string const selective_server_name_{"selective_server"};
+    std::string const client_one_name_{"selective_client_one"};
+    std::string const client_two_name_{"selective_client_two"};
+
+    app* server_{nullptr};
+    app* client_one_{nullptr};
+    app* client_two_{nullptr};
+};
+
+/// Offering application and both subscribers on one ECU.
+struct selective_events_local : public selective_events_base {
+    selective_events_local() { ecu_.config().sd_ = false; }
+
+    void start_apps() {
+        ecu_.add_app(selective_server_name_);
+        ecu_.add_app(client_one_name_);
+        ecu_.add_app(client_two_name_);
+        ecu_.prepare();
+        ecu_.start_apps();
+
+        offer_selectively(ecu_.apps_[selective_server_name_], ecu_.apps_[client_one_name_], ecu_.apps_[client_two_name_]);
+    }
+
+    ecu_setup ecu_{"ecu_one", ecu_config{boardnet::ecu_one_config}.add_interface({iface_}), *socket_manager_};
+};
+
+TEST_F(selective_events_local, notify_one_reaches_only_the_addressed_subscriber) {
+    start_apps();
+    notify_each_subscriber_individually();
+}
+
+TEST_F(selective_events_local, unsubscribing_one_subscriber_leaves_the_other_one_notified) {
+    start_apps();
+    unsubscribe_one_and_notify_the_other();
+}
+
+TEST_F(selective_events_local, a_subscriber_that_stops_leaves_the_other_one_notified) {
+    // A subscriber going away without unsubscribing - the process-crash case.
+    start_apps();
+
+    ASSERT_TRUE(subscribe_selectively(client_one_));
+    ASSERT_TRUE(subscribe_selectively(client_two_));
+
+    auto const its_client_one = client_one_->get_client_id();
+    auto const its_client_two = client_two_->get_client_id();
+    ASSERT_TRUE(provider_subscriptions_.wait_for_any({its_client_two, true})) << provider_subscriptions_;
+
+    client_one_->stop();
+    ASSERT_TRUE(provider_subscriptions_.wait_for_any({its_client_one, false})) << provider_subscriptions_;
+
+    server_->send_event_one(selective_event_, payload_two_, its_client_two);
+    ASSERT_TRUE(client_two_->message_record_.wait_for(checker(payload_two_))) << client_two_->message_record_;
+}
+
+/// The offering application on one ECU, both subscribers on another.
+struct selective_events_boardnet : public selective_events_base {
+    // The peer renews its subscriptions on every offer, so the offer cadence is how long a dropped
+    // subscription stays gone.
+    selective_events_boardnet() { provider_ecu_.config().service_discovery_.cyclic_offer_delay_ = std::chrono::milliseconds(200); }
+
+    ~selective_events_boardnet() override {
+        consumer_ecu_.stop_apps();
+        provider_ecu_.stop_apps();
+    }
+
+    void start_apps() {
+        provider_ecu_.add_app(selective_server_name_);
+        consumer_ecu_.add_app(client_one_name_);
+        consumer_ecu_.add_app(client_two_name_);
+        provider_ecu_.prepare();
+        consumer_ecu_.prepare();
+        provider_ecu_.start_apps();
+        consumer_ecu_.start_apps();
+
+        offer_selectively(provider_ecu_.apps_[selective_server_name_], consumer_ecu_.apps_[client_one_name_],
+                          consumer_ecu_.apps_[client_two_name_]);
+    }
+
+    /// The StopSubscribe takes the other client's remote subscription with it; it comes back only
+    /// when the consuming ECU renews it on the next offer - the second report awaited here.
+    void await_subscription_renewal(client_t _client) override {
+        ASSERT_TRUE(provider_subscriptions_.wait_for_count({_client, true}, 2)) << provider_subscriptions_;
+    }
+
+    ecu_setup consumer_ecu_{"ecu_consumer", ecu_config{boardnet::ecu_one_config}.add_interface({iface_}), *socket_manager_};
+    ecu_setup provider_ecu_{"ecu_provider", ecu_config{boardnet::ecu_two_config}.add_interface({iface_}), *socket_manager_};
+};
+
+TEST_F(selective_events_boardnet, remote_subscribers_are_reported_and_notified_individually) {
+    // Both subscribers share one remote endpoint; only the selective option of their SUBSCRIBE
+    // entries tells them apart.
+    start_apps();
+    notify_each_subscriber_individually();
+}
+
+TEST_F(selective_events_boardnet, one_remote_subscriber_unsubscribing_leaves_the_other_one_notified) {
+    start_apps();
+    unsubscribe_one_and_notify_the_other();
+}
 }
