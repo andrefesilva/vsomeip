@@ -4169,7 +4169,11 @@ void routing_manager_impl::register_event(client_t _client, service_t _service, 
                 }
                 transfer_subscriptions_from_any_event = true;
             } else {
-                VSOMEIP_ERROR_P << ": Event registration update failed. Specified arguments do not match existing registration.";
+                VSOMEIP_ERROR_P << "Event registration update failed for client " << get_client_info(_client) << " [" << hex4(_service)
+                                << "." << hex4(_instance) << "." << hex4(_notifier)
+                                << "]: event type mismatch (registered=" << hex2(static_cast<uint8_t>(its_event->get_type()))
+                                << ", requested=" << hex2(static_cast<uint8_t>(_type)) << ", provided=" << _is_provided
+                                << ", shadow=" << _is_shadow << ")";
             }
         } else {
             // the found event was a placeholder for caching.
