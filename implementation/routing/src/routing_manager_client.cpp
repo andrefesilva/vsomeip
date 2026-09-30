@@ -17,6 +17,7 @@
 #include <future>
 #include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <tuple>
 #include <unordered_set>
@@ -1049,8 +1050,20 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
             }
 
             if (utility::is_notification(its_message->get_message_type()) && !has_active_subscription) {
-                VSOMEIP_WARNING_P << "[" << hex4(its_message->get_service()) << "." << hex4(its_message->get_instance()) << "."
-                                  << hex4(its_message->get_method()) << "]: blocked as the subscription is already inactive.";
+                // Log the eventgroups the lookup was done against: a mismatch with the subscribed eventgroup explains the drop.
+                std::stringstream its_eventgroups;
+                bool is_placeholder{false};
+                if (auto its_event =
+                            find_consumed_event(its_message->get_service(), its_message->get_instance(), its_message->get_method())) {
+                    is_placeholder = its_event->is_cache_placeholder();
+                    for (const auto eg : its_event->get_eventgroups()) {
+                        its_eventgroups << (its_eventgroups.tellp() > 0 ? "," : "") << hex4(eg);
+                    }
+                }
+                VSOMEIP_WARNING_P << "Client 0x" << hex4(get_client()) << " [" << hex4(its_message->get_service()) << "."
+                                  << hex4(its_message->get_instance()) << "." << hex4(its_message->get_method()) << "] from "
+                                  << hex4(_peer_data.id_) << ": notification dropped, no matching subscription (eventgroups={"
+                                  << its_eventgroups.str() << "}, placeholder=" << std::boolalpha << is_placeholder << ")";
                 return;
             }
 
@@ -2791,7 +2804,10 @@ void routing_manager_client::register_consumer_event(client_t _client, service_t
                 }
                 transfer_subscriptions_from_any_event = true;
             } else {
-                VSOMEIP_ERROR_P << ": Event registration update failed. Specified arguments do not match existing registration.";
+                VSOMEIP_ERROR_P << "Event registration update failed for client " << hex4(_client) << " [" << hex4(_service) << "."
+                                << hex4(_instance) << "." << hex4(_notifier)
+                                << "]: event type mismatch (registered=" << hex2(static_cast<uint8_t>(its_event->get_type()))
+                                << ", requested=" << hex2(static_cast<uint8_t>(_type)) << ")";
             }
         } else {
             // the found event was a placeholder for caching.
