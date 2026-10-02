@@ -519,48 +519,42 @@ std::shared_ptr<security> routing_manager_stub::get_security() const {
 }
 
 void routing_manager_stub::on_deregister_application(client_t _client) {
-    std::vector<std::tuple<service_t, instance_t, major_version_t, minor_version_t>> services_to_report;
 
-    std::unique_lock its_lock{routing_info_mutex_};
-    auto its_info = routing_info_.find(_client);
-    if (its_info != routing_info_.end()) {
-        for (const auto& [si, minor] : its_info->second) {
-            services_to_report.push_back(std::make_tuple(si.service, si.instance, si.major, minor));
-        }
-    }
+    std::unique_lock its_lock{offerings_mutex_};
+    const auto services_to_report = offered_services_.remove_all_for_client(_client);
 
     host_->remove_pending_requests(pending_request_removal_type_e::BOTH, _client);
 
-    for (const auto& [_service, _instance, _major, _minor] : services_to_report) {
-        host_->on_stop_offer_service_unlocked(_client, _service, _instance, _major, _minor, false);
-        on_stop_offer_service_unlocked(_client, _service, _instance, _major, _minor);
+    for (const auto& s : services_to_report) {
+        host_->on_stop_offer_service_unlocked(_client, s.service, s.instance, s.major, s.minor, false);
+        // remove_all_for_client() above already removed these entries from offered_services_, so
+        // on_stop_offer_service_unlocked() (which looks the entry up before removing it) would find
+        // nothing and skip the notification -- inform requesters directly instead.
+        inform_requesters(_client, s.service, s.instance, s.major, s.minor,
+                          protocol::routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE);
     }
-
-    routing_info_.erase(_client);
 }
 
 void routing_manager_stub::on_offered_service_request(client_t _client, offer_type_e _offer_type) {
 
     local_service_table table;
 
-    std::scoped_lock its_guard{routing_info_mutex_};
-    for (const auto& found_client : routing_info_) {
+    std::scoped_lock const guard{offerings_mutex_};
+    offered_services_.for_each_available(ANY_SERVICE, ANY_INSTANCE, ANY_MAJOR, ANY_MINOR, [&](const local_offering_table::entry& _entry) {
         // skip services which are offered on remote hosts
-        if (found_client.first != VSOMEIP_ROUTING_CLIENT) {
-            for (const auto& [si, minor] : found_client.second) {
-                const auto& [its_service, its_instance, its_major] = si;
-                uint16_t its_reliable_port = configuration_->get_reliable_port(its_service, its_instance);
-                uint16_t its_unreliable_port = configuration_->get_unreliable_port(its_service, its_instance);
-                bool has_port = (its_reliable_port != ILLEGAL_PORT || its_unreliable_port != ILLEGAL_PORT);
+        if (_entry.client != VSOMEIP_ROUTING_CLIENT) {
+            uint16_t its_reliable_port = configuration_->get_reliable_port(_entry.service, _entry.instance);
+            uint16_t its_unreliable_port = configuration_->get_unreliable_port(_entry.service, _entry.instance);
+            bool has_port = (its_reliable_port != ILLEGAL_PORT || its_unreliable_port != ILLEGAL_PORT);
 
-                if (_offer_type == offer_type_e::OT_ALL || (_offer_type == offer_type_e::OT_LOCAL && !has_port)
-                    || (_offer_type == offer_type_e::OT_REMOTE && has_port)) {
-                    table.insert(protocol::service_data{.key_ = {.service = its_service, .instance = its_instance, .major = its_major},
-                                                        .minor_version_ = minor});
-                }
+            if (_offer_type == offer_type_e::OT_ALL || (_offer_type == offer_type_e::OT_LOCAL && !has_port)
+                || (_offer_type == offer_type_e::OT_REMOTE && has_port)) {
+                table.insert(protocol::service_data{.key_ = {.service = _entry.service, .instance = _entry.instance, .major = _entry.major},
+                                                    .minor_version_ = _entry.minor});
             }
         }
-    }
+        return true;
+    });
     if (auto its_endpoint = find_local_routing_endpoint(_client); its_endpoint) {
         its_endpoint->send(protocol::create_offered_services_response_cmd(_client, table.view()));
     } else {
@@ -577,11 +571,6 @@ void routing_manager_stub::on_register_application(client_t _client, const boost
 
     VSOMEIP_INFO << "Application/Client " << hex4(_client) << " is registering" << its_address.str();
 
-    // Find or create a local endpoint.
-    {
-        std::scoped_lock its_lock{routing_info_mutex_};
-        routing_info_[_client]; // ensure entry exists
-    }
     std::vector<protocol::update_security_policy_view> its_requester_policy_updates;
 #ifndef VSOMEIP_DISABLE_SECURITY
     // distribute updated security config to new clients
@@ -656,7 +645,7 @@ void routing_manager_stub::init_routing_endpoint() {
 }
 void routing_manager_stub::on_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                             minor_version_t _minor) {
-    std::scoped_lock its_guard{routing_info_mutex_};
+    std::scoped_lock const guard{offerings_mutex_};
     on_offer_service_unlocked(_client, _service, _instance, _major, _minor);
 }
 
@@ -666,7 +655,7 @@ void routing_manager_stub::on_offer_service_unlocked(client_t _client, service_t
     VSOMEIP_INFO << "ON_OFFER_SERVICE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":"
                  << static_cast<int>(_major) << "." << _minor << "]";
 
-    routing_info_[_client][{_service, _instance, _major}] = _minor;
+    offered_services_.add(_service, _instance, _major, _minor, _client);
     if (configuration_->is_security_enabled()) {
         distribute_credentials(_client, _service, _instance);
     }
@@ -675,7 +664,7 @@ void routing_manager_stub::on_offer_service_unlocked(client_t _client, service_t
 
 bool routing_manager_stub::offer_service_if_established(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                                         minor_version_t _minor, const std::shared_ptr<boardnet_endpoint>& _endpoint) {
-    std::scoped_lock its_guard{routing_info_mutex_};
+    std::scoped_lock const guard{offerings_mutex_};
     if (!_endpoint || !_endpoint->is_established() || contained_in_routing_info_unlocked(_client, _service, _instance, _major, _minor)) {
         return false;
     }
@@ -687,7 +676,7 @@ bool routing_manager_stub::offer_service_if_established(client_t _client, servic
 void routing_manager_stub::on_stop_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                                  minor_version_t _minor) {
     {
-        std::scoped_lock its_lock{routing_info_mutex_};
+        std::scoped_lock its_lock{offerings_mutex_};
         on_stop_offer_service_unlocked(_client, _service, _instance, _major, _minor);
     }
 }
@@ -698,14 +687,10 @@ void routing_manager_stub::on_stop_offer_service_unlocked(client_t _client, serv
     VSOMEIP_INFO << "ON_STOP_OFFER_SERVICE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << ":"
                  << static_cast<int>(_major) << "." << _minor << "]";
 
-    if (auto found_client = routing_info_.find(_client); found_client != routing_info_.end()) {
-        if (auto found_si = found_client->second.find({_service, _instance, _major}); found_si != found_client->second.end()) {
-            if (_minor == found_si->second) {
-                found_client->second.erase(found_si);
-                inform_requesters(_client, _service, _instance, _major, _minor,
-                                  protocol::routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE);
-            }
-        }
+    if (auto found = offered_services_.find_entry(_service, _instance, _major);
+        found && found->client == _client && found->minor == _minor) {
+        offered_services_.remove(_service, _instance, _major);
+        inform_requesters(_client, _service, _instance, _major, _minor, protocol::routing_info_entry_type_e::RIE_DELETE_SERVICE_INSTANCE);
     }
 }
 
@@ -801,18 +786,14 @@ void routing_manager_stub::send_subscribe_ack(client_t _client, service_t _servi
 
 bool routing_manager_stub::contained_in_routing_info(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                                      minor_version_t _minor) const {
-    std::scoped_lock its_guard{routing_info_mutex_};
+    std::scoped_lock const guard{offerings_mutex_};
     return contained_in_routing_info_unlocked(_client, _service, _instance, _major, _minor);
 }
 
 bool routing_manager_stub::contained_in_routing_info_unlocked(client_t _client, service_t _service, instance_t _instance,
                                                               major_version_t _major, minor_version_t _minor) const {
-    if (auto found_client = routing_info_.find(_client); found_client != routing_info_.end()) {
-        if (auto found_si = found_client->second.find({_service, _instance, _major}); found_si != found_client->second.end()) {
-            return found_si->second == _minor;
-        }
-    }
-    return false;
+    auto found = offered_services_.find_entry(_service, _instance, _major);
+    return found && found->client == _client && found->minor == _minor;
 }
 
 void routing_manager_stub::on_ping(client_t _client) {
@@ -934,11 +915,6 @@ void routing_manager_stub::remove_from_pinged_clients(client_t _client) {
     pinged_clients_timer_.async_wait(std::bind(&routing_manager_stub::on_ping_timer_expired, this, std::placeholders::_1));
 }
 
-bool routing_manager_stub::is_registered(client_t _client) const {
-    std::scoped_lock its_lock{routing_info_mutex_};
-    return (routing_info_.count(_client) > 0);
-}
-
 void routing_manager_stub::deregister_client(client_t _client) {
     VSOMEIP_INFO << "Application/Client " << hex4(_client) << " is deregistering";
     on_deregister_application(_client);
@@ -952,7 +928,8 @@ void routing_manager_stub::handle_credentials(const client_t _client, std::set<p
         return;
     }
 
-    std::scoped_lock its_guard{routing_info_mutex_};
+    // TODO: This lock seems to be hiding a possible race condition with the offerings data structure
+    std::scoped_lock const guard{offerings_mutex_};
     std::set<std::pair<uid_t, gid_t>> its_credentials;
     if (auto const its_requester_sec_client = find_sec_client(_client); its_requester_sec_client) {
         // determine credentials of offering clients using current routing info
@@ -989,69 +966,43 @@ void routing_manager_stub::handle_requests(const client_t _client, std::set<prot
         return;
     }
 
-    boost::asio::ip::address its_address;
-    port_t its_port{0};
-
     std::vector<protocol::routing_info_entry_data> its_entries;
-    std::scoped_lock its_guard{routing_info_mutex_};
+    std::scoped_lock const guard{offerings_mutex_};
 
     for (auto const& request : _requests) {
         if (_client == VSOMEIP_ROUTING_CLIENT) {
             continue;
         }
-        std::set<client_t> its_clients = host_->find_local_clients(request.service_, request.instance_, request.major_);
-        // insert VSOMEIP_ROUTING_CLIENT to check whether service is remotely offered
-        its_clients.insert(VSOMEIP_ROUTING_CLIENT);
-        for (const client_t c : its_clients) {
-            if (const auto found_client = routing_info_.find(c); found_client != routing_info_.end()) {
-                bool const has_guest_address = host_->get_endpoint_manager()->get_guest(c, its_address, its_port);
-                auto const its_sec_client = find_sec_client(c);
-                auto const fill = [&](protocol::routing_info_entry_data& _entry) {
-                    _entry.type_ = protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
-                    _entry.client_ = c;
+        // Matches every offering of request.service_ against its (possibly wildcarded) instance/major --
+        // e.g. an ANY_MAJOR request reports every major currently offered for that (service, instance),
+        // since there may be more than one. offered_services_ already holds the current owner (local
+        // or remote, via the VSOMEIP_ROUTING_CLIENT sentinel) of every (service, instance, major), so no
+        // separate candidate-client lookup is needed.
+        offered_services_.for_each_available(
+                request.service_, ANY_INSTANCE, ANY_MAJOR, ANY_MINOR, [&](const local_offering_table::entry& e) {
+                    if ((request.instance_ != ANY_INSTANCE && e.instance != request.instance_)
+                        || (request.major_ != ANY_MAJOR && e.major != request.major_)) {
+                        return true;
+                    }
+                    boost::asio::ip::address its_address;
+                    port_t its_port{0};
+                    bool const has_guest_address = host_->get_endpoint_manager()->get_guest(e.client, its_address, its_port);
+                    auto const its_sec_client = find_sec_client(e.client);
+                    protocol::routing_info_entry_data its_entry;
+                    its_entry.type_ = protocol::routing_info_entry_type_e::RIE_ADD_SERVICE_INSTANCE;
+                    its_entry.client_ = e.client;
                     if (has_guest_address) {
-                        _entry.address_ = its_address.to_v4();
-                        _entry.port_ = its_port;
+                        its_entry.address_ = its_address.to_v4();
+                        its_entry.port_ = its_port;
                     }
                     if (its_sec_client) {
-                        _entry.uid_ = its_sec_client->user;
-                        _entry.gid_ = its_sec_client->group;
+                        its_entry.uid_ = its_sec_client->user;
+                        its_entry.gid_ = its_sec_client->group;
                     }
-                };
-
-                if (request.instance_ == ANY_INSTANCE) {
-                    for (const auto& [si, minor] : found_client->second) {
-                        if (si.service == request.service_ && (si.major == request.major_ || request.major_ == ANY_MAJOR)) {
-                            protocol::routing_info_entry_data its_entry;
-                            fill(its_entry);
-                            its_entry.services_.push_back({.key_ = {request.service_, si.instance, si.major}, .minor_version_ = minor});
-                            its_entries.emplace_back(std::move(its_entry));
-                        }
-                    }
-                } else if (request.major_ == ANY_MAJOR) {
-                    // No specific major requested: report every major currently offered for this
-                    // (service, instance) -- there may be more than one.
-                    for (const auto& [si, minor] : found_client->second) {
-                        if (si.service == request.service_ && si.instance == request.instance_) {
-                            protocol::routing_info_entry_data its_entry;
-                            fill(its_entry);
-                            its_entry.services_.push_back(
-                                    {.key_ = {request.service_, request.instance_, si.major}, .minor_version_ = minor});
-                            its_entries.emplace_back(std::move(its_entry));
-                        }
-                    }
-                } else {
-                    if (auto found_si = found_client->second.find({request.service_, request.instance_, request.major_});
-                        found_si != found_client->second.end()) {
-                        protocol::routing_info_entry_data its_entry;
-                        fill(its_entry);
-                        its_entry.services_.push_back(
-                                {.key_ = {request.service_, request.instance_, request.major_}, .minor_version_ = found_si->second});
-                        its_entries.emplace_back(std::move(its_entry));
-                    }
-                }
-            }
-        }
+                    its_entry.services_.push_back({.key_ = {request.service_, e.instance, e.major}, .minor_version_ = e.minor});
+                    its_entries.emplace_back(std::move(its_entry));
+                    return true;
+                });
     }
 
     if (!its_entries.empty()) {

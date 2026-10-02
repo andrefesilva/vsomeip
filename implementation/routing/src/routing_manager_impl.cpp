@@ -2773,7 +2773,7 @@ void routing_manager_impl::cleanup_client(client_t _client) {
 
     // Since the client could be offering services that need to be removed
     // Lock state and offer serialization. This is needed here to prevent
-    // a lock inversion with rms routing_info_mutex_
+    // a lock inversion with rms offerings_mutex_
     {
         std::scoped_lock its_lock{mutex_};
         stub_->deregister_client(_client);
