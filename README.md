@@ -31,8 +31,9 @@ The stack consists out of:
 - vSomeIP uses CMake as buildsystem.
 - vSomeIP uses Boost >= 1.75.0:
 
-For the tests Google's test framework https://code.google.com/p/googletest/[gtest] is needed.
--- URL: https://googletest.googlecode.com/files/gtest-<version>.zip
+For the tests Google's test framework [gtest](https://github.com/google/googletest) >= 1.11.0 is needed.
+`GTEST_ROOT` must point to a googletest source tree (e.g. `/usr/src/googletest`
+from the Debian/Ubuntu `googletest` package), not to an installed library.
 
 To build the documentation doxygen and graphviz are needed:
 --`sudo apt-get install doxygen graphviz`
@@ -115,9 +116,7 @@ PRODUCT_PACKAGES += \
 - vSomeIP uses Boost >= 1.75.0:
 - GIT
 
-For the tests Google's test framework https://code.google.com/p/googletest/[gtest] is needed.
--- URL: https://googletest.googlecode.com/files/gtest-<version>.zip
-or
+For the tests Google's test framework [gtest](https://github.com/google/googletest) >= 1.11.0 is needed.
 -- git clone https://github.com/google/googletest.git
 
 ###### Compilation

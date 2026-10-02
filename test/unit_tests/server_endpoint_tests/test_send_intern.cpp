@@ -23,7 +23,6 @@ using namespace vsomeip_v3;
 
 using ::testing::_;
 using ::testing::DoAll;
-using ::testing::Invoke;
 using ::testing::NiceMock;
 using ::testing::SetArgPointee;
 
@@ -59,7 +58,7 @@ public:
         ON_CALL(*this, get_configured_times_from_endpoint(_, _, _, _))
                 .WillByDefault(
                         DoAll(SetArgPointee<2>(std::chrono::nanoseconds::zero()), SetArgPointee<3>(std::chrono::nanoseconds::zero())));
-        ON_CALL(*this, send_queued(_)).WillByDefault(Invoke([](const target_data_iterator_type _it) { return drain_queue(_it); }));
+        ON_CALL(*this, send_queued(_)).WillByDefault([](const target_data_iterator_type _it) { return drain_queue(_it); });
     }
 
     using server_endpoint_impl<boost::asio::ip::udp>::send_intern;
@@ -138,9 +137,9 @@ TEST_F(send_intern_test, zero_debounce_and_retention_takes_fast_path) {
     // The message must depart immediately: exactly one send_queued call,
     // carrying it.
     message_buffer_ptr_t its_sent_buffer;
-    EXPECT_CALL(*endpoint_, send_queued(_)).Times(1).WillOnce(Invoke([&its_sent_buffer](const target_data_iterator_type _it) {
+    EXPECT_CALL(*endpoint_, send_queued(_)).Times(1).WillOnce([&its_sent_buffer](const target_data_iterator_type _it) {
         return drain_queue(_it, &its_sent_buffer);
-    }));
+    });
 
     const auto its_message = make_message(0x1234, 0x5678);
     ASSERT_TRUE(endpoint_->send_intern(target_, its_message.data(), static_cast<uint32_t>(its_message.size())));
@@ -164,9 +163,9 @@ TEST_F(send_intern_test, sd_message_takes_fast_path_and_skips_config_lookup) {
     EXPECT_CALL(*endpoint_, get_configured_times_from_endpoint(_, _, _, _)).Times(0);
 
     message_buffer_ptr_t its_sent_buffer;
-    EXPECT_CALL(*endpoint_, send_queued(_)).Times(1).WillOnce(Invoke([&its_sent_buffer](const target_data_iterator_type _it) {
+    EXPECT_CALL(*endpoint_, send_queued(_)).Times(1).WillOnce([&its_sent_buffer](const target_data_iterator_type _it) {
         return drain_queue(_it, &its_sent_buffer);
-    }));
+    });
 
     const auto its_message = make_message(VSOMEIP_SD_SERVICE, VSOMEIP_SD_METHOD);
     ASSERT_TRUE(endpoint_->send_intern(target_, its_message.data(), static_cast<uint32_t>(its_message.size())));
