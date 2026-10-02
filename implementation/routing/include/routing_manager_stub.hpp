@@ -28,9 +28,9 @@
 
 #include "types.hpp"
 #include "../include/routing_host.hpp"
+#include "local_offering_table.hpp"
 #include "../../protocol/include/protocol.hpp"
 #include "../../protocol/include/command_types.hpp"
-#include "../../utility/include/service_instance_map.hpp"
 
 namespace vsomeip_v3 {
 
@@ -58,10 +58,10 @@ public:
     virtual void on_message(const byte_t* _data, length_t _length, const local_client_data& _peer_data) override;
 
     void on_offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
-    // Body of on_offer_service; expects routing_info_mutex_ to be held by the caller.
+    // Body of on_offer_service; expects offerings_mutex_ to be held by the caller.
     void on_offer_service_unlocked(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                    minor_version_t _minor);
-    // Atomically (under routing_info_mutex_) offer the service only if the endpoint is still established and the
+    // Atomically (under offerings_mutex_) offer the service only if the endpoint is still established and the
     // service is not already present. Returns true if the offer was performed. Folding the establishment check into
     // the same critical section as the insertion prevents a spurious re-offer from overtaking the stop-offer of a
     // concurrent disconnect. Returns false (no offer) if the endpoint is no longer established or already present.
@@ -76,12 +76,10 @@ public:
 
     bool contained_in_routing_info(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                    minor_version_t _minor) const;
-    // Same as contained_in_routing_info but expects routing_info_mutex_ to be held by the caller.
+    // Same as contained_in_routing_info but expects offerings_mutex_ to be held by the caller.
     bool contained_in_routing_info_unlocked(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                             minor_version_t _minor) const;
-
     bool send_ping(client_t _client);
-    bool is_registered(client_t _client) const;
     void handle_credentials(const client_t _client, std::set<protocol::service>& _requests);
     void handle_requests(const client_t _client, std::set<protocol::service>& _requests);
 
@@ -187,8 +185,8 @@ private:
 
     std::mutex lazy_load_mtx_;
 
-    std::map<client_t, versioned_service_instance_map<minor_version_t>> routing_info_;
-    mutable std::mutex routing_info_mutex_;
+    local_offering_table offered_services_;
+    mutable std::mutex offerings_mutex_;
     std::shared_ptr<configuration> configuration_;
 
     bool is_socket_activated_;
