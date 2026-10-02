@@ -43,7 +43,7 @@ The stack consists out of:
 * vSomeIP uses Boost >= 1.75:
     * Ubuntu 22.04:
         * `sudo apt-get install libboost-filesystem1.75-dev`
-* For the tests Google's test framework
+* For the tests Google's test framework >= 1.11.0
     https://github.com/google/googletest/releases
 * To build the documentation doxygen and graphviz are needed:
     * `sudo apt-get install doxygen graphviz`
