@@ -125,7 +125,6 @@ public:
             wait_shutdown_response_ = false;
             shutdown_response_condition_.notify_one();
         } else if (_response->get_method() == subscribe_notify_test::set_method_id) {
-            received_events_.clear();
             std::scoped_lock its_lock(set_value_mutex_);
             wait_set_value_ = false;
             set_value_condition_.notify_one();
@@ -179,30 +178,15 @@ public:
         app_->unsubscribe(info_.service_id, info_.instance_id, static_cast<vsomeip::eventgroup_t>(info_.eventgroup_id + 1));
     }
 
-    void wait_for_initial_events(std::unique_lock<std::mutex>& _lock, std::condition_variable& _condition) {
-        // For the initial events, we expected to received 1 notification from events
-        // 0x8111 and 0x8112 and 2 notifications from 0x8113, which sums up to 4 total notifications
-        constexpr int _expected_number_received_initial_events = 4;
-        if (!_condition.wait_for(_lock, common::scaled_timeout(std::chrono::seconds(5)),
-                                 [this] { return received_events_.size() >= _expected_number_received_initial_events; })) {
-            ADD_FAILURE() << "Didn't receive at least the expected number of initial events: " << _expected_number_received_initial_events
-                          << "  within time. Instead received: " << received_events_.size();
-        }
-        // Sleep to wait for events in the chance of double initial events
-        _lock.unlock();
-        std::this_thread::sleep_for(std::chrono::milliseconds(750));
-        _lock.lock();
-    }
-
-    void wait_for_events(std::unique_lock<std::mutex>& _lock, std::condition_variable& _condition) {
-        // For the "normal" events, we expected to receive at least one 1 notification from each event, so >= 3 notifications
-        constexpr int _expected_number_received_events = 3;
-        if (!_condition.wait_for(_lock, common::scaled_timeout(std::chrono::seconds(5)),
-                                 [this] { return received_events_.size() >= _expected_number_received_events; })) {
+    void wait_for_events(std::unique_lock<std::mutex>& _lock, std::condition_variable& _condition,
+                         size_t _expected_number_received_events) {
+        if (!_condition.wait_for(_lock, common::scaled_timeout(std::chrono::seconds(5)), [this, _expected_number_received_events] {
+                return received_events_.size() >= _expected_number_received_events;
+            })) {
             ADD_FAILURE() << "Didn't receive expected number of events: " << _expected_number_received_events
                           << " within time. Instead received: " << received_events_.size();
         }
-        ASSERT_GE(received_events_.size(), 3);
+        ASSERT_EQ(_expected_number_received_events, received_events_.size());
     }
 
     void check_received_events_payload(vsomeip::byte_t _value) {
@@ -213,29 +197,10 @@ public:
         received_events_.clear();
     }
 
-    void check_received_initial_events_number(std::set<std::pair<vsomeip::event_t, uint32_t>> _expected) {
-        for (const auto& e : _expected) {
-            auto event = number_received_events_.find(e.first);
-            ASSERT_NE(number_received_events_.end(), event) << e.first;
-            switch (event->first) {
-            case 0x8111:
-                ASSERT_GE(event->second, 1) << "Didn't receive initial events for event:" << event->first;
-                break;
-            case 0x8112:
-                ASSERT_GE(event->second, 1) << "Didn't receive initial events for event:" << event->first;
-                break;
-            case 0x8113:
-                ASSERT_GE(event->second, 2) << "Didn't receive initial events for event:" << event->first;
-                break;
-            }
-        }
-        number_received_events_.clear();
-    }
-
     void check_received_events_number(std::set<std::pair<vsomeip::event_t, uint32_t>> _expected) {
         for (const auto& e : _expected) {
             auto event = number_received_events_.find(e.first);
-            ASSERT_NE(number_received_events_.end(), event);
+            ASSERT_NE(number_received_events_.end(), event) << e.first;
             ASSERT_EQ(e.second, event->second);
         }
         number_received_events_.clear();
@@ -256,17 +221,19 @@ public:
             // subscribe
             std::unique_lock its_events_lock(events_mutex_);
             subscribe_at_service();
-            wait_for_initial_events(its_events_lock, events_condition_);
+            // 1 initial event from each of the two events which are member of a single eventgroup,
+            // and 2 from the event which is member of both, which sums up to 4
+            wait_for_events(its_events_lock, events_condition_, 4);
             check_received_events_payload(0x1);
 
             std::set<std::pair<vsomeip::event_t, uint32_t>> its_expected;
             its_expected.insert({info_.event_id, 1});
             its_expected.insert({static_cast<vsomeip::event_t>(info_.event_id + 1), 1});
-            // Initial event for the event which is member of both eventgroups has to be sent at least twice
+            // Initial event for the event which is member of both eventgroups has to be sent twice
             // see TR_SOMEIP_00571
             its_expected.insert({static_cast<vsomeip::event_t>(info_.event_id + 2), 2});
 
-            check_received_initial_events_number(its_expected);
+            check_received_events_number(its_expected);
             its_expected.clear();
             // set value again
             set_field_at_service(0x2);
@@ -278,7 +245,7 @@ public:
             }
             its_events_lock.lock();
 
-            wait_for_events(its_events_lock, events_condition_);
+            wait_for_events(its_events_lock, events_condition_, 3);
             check_received_events_payload(0x2);
             its_expected.insert({info_.event_id, 1});
             its_expected.insert({static_cast<vsomeip::event_t>(info_.event_id + 1), 1});
@@ -297,7 +264,7 @@ public:
             }
             its_events_lock.lock();
 
-            wait_for_events(its_events_lock, events_condition_);
+            wait_for_events(its_events_lock, events_condition_, 3);
             check_received_events_payload(0x3);
             its_expected.insert({info_.event_id, 1});
             its_expected.insert({static_cast<vsomeip::event_t>(info_.event_id + 1), 1});

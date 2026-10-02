@@ -173,20 +173,20 @@ void security_client::run() {
         // send-side offer check already skips the requests, so no response can come back either.
         if (offer_allowed_) {
             EXPECT_EQ(vsomeip_test::NUMBER_OF_MESSAGES_TO_SEND_SECURITY_TESTS, received_responses_);
-            EXPECT_GE(received_allowed_events_, (uint32_t)0x01); // can be >= 1 due to multiple initial notifications
+            EXPECT_EQ((uint32_t)0x01, received_allowed_events_);
         } else {
             EXPECT_EQ((uint32_t)0, received_responses_);
             EXPECT_EQ((uint32_t)0, received_allowed_events_);
         }
     } else if (!test_external_communication_) {
         EXPECT_EQ(vsomeip_test::NUMBER_OF_MESSAGES_TO_SEND_SECURITY_TESTS, received_responses_);
-        EXPECT_GE(received_allowed_events_, (uint32_t)0x01); // can be >= 1 due to multiple initial notifications
+        EXPECT_EQ((uint32_t)0x01, received_allowed_events_);
     } else if (test_external_communication_ && !is_remote_client_allowed_) {
         EXPECT_EQ((uint32_t)0, received_responses_);
         EXPECT_EQ((uint32_t)0, received_allowed_events_);
     } else if (test_external_communication_ && is_remote_client_allowed_) {
         EXPECT_EQ(vsomeip_test::NUMBER_OF_MESSAGES_TO_SEND_SECURITY_TESTS, received_responses_);
-        EXPECT_GE(received_allowed_events_, (uint32_t)0x01); // can be >= 1 due to multiple initial notifications
+        EXPECT_EQ((uint32_t)0x01, received_allowed_events_);
     }
     stop();
 }
