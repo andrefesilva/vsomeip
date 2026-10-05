@@ -910,17 +910,12 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
             }
 #endif
 
-            if (!multicast_local_) {
-                if (is_v4_) {
-                    multicast_local_ = std::make_unique<endpoint_type>(boost::asio::ip::address_v4::any(), local_.port());
-                } else { // is_v6
-                    multicast_local_ = std::make_unique<endpoint_type>(boost::asio::ip::address_v6::any(), local_.port());
-                }
-            }
+            const endpoint_type its_multicast_local = is_v4_ ? endpoint_type(boost::asio::ip::address_v4::any(), local_.port())
+                                                             : endpoint_type(boost::asio::ip::address_v6::any(), local_.port());
 
-            multicast_socket_->bind(*multicast_local_, _error);
+            multicast_socket_->bind(its_multicast_local, _error);
             if (_error) {
-                VSOMEIP_ERROR_P << instance_name_ << "Failed to bind, " << _error.message();
+                VSOMEIP_ERROR_P << instance_name_ << "Failed to bind to " << its_multicast_local << ", " << _error.message();
                 multicast_socket_.reset();
                 return;
             }
