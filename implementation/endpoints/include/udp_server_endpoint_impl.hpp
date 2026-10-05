@@ -122,9 +122,8 @@ private:
     endpoint_type unicast_remote_;
 
     std::unique_ptr<udp_socket> multicast_socket_;
-    std::unique_ptr<endpoint_type> multicast_local_;
 
-    std::atomic<unsigned> lifecycle_idx_; // for unicast jhandler (and otherwise for usei as a whole)
+    std::atomic<unsigned> lifecycle_idx_; // for unicast handler (and otherwise for usei as a whole)
     std::atomic<unsigned> multicast_lifecycle_idx_; // for multicast handler
     std::map<boost::asio::ip::address, bool> joined_;
     std::map<boost::asio::ip::address, bool> join_status_;
