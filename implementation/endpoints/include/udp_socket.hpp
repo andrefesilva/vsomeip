@@ -34,17 +34,10 @@ public:
     virtual void bind(boost::asio::ip::udp::endpoint const&, boost::system::error_code&) = 0;
     virtual void close(boost::system::error_code&) = 0;
 
-    virtual bool native_non_blocking() const = 0;
-    virtual void native_non_blocking(bool, boost::system::error_code&) = 0;
-
     virtual boost::asio::ip::udp::endpoint local_endpoint(boost::system::error_code&) const = 0;
 
 #if defined(__linux__) || defined(__QNX__)
     virtual void set_option(udp_bind_to_device _opt, boost::system::error_code& _ec) = 0;
-    virtual void set_option(udp_packet_info_ip4 _opt, boost::system::error_code& _ec) = 0;
-    virtual void set_option(udp_packet_info_ip6 _opt, boost::system::error_code& _ec) = 0;
-    virtual void set_option(udp_send_timeout _opt, boost::system::error_code& _ec) = 0;
-    virtual void set_option(udp_receive_timeout _opt, boost::system::error_code& _ec) = 0;
 
     virtual bool can_read_fd_flags() = 0;
 #endif
