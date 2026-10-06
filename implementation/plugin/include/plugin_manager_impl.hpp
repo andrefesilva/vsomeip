@@ -41,6 +41,8 @@ private:
     std::map<plugin_type_e, std::map<std::string, std::shared_ptr<plugin>>> plugins_;
     std::map<plugin_type_e, std::map<std::string, void*>> handles_;
     std::recursive_mutex plugins_mutex_;
+
+    static std::shared_ptr<plugin_manager_impl> the_plugin_manager__;
 };
 
 } // namespace vsomeip_v3
