@@ -894,22 +894,6 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
                 return;
             }
 
-#ifdef _WIN32
-            const char* its_pktinfo_option("0001");
-            ::setsockopt(multicast_socket_->native_handle(), (is_v4_ ? IPPROTO_IP : IPPROTO_IPV6), (is_v4_ ? IP_PKTINFO : IPV6_PKTINFO),
-                         its_pktinfo_option, sizeof(its_pktinfo_option));
-#else
-            boost::system::error_code its_pktinfo_error{};
-            if (is_v4_) {
-                multicast_socket_->set_option(udp_packet_info_ip4{}, its_pktinfo_error);
-            } else {
-                multicast_socket_->set_option(udp_packet_info_ip6{}, its_pktinfo_error);
-            }
-            if (its_pktinfo_error) {
-                VSOMEIP_ERROR_P << instance_name_ << "Failed setting the packet_info option: " << its_pktinfo_error.message();
-            }
-#endif
-
             const endpoint_type its_multicast_local = is_v4_ ? endpoint_type(boost::asio::ip::address_v4::any(), local_.port())
                                                              : endpoint_type(boost::asio::ip::address_v6::any(), local_.port());
 
@@ -930,25 +914,7 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
                 // Non-fatal error
                 _error.clear();
             }
-#ifndef _WIN32
-            struct timeval timeout;
 
-            timeout.tv_sec = VSOMEIP_SETSOCKOPT_TIMEOUT_US / 1'000'000;
-            timeout.tv_usec = VSOMEIP_SETSOCKOPT_TIMEOUT_US % 1'000'000;
-
-            multicast_socket_->set_option(udp_receive_timeout{timeout}, _error);
-            if (_error) {
-                VSOMEIP_ERROR_P << instance_name_ << "Failed to configure SO_RCVTIMEO, " << _error.message();
-                // Non-fatal error
-                _error.clear();
-            }
-            multicast_socket_->set_option(udp_send_timeout{timeout}, _error);
-            if (_error) {
-                VSOMEIP_ERROR_P << instance_name_ << "Failed to configure SO_SNDTIMEO, " << _error.message();
-                // Non-fatal error
-                _error.clear();
-            }
-#endif
             boost::asio::socket_base::receive_buffer_size its_option;
             multicast_socket_->get_option(its_option, _error);
             if (_error) {

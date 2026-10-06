@@ -28,15 +28,8 @@ private:
 
     void close(boost::system::error_code& ec) override { socket_->close(ec); }
 
-    bool native_non_blocking() const override { return socket_->native_non_blocking(); }
-    void native_non_blocking(bool mode, boost::system::error_code& ec) override { socket_->native_non_blocking(mode, ec); }
-
 #if defined(__linux__) || defined(__QNX__)
     void set_option(udp_bind_to_device _opt, boost::system::error_code& _ec) override { socket_->set_option(_opt, _ec); }
-    void set_option(udp_packet_info_ip4 _opt, boost::system::error_code& _ec) override { socket_->set_option(_opt, _ec); }
-    void set_option(udp_packet_info_ip6 _opt, boost::system::error_code& _ec) override { socket_->set_option(_opt, _ec); }
-    void set_option(udp_send_timeout _opt, boost::system::error_code& _ec) override { socket_->set_option(_opt, _ec); }
-    void set_option(udp_receive_timeout _opt, boost::system::error_code& _ec) override { socket_->set_option(_opt, _ec); }
 
     bool can_read_fd_flags() override { return -1 != fcntl(socket_->native_handle(), F_GETFD); }
 #endif

@@ -42,9 +42,6 @@ public:
         state_->close();
     }
 
-    bool native_non_blocking() const override { return false; }
-    void native_non_blocking(bool, boost::system::error_code&) override { }
-
     virtual boost::asio::ip::udp::endpoint local_endpoint(boost::system::error_code& _ec) const override {
         _ec = boost::system::error_code();
         return state_->local_endpoint();
@@ -52,18 +49,6 @@ public:
 
 #if defined(__linux__) || defined(__QNX__)
     virtual void set_option([[maybe_unused]] udp_bind_to_device _opt, boost::system::error_code& _ec) override {
-        _ec = boost::system::error_code();
-    }
-    virtual void set_option([[maybe_unused]] udp_packet_info_ip4 _opt, boost::system::error_code& _ec) override {
-        _ec = boost::system::error_code();
-    }
-    virtual void set_option([[maybe_unused]] udp_packet_info_ip6 _opt, boost::system::error_code& _ec) override {
-        _ec = boost::system::error_code();
-    }
-    virtual void set_option([[maybe_unused]] udp_send_timeout _opt, boost::system::error_code& _ec) override {
-        _ec = boost::system::error_code();
-    }
-    virtual void set_option([[maybe_unused]] udp_receive_timeout _opt, boost::system::error_code& _ec) override {
         _ec = boost::system::error_code();
     }
 
