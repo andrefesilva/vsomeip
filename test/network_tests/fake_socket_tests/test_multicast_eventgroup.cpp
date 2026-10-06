@@ -99,6 +99,11 @@ TEST_F(test_multicast_eventgroup, a_redundant_unsubscribe_keeps_the_other_subscr
         ASSERT_TRUE(client->availability_record_.wait_for_last(service_availability::available(interface_.instance_)));
         client->subscribe_event(event_);
     }
+    // An event has no cached value: a subscriber registered after the send would miss it.
+    for (auto* client : {client_a_, client_b_}) {
+        ASSERT_TRUE(client->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(event_)))
+                << client->subscription_record_;
+    }
     ASSERT_TRUE(await_multicast_join(group_));
     std::vector<unsigned char> const first{0x01};
     provider_->send_event(event_, first);
