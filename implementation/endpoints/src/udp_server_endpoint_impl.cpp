@@ -857,7 +857,9 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
 
     if (_is_join) {
         // If the multicast socket does not yet exist, create it.
+        bool created_socket = false;
         if (!multicast_socket_) {
+            created_socket = true;
             // All previous successful join operations shall be ignored
             // because we will recreate the socket.
             join_status_.clear();
@@ -926,10 +928,6 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
                 }
             }
 #endif
-
-            VSOMEIP_INFO_P << instance_name_ << "Start multicast data handler, lifecycle_idx=" << lifecycle_idx_.load() << ", "
-                           << multicast_socket_.get();
-            receive_multicast_unlocked(nullptr, nullptr);
         }
 
         if (is_v4_ != _address.is_v4()) {
@@ -973,6 +971,13 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
             // time to clean the previous memberships (see  https://stackoverflow.com/questions/45442416).
             // The caller is responsible for retrying. See join_multicast_with_retry().
         }
+
+        if (created_socket) {
+            VSOMEIP_INFO_P << instance_name_ << "Start multicast data handler, lifecycle_idx=" << lifecycle_idx_.load() << ", "
+                           << multicast_socket_.get();
+            receive_multicast_unlocked(nullptr, nullptr);
+        }
+
     } else {
         join_status_.erase(_address);
 
