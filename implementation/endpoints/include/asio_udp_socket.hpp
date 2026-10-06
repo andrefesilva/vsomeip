@@ -40,9 +40,6 @@ private:
     void set_option(boost::asio::ip::multicast::outbound_interface outbound, boost::system::error_code& ec) override {
         socket_->set_option(outbound, ec);
     }
-    void set_option(boost::asio::ip::udp::socket::broadcast broad, boost::system::error_code& ec) override {
-        socket_->set_option(broad, ec);
-    }
     void set_option(boost::asio::ip::udp::socket::receive_buffer_size rx_size, boost::system::error_code& ec) override {
         socket_->set_option(rx_size, ec);
     }
