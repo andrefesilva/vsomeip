@@ -49,7 +49,7 @@ void base_fake_socket_fixture::reset_socket_manager() {
 }
 
 void base_fake_socket_fixture::reset_configuration_cache() {
-    configuration_plugin_impl::get()->clear_configurations();
+    configuration_plugin_impl::get().clear_configurations();
 }
 
 void base_fake_socket_fixture::use_configuration(std::string const& file_name) {

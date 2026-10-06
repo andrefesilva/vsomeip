@@ -298,7 +298,7 @@ void npdu_test_client::wait_for_all_senders() {
 
 TEST(someip_npdu_test, send_different_payloads) {
     // get the configuration
-    std::shared_ptr<vsomeip::configuration> its_configuration = vsomeip_v3::configuration_plugin_impl::get()->get_configuration("", "");
+    std::shared_ptr<vsomeip::configuration> its_configuration = vsomeip_v3::configuration_plugin_impl::get().get_configuration("", "");
     if (!its_configuration) {
         ADD_FAILURE() << "No configuration object. "
                          "Either memory overflow or loading error detected!";

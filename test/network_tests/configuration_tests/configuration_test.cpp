@@ -126,7 +126,7 @@ std::shared_ptr<vsomeip::configuration> load_config(std::string key, std::string
 
     // `configuration_plugin_impl` does caching based on `key`, so each test needs to pass a
     // different value
-    std::shared_ptr<vsomeip::configuration> conf = vsomeip_v3::configuration_plugin_impl::get()->get_configuration(key, "");
+    std::shared_ptr<vsomeip::configuration> conf = vsomeip_v3::configuration_plugin_impl::get().get_configuration(key, "");
 
     return conf;
 }
@@ -158,7 +158,7 @@ void check_file(const std::string& _config_file, const std::string& _expected_un
 
     // 1. Create configuration object
     std::shared_ptr<vsomeip::configuration> its_configuration =
-            vsomeip_v3::configuration_plugin_impl::get()->get_configuration(EXPECTED_ROUTING_MANAGER_HOST, "");
+            vsomeip_v3::configuration_plugin_impl::get().get_configuration(EXPECTED_ROUTING_MANAGER_HOST, "");
 
     // 2. Did we get a configuration object?
     if (0 == its_configuration) {

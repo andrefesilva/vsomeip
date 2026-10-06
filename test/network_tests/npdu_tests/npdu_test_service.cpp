@@ -147,7 +147,7 @@ void npdu_test_service::on_message_shutdown(const std::shared_ptr<vsomeip::messa
 
 TEST(someip_npdu_test, offer_service_and_check_debounce_times) {
     // get the configuration
-    std::shared_ptr<vsomeip::configuration> its_configuration = vsomeip_v3::configuration_plugin_impl::get()->get_configuration("", "");
+    std::shared_ptr<vsomeip::configuration> its_configuration = vsomeip_v3::configuration_plugin_impl::get().get_configuration("", "");
     if (!its_configuration) {
         ADD_FAILURE() << "No configuration object. "
                          "Either memory overflow or loading error detected!";

@@ -29,7 +29,7 @@ class configuration_impl;
 // same process continue to share a single configuration per name.
 class configuration_plugin_impl : public configuration_plugin {
 public:
-    static std::shared_ptr<configuration_plugin_impl> get();
+    static configuration_plugin_impl& get();
 
     configuration_plugin_impl();
     virtual ~configuration_plugin_impl();
