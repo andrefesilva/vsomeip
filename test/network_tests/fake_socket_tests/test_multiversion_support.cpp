@@ -3151,11 +3151,13 @@ struct test_multiversion_support_exclusive_events : public base_fake_socket_fixt
     std::vector<unsigned char> const payload_v2_{0x22, 0x22};
 
     // A plain event only reaches subscribers that exist at notify() time, so the notification tests
-    // must wait for the subscription to be established before sending.
+    // must wait for the subscription to be established before sending. The provider handler runs
+    // before its routing host accepts the subscription; the consumer ACK only follows that accept.
     [[nodiscard]] bool subscribe_and_await_provider(app* _client, app* _provider, event_ids const& _ei, attribute_recorder<bool>& _record) {
         record_remote_subscriptions(_provider, _ei, _record);
         _client->subscribe_event(_ei);
-        return _record.wait_for_any(true);
+        return _record.wait_for_any(true)
+                && _client->subscription_record_.wait_for_last(event_subscription::successfully_subscribed_to(_ei));
     }
 
     // Pins the major, so a match also asserts the notification carried the right interface version.
