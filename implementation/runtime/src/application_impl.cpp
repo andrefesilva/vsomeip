@@ -82,7 +82,7 @@ bool application_impl::init() {
     // load configuration from module
 
     // load default module
-    configuration_ = configuration_plugin_impl::get()->get_configuration(name_, path_);
+    configuration_ = configuration_plugin_impl::get().get_configuration(name_, path_);
     VSOMEIP_INFO << "Configuration module loaded.";
 
     // Elect the routing host before init() queries the configuration: load()

@@ -42,7 +42,7 @@ class client_id_utility_test : public ::testing::Test {
 public:
     client_id_utility_test() : client_id_routing_manager_(0x0), diagnosis_(0x0), diagnosis_mask_(0xFF00), client_id_base_(0x0) {
 
-        configuration_ = vsomeip_v3::configuration_plugin_impl::get()->get_configuration(APPLICATION_NAME_ROUTING_MANAGER, "");
+        configuration_ = vsomeip_v3::configuration_plugin_impl::get().get_configuration(APPLICATION_NAME_ROUTING_MANAGER, "");
     }
 
 protected:

@@ -181,8 +181,8 @@ void configuration_impl::load_logger_configuration() {
         has_logger_configuration = load_logger_configuration(its_element, its_warnings) || has_logger_configuration;
     }
     if (has_logger_configuration) {
-        if (auto its_plugin = configuration_plugin_impl::get(); its_plugin && its_failed.empty()) {
-            its_plugin->store_bootstrap_documents({its_input, std::move(its_elements)});
+        if (its_failed.empty()) {
+            configuration_plugin_impl::get().store_bootstrap_documents({its_input, std::move(its_elements)});
         }
     } else {
         its_elements.clear();
@@ -223,7 +223,7 @@ bool configuration_impl::load(const std::string& _name) {
     // Look for the standard configuration file, unless the logger bootstrap already parsed it.
     std::optional<configuration_plugin_impl::bootstrap_documents> its_documents;
     if (is_global_source_) {
-        its_documents = configuration_plugin_impl::get()->take_bootstrap_documents(its_input);
+        its_documents = configuration_plugin_impl::get().take_bootstrap_documents(its_input);
     }
     if (its_documents) {
         its_mandatory_elements = std::move(its_documents->elements_);
