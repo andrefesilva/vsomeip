@@ -64,8 +64,6 @@ public:
 
     void set_option(boost::asio::ip::multicast::outbound_interface, boost::system::error_code&) override { }
 
-    void set_option(boost::asio::ip::udp::socket::broadcast, boost::system::error_code&) override { }
-
     void set_option(boost::asio::ip::udp::socket::receive_buffer_size, boost::system::error_code&) override { }
 
     void set_option(boost::asio::ip::multicast::join_group _join, boost::system::error_code& _ec) override {

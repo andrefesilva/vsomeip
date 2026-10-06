@@ -30,7 +30,6 @@
   - [Services](#services)
   - [Internal Services](#internal-services)
   - [Clients](#clients)
-  - [Selective Broadcasts Support](#selective-broadcasts-support)
   - [E2E](#e2e)
   - [Debounce](#debounce)
   - [Acceptances](#acceptances)

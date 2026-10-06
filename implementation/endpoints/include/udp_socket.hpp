@@ -46,7 +46,6 @@ public:
 #endif
     virtual void set_option(boost::asio::ip::udp::socket::reuse_address, boost::system::error_code&) = 0;
     virtual void set_option(boost::asio::ip::multicast::outbound_interface outbound, boost::system::error_code& ec) = 0;
-    virtual void set_option(boost::asio::ip::udp::socket::broadcast broad, boost::system::error_code& ec) = 0;
     virtual void set_option(boost::asio::ip::udp::socket::receive_buffer_size rx_size, boost::system::error_code& ec) = 0;
     virtual void set_option(boost::asio::ip::multicast::join_group join, boost::system::error_code& ec) = 0;
     virtual void set_option(boost::asio::ip::multicast::leave_group leave, boost::system::error_code& ec) = 0;

@@ -149,14 +149,6 @@ void udp_server_endpoint_impl::init_unlocked(const endpoint_type& _local, boost:
         }
     }
 
-    boost::asio::socket_base::broadcast option(true);
-    unicast_socket_->set_option(option, _error);
-    if (_error) {
-        VSOMEIP_ERROR_P << instance_name_ << "Failed to configure broadcast option, " << _error.message();
-        unicast_socket_.reset();
-        return;
-    }
-
     const int its_udp_recv_buffer_size = configuration_->get_udp_receive_buffer_size();
     unicast_socket_->set_option(boost::asio::socket_base::receive_buffer_size(static_cast<int>(its_udp_recv_buffer_size)), _error);
 
