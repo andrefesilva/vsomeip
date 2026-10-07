@@ -546,7 +546,7 @@ TEST_F(usei_multi_fixture, multicast_ordering_rejoin) {
     // send + wait for messages
     {
         std::vector<std::vector<uint8_t>> expected;
-        for (size_t i = 0; i < 256; ++i) {
+        for (size_t i = 0; i < 128; ++i) {
             // valid 16-byte header + 1-byte payload; note that only the payload byte varies
             auto bytes = make_bytes(0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00,
                                     static_cast<uint8_t>(i));

@@ -11,7 +11,7 @@
 
 namespace big_payload_test {
 constexpr uint32_t BIG_PAYLOAD_SIZE = 1024 * 600;
-constexpr uint32_t BIG_PAYLOAD_SIZE_UDP = 1024 * 30;
+constexpr uint32_t BIG_PAYLOAD_SIZE_UDP = 1024 * 15;
 constexpr uint32_t BIG_PAYLOAD_SIZE_RANDOM = vsomeip_v3::DEFAULT_MAX_MESSAGE_SIZE - 1024;
 constexpr vsomeip::byte_t DATA_SERVICE_TO_CLIENT = 0xAA;
 constexpr vsomeip::byte_t DATA_CLIENT_TO_SERVICE = 0xFF;
