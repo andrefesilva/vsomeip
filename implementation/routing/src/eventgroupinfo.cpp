@@ -227,13 +227,7 @@ bool eventgroupinfo::update_remote_subscription(const std::shared_ptr<remote_sub
                                                 const std::chrono::steady_clock::time_point& _expiration, std::set<client_t>& _changed,
                                                 remote_subscription_id_t& _id, const bool _is_subscribe) {
 
-    bool its_result(false);
-
-    if (_subscription == nullptr) {
-        VSOMEIP_ERROR_P << "Received ptr is null";
-        return its_result;
-    }
-
+    bool its_result = false;
     std::shared_ptr<endpoint_definition> its_subscriber;
     std::set<std::shared_ptr<event>> its_events;
 
@@ -248,15 +242,7 @@ bool eventgroupinfo::update_remote_subscription(const std::shared_ptr<remote_sub
 
                 // Copy acknowledgment states from existing subscription
                 for (const auto its_client : _subscription->get_clients()) {
-                    auto its_state = its_item.second->get_client_state(its_client);
-                    if (_is_subscribe && its_state == remote_subscription_state_e::SUBSCRIPTION_UNKNOWN) {
-                        // We met the current subscription object during its
-                        // unsubscribe process. Therefore, trigger a resubscription.
-                        its_state = remote_subscription_state_e::SUBSCRIPTION_PENDING;
-                        _changed.insert(its_client);
-                    }
-
-                    _subscription->set_client_state(its_client, its_state);
+                    _subscription->set_client_state(its_client, its_item.second->get_client_state(its_client));
                 }
 
                 if (_is_subscribe) {
@@ -350,10 +336,6 @@ bool eventgroupinfo::is_remote_subscription_limit_reached(const std::shared_ptr<
 
 remote_subscription_id_t eventgroupinfo::add_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription) {
 
-    if (_subscription == nullptr) {
-        VSOMEIP_ERROR_P << "Received ptr is null";
-        return id_;
-    }
     std::scoped_lock its_lock(subscriptions_mutex_);
 
     update_id();
@@ -395,7 +377,7 @@ void eventgroupinfo::remove_remote_subscription(const remote_subscription_id_t _
         }
     }
 
-    subscriptions_.erase(_id);
+    subscriptions_.erase(find_subscription);
 }
 
 void eventgroupinfo::clear_remote_subscriptions() {

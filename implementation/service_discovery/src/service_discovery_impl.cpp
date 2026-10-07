@@ -749,7 +749,6 @@ entry_data_t service_discovery_impl::create_eventgroup_entry(service_t _service,
             its_entry->set_service(_service);
             its_entry->set_instance(_instance);
             its_entry->set_eventgroup(_eventgroup);
-            its_entry->set_counter(0);
             its_entry->set_major_version(_subscription->get_major());
             its_entry->set_ttl(_subscription->get_ttl());
             its_data.entry_ = its_entry;
@@ -761,7 +760,6 @@ entry_data_t service_discovery_impl::create_eventgroup_entry(service_t _service,
                     its_other->set_service(_service);
                     its_other->set_instance(_instance);
                     its_other->set_eventgroup(_eventgroup);
-                    its_other->set_counter(0);
                     its_other->set_major_version(_subscription->get_major());
                     its_other->set_ttl(0);
                     its_data.other_ = its_other;
@@ -794,7 +792,6 @@ entry_data_t service_discovery_impl::create_eventgroup_entry(service_t _service,
                 its_entry->set_service(_service);
                 its_entry->set_instance(_instance);
                 its_entry->set_eventgroup(_eventgroup);
-                its_entry->set_counter(0);
                 its_entry->set_major_version(_subscription->get_major());
                 its_entry->set_ttl(_subscription->get_ttl());
                 its_data.entry_ = its_entry;
@@ -808,7 +805,6 @@ entry_data_t service_discovery_impl::create_eventgroup_entry(service_t _service,
                         its_other->set_service(_service);
                         its_other->set_instance(_instance);
                         its_other->set_eventgroup(_eventgroup);
-                        its_other->set_counter(0);
                         its_other->set_major_version(_subscription->get_major());
                         its_other->set_ttl(0);
                         its_data.other_ = its_other;
@@ -899,8 +895,6 @@ void service_discovery_impl::insert_subscription_ack(const std::shared_ptr<remot
     its_entry->set_instance(its_instance);
     its_entry->set_eventgroup(its_eventgroup);
     its_entry->set_major_version(its_major);
-    its_entry->set_reserved(0);
-    its_entry->set_counter(0);
     // SWS_SD_00315
     its_entry->set_ttl(_ttl);
     if (_ttl > 0) {
@@ -2126,15 +2120,14 @@ void service_discovery_impl::handle_eventgroup_subscription(
 
     if (its_subscriber) {
         // Create subscription object
-        auto its_subscription = std::make_shared<remote_subscription>();
-        its_subscription->set_eventgroupinfo(_info);
+        auto its_subscription = std::make_shared<remote_subscription>(
+                _info, _force_initial_events, _ttl ? _ttl * get_ttl_factor(_service, _instance, ttl_factor_subscriptions_) : 0);
         its_subscription->set_subscriber(its_subscriber);
         its_subscription->set_reliable(its_reliable);
         its_subscription->set_unreliable(its_unreliable);
         its_subscription->reset(_clients);
 
         if (_ttl == 0) { // --> unsubscribe
-            its_subscription->set_ttl(0);
             if (!_is_stop_subscribe_subscribe) {
                 pending_remote_subscriptions_[its_subscription] = _acknowledgement;
                 _acknowledgement->add_subscription(its_subscription);
@@ -2142,11 +2135,6 @@ void service_discovery_impl::handle_eventgroup_subscription(
             }
             return;
         }
-
-        if (_force_initial_events) {
-            its_subscription->set_force_initial_events(true);
-        }
-        its_subscription->set_ttl(_ttl * get_ttl_factor(_service, _instance, ttl_factor_subscriptions_));
 
         pending_remote_subscriptions_[its_subscription] = _acknowledgement;
         _acknowledgement->add_subscription(its_subscription);
@@ -3015,14 +3003,6 @@ reliability_type_e service_discovery_impl::get_remote_offer_type(service_t _serv
         return found_si->second;
     }
     return reliability_type_e::RT_UNKNOWN;
-}
-
-reliability_type_e service_discovery_impl::get_remote_offer_type(const std::shared_ptr<subscription>& _subscription) const {
-    bool has_reliable = (_subscription->get_endpoint(true) != nullptr);
-    bool has_unreliable = (_subscription->get_endpoint(false) != nullptr);
-
-    return (has_reliable ? (has_unreliable ? reliability_type_e::RT_BOTH : reliability_type_e::RT_RELIABLE)
-                         : (has_unreliable ? reliability_type_e::RT_UNRELIABLE : reliability_type_e::RT_UNKNOWN));
 }
 
 bool service_discovery_impl::update_remote_offer_type(service_t _service, instance_t _instance, reliability_type_e _offer_type,

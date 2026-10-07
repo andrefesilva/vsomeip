@@ -27,7 +27,7 @@ const remote_subscription_id_t PENDING_SUBSCRIPTION_ID(0);
 
 class remote_subscription : public std::enable_shared_from_this<remote_subscription> {
 public:
-    remote_subscription();
+    explicit remote_subscription(const std::shared_ptr<eventgroupinfo>& _info, bool _force_initial_events, ttl_t _ttl);
     ~remote_subscription();
 
     bool operator==(const remote_subscription& _other) const;
@@ -39,7 +39,6 @@ public:
     void set_initial(const bool _is_initial);
 
     bool force_initial_events() const;
-    void set_force_initial_events(const bool _force_initial_events);
 
     remote_subscription_id_t get_id() const;
     void set_id(const remote_subscription_id_t _id);
@@ -48,16 +47,9 @@ public:
     void set_parent(const std::shared_ptr<remote_subscription>& _parent);
 
     std::shared_ptr<eventgroupinfo> get_eventgroupinfo() const;
-    void set_eventgroupinfo(const std::shared_ptr<eventgroupinfo>& _info);
 
     ttl_t get_ttl() const;
     void set_ttl(const ttl_t _ttl);
-
-    uint16_t get_reserved() const;
-    void set_reserved(const uint16_t _reserved);
-
-    uint8_t get_counter() const;
-    void set_counter(uint8_t _counter);
 
     std::set<client_t> get_clients() const;
     bool has_client() const;
@@ -80,7 +72,6 @@ public:
     void set_unreliable(const std::shared_ptr<endpoint_definition>& _unreliable);
 
     bool is_pending() const;
-    bool is_acknowledged() const;
 
     std::set<client_t> update(const std::set<client_t>& _clients, const std::chrono::steady_clock::time_point& _timepoint,
                               const bool _is_subscribe);
@@ -98,16 +89,13 @@ public:
     std::shared_ptr<remote_subscription> get_parent_or_self();
 
 private:
+    const std::weak_ptr<eventgroupinfo> eventgroupinfo_;
+    const bool force_initial_events_;
+    const ttl_t ttl_;
+
     std::atomic<remote_subscription_id_t> id_;
     std::atomic<bool> is_initial_;
-    std::atomic<bool> force_initial_events_;
     std::weak_ptr<remote_subscription> parent_;
-
-    std::weak_ptr<eventgroupinfo> eventgroupinfo_;
-
-    ttl_t ttl_;
-    uint16_t reserved_;
-    uint8_t counter_;
 
     std::map<client_t, std::pair<remote_subscription_state_e, std::chrono::steady_clock::time_point>> clients_;
 

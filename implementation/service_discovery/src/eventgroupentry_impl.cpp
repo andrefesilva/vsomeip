@@ -36,22 +36,6 @@ void eventgroupentry_impl::set_eventgroup(eventgroup_t _eventgroup) {
     eventgroup_ = _eventgroup;
 }
 
-uint16_t eventgroupentry_impl::get_reserved() const {
-    return reserved_;
-}
-
-void eventgroupentry_impl::set_reserved(uint16_t _reserved) {
-    reserved_ = _reserved;
-}
-
-uint8_t eventgroupentry_impl::get_counter() const {
-    return counter_;
-}
-
-void eventgroupentry_impl::set_counter(uint8_t _counter) {
-    counter_ = _counter;
-}
-
 bool eventgroupentry_impl::serialize(vsomeip_v3::serializer* _to) const {
     bool is_successful = entry_impl::serialize(_to);
     is_successful = is_successful && _to->serialize(major_version_);
