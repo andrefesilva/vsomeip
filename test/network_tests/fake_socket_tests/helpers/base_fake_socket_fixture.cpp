@@ -42,6 +42,15 @@ base_fake_socket_fixture::~base_fake_socket_fixture() {
     factory_->set_manager(nullptr);
 }
 
+void base_fake_socket_fixture::TearDown() {
+    if (!socket_manager_) {
+        return;
+    }
+    for (auto const& its_app : socket_manager_->spinning_timer_apps()) {
+        ADD_FAILURE() << its_app << " kept re-arming a timer at a deadline that had already passed, so it fired back to back.";
+    }
+}
+
 void base_fake_socket_fixture::reset_socket_manager() {
     reset_configuration_cache();
     socket_manager_ = std::make_shared<socket_manager>();

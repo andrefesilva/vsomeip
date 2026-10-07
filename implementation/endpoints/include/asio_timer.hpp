@@ -22,6 +22,8 @@ private:
 
     virtual void expires_after(std::chrono::milliseconds _timeout) override { timer_.expires_after(_timeout); }
 
+    virtual void expires_at(std::chrono::steady_clock::time_point _expiration) override { timer_.expires_at(_expiration); }
+
     virtual void async_wait(handler_t _handler) override { timer_.async_wait(_handler); }
 
     boost::asio::steady_timer timer_;

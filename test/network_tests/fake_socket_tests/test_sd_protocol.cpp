@@ -14,12 +14,14 @@
 #include "helpers/ecu_setup.hpp"
 #include "helpers/message_checker.hpp"
 #include "helpers/someip_gate.hpp"
+#include "helpers/someip_message.hpp"
 
 #include "common/timeout_scale.hpp"
 
 #include <vsomeip/vsomeip.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace vsomeip_v3::testing {
@@ -1061,6 +1063,367 @@ TEST_F(test_sd_acceptance, expire_remote_subscription) {
     ASSERT_FALSE(router_one->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(udp_event_),
                                                                common::scaled_timeout(std::chrono::milliseconds(500))));
     ASSERT_TRUE(ecu_two_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP_ACK, 0}));
+}
+
+/// What a subscription handler invocation on the offering application reported.
+enum class subscription_report_e { subscribed, unsubscribed };
+
+inline std::ostream& operator<<(std::ostream& _out, subscription_report_e _report) {
+    return _out << (_report == subscription_report_e::subscribed ? "subscribed" : "unsubscribed");
+}
+
+/// The same report, together with the remote client it was about. A selective subscription is
+/// reported once per client, so the client is what tells its reports apart.
+struct client_subscription_report {
+    client_t client_{};
+    subscription_report_e report_{};
+
+    bool operator==(client_subscription_report const& _other) const = default;
+};
+
+inline std::ostream& operator<<(std::ostream& _out, client_subscription_report const& _report) {
+    return _out << "{" << hex4(_report.client_) << " " << _report.report_ << "}";
+}
+
+struct test_subscription_expiration : public base_fake_socket_fixture {
+    using enum subscription_report_e;
+
+    // A one second subscription ttl keeps these tests quick, and offers five times per second
+    // keep an on-time renewal from ever being a close call: the peer renews its subscription on
+    // every offer it receives, so ecu_two's cyclic-offer delay is also the renewal cadence.
+    test_subscription_expiration() {
+        ecu_one_.config().service_discovery_.ttl_ = 1;
+        ecu_two_.config().service_discovery_.cyclic_offer_delay_ = renewal_cadence_;
+    }
+
+    static constexpr std::chrono::milliseconds renewal_cadence_{200};
+
+    // The recorders below are declared after the ECUs, so they are destroyed while the apps are
+    // still dispatching: stop the apps - joining their dispatch threads - while they are alive.
+    ~test_subscription_expiration() override {
+        ecu_one_.stop_apps();
+        ecu_two_.stop_apps();
+    }
+
+    interface const iface_{0x3348,
+                           {event_spec{0x8010, {0x1}, vsomeip::reliability_type_e::RT_UNRELIABLE}},
+                           {event_spec{0x8002, {0x2}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
+
+    ecu_setup ecu_one_{"ecu_one", ecu_config{boardnet::ecu_one_config}.add_interface({iface_}), *socket_manager_};
+    ecu_setup ecu_two_{"ecu_two", ecu_config{boardnet::ecu_two_config}.add_interface({iface_}), *socket_manager_};
+
+    event_ids udp_event_{iface_.instance_, iface_.events_[0]};
+    event_ids field_{iface_.instance_, iface_.fields_[0]};
+
+    std::vector<unsigned char> const payload_{0x7, 0x1};
+
+    app* server_{nullptr};
+
+    /// One entry per subscription-handler invocation on the offering application. An expiring
+    /// remote subscription reaches the offering application as an EXPIRE_ID command, which
+    /// surfaces there as an `unsubscribed`.
+    attribute_recorder<subscription_report_e> provider_subscriptions_;
+
+    /// The same invocations, keyed by the remote client they were about.
+    attribute_recorder<client_subscription_report> provider_client_subscriptions_;
+
+    /// ecu_one puts its own service-discovery ttl into the SUBSCRIBE entries it sends, so this is
+    /// the lifetime ecu_two applies to the remote subscription it stores.
+    std::chrono::seconds subscription_ttl() const { return std::chrono::seconds(ecu_one_.config().service_discovery_.ttl_); }
+
+    /// What ecu_two sends back for a SUBSCRIBE of ecu_one, once the offering application accepted it.
+    someip_sd_record_message subscribe_ack() const {
+        return {sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK, static_cast<ttl_t>(subscription_ttl().count())};
+    }
+
+    void prepare_ecus_and_apps() {
+        ecu_two_.add_app(ecu_two_server_name_);
+
+        ecu_one_.prepare();
+        ecu_two_.prepare();
+
+        ASSERT_TRUE(
+                set_udp_data_pipe({ecu_two_.sd_endpoint(), router_two_name_}, udp_party::any(), ecu_two_sd_send_gate_->get_data_pipe()));
+
+        ecu_one_.start_apps();
+        ecu_two_.start_apps();
+
+        server_ = ecu_two_.apps_[ecu_two_server_name_];
+        ASSERT_NE(server_, nullptr);
+        server_->register_group_subscription_handler(udp_event_, [this](client_t, uid_t, gid_t, std::string const&, bool _subscribed) {
+            provider_subscriptions_.record(_subscribed ? subscribed : unsubscribed);
+            return true;
+        });
+    }
+
+    void establish_subscription() {
+        server_->offer(iface_);
+        ecu_one_.router_->request_service(iface_.instance_);
+        ecu_one_.router_->subscribe_event({udp_event_});
+        ASSERT_TRUE(ecu_one_.router_->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(udp_event_)));
+        ASSERT_TRUE(provider_subscriptions_.wait_for_last(subscribed)) << provider_subscriptions_;
+    }
+
+    /// Silences ecu_one on the boardnet: it keeps believing it is subscribed, but none of its
+    /// SUBSCRIBE renewals reach ecu_two any more, so the remote subscription ecu_two stores runs
+    /// out of ttl. Nothing else is torn down, so the expiration timer is the only thing that can
+    /// drop that subscription.
+    void silence_subscriber(bool _silent) { socket_manager_->set_block_udp_messages(ecu_one_.address(), _silent); }
+
+    std::shared_ptr<someip_gate> ecu_two_sd_send_gate_ = someip_gate::create();
+
+    /// ttl of the subscriptions the frozen peer injects, independent of the ttl ecu_one puts into
+    /// the entries it sends itself.
+    static constexpr ttl_t peer_subscription_ttl_{1};
+
+    /// The reboot storm has no second stack: ecu_two is not started there, its address only serves
+    /// as the source of the injected datagrams.
+    boost::asio::ip::udp::endpoint peer_sd_endpoint_{boardnet::ecu_two_config.unicast_ip_, 30490};
+    port_t peer_event_port_{30491};
+
+    std::shared_ptr<someip_gate> ecu_one_sd_send_gate_ = someip_gate::create();
+
+    /// Sits on the commands the offering application sends back to its routing manager. The tests
+    /// close it on the answer an ack-based teardown waits for, so a teardown that still needs that
+    /// answer cannot complete.
+    std::shared_ptr<command_gate> offering_app_gate_ = command_gate::create();
+
+    void prepare_offering_ecu_one() {
+        ecu_one_.add_app(ecu_one_server_name_);
+        ecu_one_.prepare();
+
+        ASSERT_TRUE(
+                set_udp_data_pipe({ecu_one_.sd_endpoint(), router_one_name_}, udp_party::any(), ecu_one_sd_send_gate_->get_data_pipe()));
+        ASSERT_TRUE(setup_data_pipe(ecu_one_server_name_, router_one_name_, socket_role::server, offering_app_gate_->get_data_pipe()));
+
+        ecu_one_.start_apps();
+
+        server_ = ecu_one_.apps_[ecu_one_server_name_];
+        ASSERT_NE(server_, nullptr);
+        server_->register_group_subscription_handler(field_, [this](client_t _client, uid_t, gid_t, std::string const&, bool _subscribed) {
+            auto const its_report = _subscribed ? subscribed : unsubscribed;
+            provider_subscriptions_.record(its_report);
+            provider_client_subscriptions_.record({_client, its_report});
+            return true;
+        });
+    }
+
+    /// SubscribeEventgroup of a peer whose session identifier does not advance while it keeps the
+    /// reboot flag set: is_reboot() reads every datagram whose session the previous one already
+    /// used as a reboot. @param _selective_clients adds a selective option, so the eventgroup
+    /// stores one remote subscription per client set instead of one for the whole peer.
+    void inject_subscribe(session_t _session, std::set<client_t> const& _selective_clients = {}) {
+        auto const its_message = construct_subscription(field_, peer_sd_endpoint_.address(), peer_event_port_,
+                                                        {.major_ = iface_.instance_.major_,
+                                                         .ttl_ = peer_subscription_ttl_,
+                                                         .session_ = _session,
+                                                         .reboot_flag_ = true,
+                                                         .selective_clients_ = _selective_clients});
+        send_someip_sd_message(its_message, peer_sd_endpoint_, ecu_one_.sd_endpoint());
+    }
+
+    // Frozen session id: trips is_reboot() on every second datagram.
+    void inject_frozen_subscribe() { inject_subscribe(0x0001); }
+
+    /// ecu_one acknowledges a new remote subscription only after the offering application answered
+    /// it, so that answer, and any the application sent before it, has reached the routing manager.
+    [[nodiscard]] bool wait_for_acks_to_peer(size_t _count) {
+        return ecu_one_sd_send_gate_->sd_record_.wait_for_count({sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK, peer_subscription_ttl_},
+                                                                _count);
+    }
+
+    [[nodiscard]] bool offering_app_answered_a_teardown() const {
+        return offering_app_gate_->wait_for_blocked(std::chrono::milliseconds::zero());
+    }
+
+    void offer_from_ecu_one() {
+        server_->offer(iface_);
+
+        ASSERT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for([](auto const& _records) {
+            return std::any_of(_records.begin(), _records.end(),
+                               [](auto const& _r) { return _r.id_ == sd::entry_type_e::OFFER_SERVICE && _r.ttl_ > 0; });
+        })) << "ecu_one never offered the service: "
+            << ecu_one_sd_send_gate_->sd_record_;
+    }
+};
+
+TEST_F(test_subscription_expiration, a_subscription_re_established_after_an_expiry_can_expire_again) {
+    // A remote subscription whose SUBSCRIBE renewals stop arriving must be expired by the
+    // subscription-expiration timer and reported to the offering application once. Expiring it
+    // must not leave anything behind that is permanently marked expired: the expiration pass skips
+    // subscriptions that are already marked, so a leftover entry would make every later expiry of
+    // that eventgroup impossible.
+    prepare_ecus_and_apps();
+    establish_subscription();
+
+    silence_subscriber(true);
+    ASSERT_TRUE(provider_subscriptions_.wait_for_last(unsubscribed))
+            << "the silenced subscription never expired: " << provider_subscriptions_;
+
+    // Let ecu_one through again; its next renewal re-establishes the subscription from scratch.
+    ecu_two_sd_send_gate_->sd_record_.clear();
+    silence_subscriber(false);
+    ASSERT_TRUE(provider_subscriptions_.wait_for_last(subscribed))
+            << "the subscription was not re-established: " << provider_subscriptions_;
+    // The re-subscription reaches the offering application on the same connection as the expiry,
+    // so a repeated expiry issued before it would be in the record by now.
+    EXPECT_TRUE(provider_subscriptions_.equals({subscribed, unsubscribed, subscribed}))
+            << "the expired subscription was reported more than once: " << provider_subscriptions_;
+    ASSERT_TRUE(ecu_two_sd_send_gate_->sd_record_.wait_for_any(subscribe_ack())) << ecu_two_sd_send_gate_->sd_record_;
+
+    server_->send_event(udp_event_, payload_);
+    message_checker its_checker{std::nullopt, iface_.instance_, udp_event_.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, payload_};
+    ASSERT_TRUE(ecu_one_.router_->message_record_.wait_for(its_checker)) << ecu_one_.router_->message_record_;
+
+    // Second round: the re-established subscription must be expirable just like the first one.
+    silence_subscriber(true);
+    EXPECT_TRUE(provider_subscriptions_.wait_for_count(unsubscribed, 2))
+            << "the re-established subscription never expired: " << provider_subscriptions_;
+}
+
+TEST_F(test_subscription_expiration, renewals_keep_the_remote_subscription_alive) {
+    // The mirror image of the expiry tests: while the renewals do keep arriving, the expiration
+    // timer must never drop the subscription, no matter how many expiration deadlines it walks
+    // past. A subscription refreshed by a renewal that lands around its deadline must survive.
+    prepare_ecus_and_apps();
+    establish_subscription();
+
+    // ecu_one renews on every offer of ecu_two, which ecu_two acknowledges. The repetition phase
+    // accounts for repetitions_max_ + 2 of them and every later one comes renewal_cadence_ after
+    // the previous, so this waits for about two subscription ttls.
+    size_t const its_acks =
+            ecu_two_.config().service_discovery_.repetitions_max_ + 2 + static_cast<size_t>(2 * subscription_ttl() / renewal_cadence_);
+    ASSERT_TRUE(ecu_two_sd_send_gate_->sd_record_.wait_for_count(subscribe_ack(), its_acks, common::scaled_timeout(5 * subscription_ttl())))
+            << "ecu_one stopped renewing: " << ecu_two_sd_send_gate_->sd_record_;
+    EXPECT_TRUE(provider_subscriptions_.equals({subscribed})) << "a renewed subscription was expired: " << provider_subscriptions_;
+
+    // ... and it is still a working subscription, not just an unreported one.
+    server_->send_event(udp_event_, payload_);
+    message_checker its_checker{std::nullopt, iface_.instance_, udp_event_.event_id_, vsomeip::message_type_e::MT_NOTIFICATION, payload_};
+    EXPECT_TRUE(ecu_one_.router_->message_record_.wait_for(its_checker)) << ecu_one_.router_->message_record_;
+}
+
+TEST_F(test_subscription_expiration, subscription_expiration_timer_does_not_spin_after_reboot_storm) {
+    // Reboot detection has to finish the teardown of the remote subscription it expires: the
+    // SubscribeEventgroup of the very datagram that tripped the detection establishes the next
+    // subscription, so a teardown still waiting for the offering application leaves an entry
+    // behind that is marked expired and carries an expiration in the past. expire_subscriptions()
+    // then keeps reporting that past timestamp as the next deadline to schedule, and the
+    // expiration timer fires back to back for good.
+    prepare_offering_ecu_one();
+    offer_from_ecu_one();
+
+    // Three reboots are enough: the first one starts the chain, the ones after it are the ones
+    // that used to tear down the wrong entry of it.
+    constexpr size_t its_reboots{3};
+
+    // Reboot teardown must not need the offering application to answer it. This closes the
+    // application's command pipe on the first UNSUBSCRIBE_ACK it sends - the answer an ack-based
+    // teardown waits for - so a teardown that still waits for it cannot finish and leaves the
+    // subscription behind, marked expired and with an expiration in the past. Every answer the
+    // application sends after it is held too, so the new subscription is never acknowledged.
+    offering_app_gate_->block_at(protocol::id_e::UNSUBSCRIBE_ACK_ID, 0);
+
+    // The first datagram is the one that makes the peer known; reboot detection needs a second
+    // one reusing its session identifier. Every new subscription is acknowledged before the next
+    // datagram goes out, so a reboot never lands on one the offering application is still answering.
+    inject_frozen_subscribe();
+    ASSERT_TRUE(provider_subscriptions_.wait_for_count(subscribed, 1))
+            << "the injected subscription never reached the offering application: " << provider_subscriptions_;
+    ASSERT_TRUE(wait_for_acks_to_peer(1)) << ecu_one_sd_send_gate_->sd_record_;
+
+    for (size_t its_reboot = 1; its_reboot <= its_reboots; ++its_reboot) {
+        inject_frozen_subscribe();
+        ASSERT_TRUE(provider_subscriptions_.wait_for_count(unsubscribed, its_reboot))
+                << "reboot " << its_reboot << " did not remove the subscription of the rebooted peer: " << provider_subscriptions_;
+        ASSERT_TRUE(provider_subscriptions_.wait_for_count(subscribed, its_reboot + 1))
+                << "reboot " << its_reboot << " did not re-establish the subscription: " << provider_subscriptions_;
+        ASSERT_TRUE(wait_for_acks_to_peer(2 * its_reboot))
+                << "reboot " << its_reboot << " left the new subscription unacknowledged"
+                << (offering_app_answered_a_teardown() ? ", a teardown waited for an answer: " : ": ") << ecu_one_sd_send_gate_->sd_record_;
+
+        // The next datagram reuses the session identifier of this one, so it is only a renewal
+        // and sets up the reboot the following iteration triggers.
+        inject_frozen_subscribe();
+    }
+    EXPECT_FALSE(offering_app_answered_a_teardown()) << "a reboot asked the offering application to answer the teardown";
+
+    // Nothing refreshes the subscription left over from the last reboot any more, so it lapses on
+    // its own ttl - once.
+    ASSERT_TRUE(provider_subscriptions_.wait_for_count(unsubscribed, its_reboots + 1,
+                                                       common::scaled_timeout(2 * std::chrono::seconds(peer_subscription_ttl_))))
+            << "the subscription of the gone peer never expired: " << provider_subscriptions_;
+
+    std::vector<subscription_report_e> its_expected{subscribed};
+    for (size_t its_round = 0; its_round <= its_reboots; ++its_round) {
+        its_expected.push_back(unsubscribed);
+        if (its_round < its_reboots) {
+            its_expected.push_back(subscribed);
+        }
+    }
+
+    // The spin itself is caught by base_fake_socket_fixture::TearDown().
+    EXPECT_TRUE(provider_subscriptions_.equals(its_expected)) << provider_subscriptions_;
+}
+
+TEST_F(test_subscription_expiration, reboot_detection_removes_every_entry_of_a_selective_subscription) {
+    // A selective subscription that gains a client is stored as a chain until the offering
+    // application accepts that client: the entry the new client came in on is kept as a child of
+    // the one that was there before. Reboot detection must take the whole chain down - removing
+    // one entry of it by identity is what tells a chain apart from a single subscription - and the
+    // peer must be able to subscribe again right after.
+    prepare_offering_ecu_one();
+    offer_from_ecu_one();
+
+    constexpr client_t its_first_client{0x1111};
+    constexpr client_t its_second_client{0x2222};
+
+    // Two datagrams with advancing session identifiers, so neither of them is read as a reboot.
+    inject_subscribe(0x0001, {its_first_client});
+    ASSERT_TRUE(provider_client_subscriptions_.wait_for_any({its_first_client, subscribed}))
+            << "the selective subscription never reached the offering application: " << provider_client_subscriptions_;
+    ASSERT_TRUE(wait_for_acks_to_peer(1)) << ecu_one_sd_send_gate_->sd_record_;
+
+    // Holding back the offering application's answer for the second client keeps the entry it came
+    // in on a pending child when the reboot arrives.
+    offering_app_gate_->block_at(protocol::id_e::SUBSCRIBE_ACK_ID, 0);
+    inject_subscribe(0x0002, {its_first_client, its_second_client});
+    ASSERT_TRUE(provider_client_subscriptions_.wait_for_any({its_second_client, subscribed}))
+            << "the second client of the selective subscription was not subscribed: " << provider_client_subscriptions_;
+    ASSERT_TRUE(offering_app_gate_->wait_for_blocked());
+
+    // Reusing the session identifier of the previous datagram trips reboot detection, and the
+    // SubscribeEventgroup of that same datagram must establish the subscription again, for both
+    // clients, on top of an eventgroup the teardown left empty.
+    inject_subscribe(0x0002, {its_first_client, its_second_client});
+    ASSERT_TRUE(provider_client_subscriptions_.wait_for_sequence(
+            {{its_first_client, subscribed}, {its_first_client, unsubscribed}, {its_first_client, subscribed}}))
+            << "the first client was not removed and subscribed again: " << provider_client_subscriptions_;
+    ASSERT_TRUE(provider_client_subscriptions_.wait_for_sequence(
+            {{its_second_client, subscribed}, {its_second_client, unsubscribed}, {its_second_client, subscribed}}))
+            << "the second client was not removed and subscribed again: " << provider_client_subscriptions_;
+
+    // Taking the chain down must not need the offering application to answer it: the held answers
+    // go through now, but the gate closes on the first UNSUBSCRIBE_ACK, so a teardown that waits for
+    // one leaves the new subscription unacknowledged.
+    offering_app_gate_->block_at(protocol::id_e::UNSUBSCRIBE_ACK_ID, 0);
+    ASSERT_TRUE(wait_for_acks_to_peer(2)) << "the subscription was not acknowledged again"
+                                          << (offering_app_answered_a_teardown() ? ", a teardown waited for an answer: " : ": ")
+                                          << ecu_one_sd_send_gate_->sd_record_;
+    EXPECT_FALSE(offering_app_answered_a_teardown()) << "the teardown of the chain asked the offering application to answer it";
+
+    // And it is a subscription like any other: with the peer gone it expires on its own ttl.
+    EXPECT_TRUE(provider_client_subscriptions_.wait_for_sequence({{its_first_client, subscribed},
+                                                                  {its_first_client, unsubscribed},
+                                                                  {its_first_client, subscribed},
+                                                                  {its_first_client, unsubscribed}},
+                                                                 common::scaled_timeout(2 * std::chrono::seconds(peer_subscription_ttl_))))
+            << "the re-established selective subscription never expired: " << provider_client_subscriptions_;
+    EXPECT_TRUE(provider_client_subscriptions_.wait_for_sequence({{its_second_client, subscribed},
+                                                                  {its_second_client, unsubscribed},
+                                                                  {its_second_client, subscribed},
+                                                                  {its_second_client, unsubscribed}}))
+            << "the re-established selective subscription never expired: " << provider_client_subscriptions_;
 }
 
 struct duplicate_remote_subscribe : public base_fake_socket_fixture {

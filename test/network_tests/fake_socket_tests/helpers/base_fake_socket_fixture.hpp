@@ -51,6 +51,12 @@ struct base_fake_socket_fixture : ::testing::Test {
     ~base_fake_socket_fixture();
 
     /**
+     * Fails the test if any application had a timer firing back to back.
+     * @see socket_manager::spinning_timer_apps()
+     */
+    void TearDown() override;
+
+    /**
      * this function will set the environment variable that will be used
      * from vsomeip apps to deduce the path to the configuration file.
      * Because this function is not thread save neither libdlt, nor any app

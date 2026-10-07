@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <optional>
 #include <ostream>
+#include <set>
 
 namespace vsomeip_v3::testing {
 struct someip_message {
@@ -77,12 +78,26 @@ inline std::ostream& operator<<(std::ostream& _out, someip_record_message const&
 [[nodiscard]] size_t parse(std::vector<unsigned char>& message, someip_message& _out_message);
 [[nodiscard]] size_t parse_sequential_someip(unsigned char* _message, size_t _message_size, someip_message& _out_message);
 [[nodiscard]] std::shared_ptr<vsomeip_v3::sd::message_impl> parse_sd(std::vector<unsigned char>& _message);
-std::vector<unsigned char> construct_subscription(event_ids const& _subscription, boost::asio::ip::address _address, uint16_t _port);
+/// Entry and header fields of a hand-crafted SubscribeEventgroup. The defaults describe a
+/// well-formed subscription; override them to craft the frozen-session / reboot-flag streams a
+/// misbehaving peer would send. An unset major_ takes each entry's own service major version.
+struct subscription_options {
+    std::optional<major_version_t> major_{std::nullopt};
+    ttl_t ttl_{3};
+    std::optional<session_t> session_{std::nullopt};
+    bool reboot_flag_{false};
+    /// Clients of a selective option, one per entry. Empty means no selective option at all,
+    /// which is what a peer subscribing for its whole ecu sends.
+    std::set<client_t> selective_clients_{};
+};
+
+std::vector<unsigned char> construct_subscription(event_ids const& _subscription, boost::asio::ip::address _address, uint16_t _port,
+                                                  subscription_options const& _options = {});
 
 /// Builds a single SD message carrying one SubscribeEventgroup entry per element, as a peer
 /// does when it batches several subscriptions into the same message.
 std::vector<unsigned char> construct_subscription(std::vector<event_ids> const& _subscriptions, boost::asio::ip::address _address,
-                                                  uint16_t _port);
+                                                  uint16_t _port, subscription_options const& _options = {});
 std::vector<unsigned char> construct_offer(event_ids const& _offer, boost::asio::ip::address _address, uint16_t _port);
 
 std::ostream& operator<<(std::ostream& _out, someip_message const& _m);

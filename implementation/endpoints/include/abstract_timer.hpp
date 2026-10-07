@@ -27,6 +27,9 @@ public:
     /// @see boost::asio::steady_timer::expires_after()
     virtual void expires_after(std::chrono::milliseconds _timeout) = 0;
 
+    /// @see boost::asio::steady_timer::expires_at()
+    virtual void expires_at(std::chrono::steady_clock::time_point _expiration) = 0;
+
     /// @see boost::asio::steady_timer::async_wait()
     virtual void async_wait(handler_t _handler) = 0;
 };

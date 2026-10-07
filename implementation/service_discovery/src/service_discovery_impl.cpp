@@ -30,6 +30,7 @@
 #include "../include/serviceentry_impl.hpp"
 #include "../include/subscription.hpp"
 #include "../../configuration/include/configuration.hpp"
+#include "../../endpoints/include/abstract_socket_factory.hpp"
 #include "../../endpoints/include/client_endpoint.hpp"
 #include "../../endpoints/include/endpoint_definition.hpp"
 #include "../../endpoints/include/tcp_server_endpoint_impl.hpp"
@@ -54,7 +55,8 @@ service_discovery_impl::service_discovery_impl(service_discovery_host* _host, co
     io_(_host->get_io()), host_(_host), configuration_(_configuration), port_(VSOMEIP_SD_DEFAULT_PORT), reliable_(false),
     serializer_(std::make_shared<serializer>(configuration_->get_buffer_shrink_threshold())),
     deserializer_(std::make_shared<deserializer>(configuration_->get_buffer_shrink_threshold())), ttl_timer_(io_),
-    ttl_timer_runtime_(VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY / 2), ttl_(VSOMEIP_SD_DEFAULT_TTL), subscription_expiration_timer_(io_),
+    ttl_timer_runtime_(VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY / 2), ttl_(VSOMEIP_SD_DEFAULT_TTL),
+    subscription_expiration_timer_(abstract_socket_factory::get()->create_timer(io_)),
     offer_debounce_time_(VSOMEIP_SD_DEFAULT_OFFER_DEBOUNCE_TIME), repetitions_base_delay_(VSOMEIP_SD_DEFAULT_REPETITIONS_BASE_DELAY),
     repetitions_max_(VSOMEIP_SD_DEFAULT_REPETITIONS_MAX), cyclic_offer_delay_(VSOMEIP_SD_DEFAULT_CYCLIC_OFFER_DELAY),
     offer_debounce_timer_(io_), find_initial_debounce_time_(VSOMEIP_SD_INITIAL_FIND_DEBOUNCE_TIME),
@@ -968,6 +970,9 @@ void service_discovery_impl::on_message(const byte_t* _data, length_t _length, c
 
             host_->expire_subscriptions(_sender);
             host_->expire_services(_sender);
+            // The teardown above leaves next_subscription_expiration_ on an entry it just removed,
+            // and the SubscribeEventgroup of this same datagram can only ever tighten that value.
+            refresh_subscription_expiration_timer();
             reboot_notification_handler_t its_reboot_notification_handler;
             {
                 std::scoped_lock its_lock(handlers_mutex_);
@@ -2356,8 +2361,8 @@ void service_discovery_impl::start_subscription_expiration_timer() {
 }
 
 void service_discovery_impl::start_subscription_expiration_timer_unlocked() {
-    subscription_expiration_timer_.expires_at(next_subscription_expiration_);
-    subscription_expiration_timer_.async_wait(
+    subscription_expiration_timer_->expires_at(next_subscription_expiration_);
+    subscription_expiration_timer_->async_wait(
             std::bind(&service_discovery_impl::expire_subscriptions, shared_from_this(), std::placeholders::_1));
 }
 
@@ -2367,13 +2372,19 @@ void service_discovery_impl::stop_subscription_expiration_timer() {
 }
 
 void service_discovery_impl::stop_subscription_expiration_timer_unlocked() {
-    subscription_expiration_timer_.cancel();
+    subscription_expiration_timer_->cancel();
+}
+
+void service_discovery_impl::refresh_subscription_expiration_timer() {
+    const std::chrono::steady_clock::time_point its_next = host_->expire_subscriptions(false);
+    std::scoped_lock its_lock(subscription_expiration_timer_mutex_);
+    next_subscription_expiration_ = its_next;
+    start_subscription_expiration_timer_unlocked();
 }
 
 void service_discovery_impl::expire_subscriptions(const boost::system::error_code& _error) {
     if (!_error) {
-        next_subscription_expiration_ = host_->expire_subscriptions(false);
-        start_subscription_expiration_timer();
+        refresh_subscription_expiration_timer();
     }
 }
 

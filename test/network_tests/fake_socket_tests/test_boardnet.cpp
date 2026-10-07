@@ -18,6 +18,8 @@
 #include "helpers/command_gate.hpp"
 #include "sample_interfaces.hpp"
 
+#include "common/timeout_scale.hpp"
+
 #include <boost/asio/error.hpp>
 #include <vsomeip/enumeration_types.hpp>
 #include <vsomeip/vsomeip.hpp>

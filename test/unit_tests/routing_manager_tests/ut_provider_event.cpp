@@ -42,6 +42,7 @@ struct fake_timer_state {
     uint32_t start_count_{0};
     uint32_t cancel_count_{0};
     std::optional<std::chrono::milliseconds> interval_;
+    std::optional<std::chrono::steady_clock::time_point> expiration_date_;
     abstract_timer::handler_t handler_;
 };
 
@@ -50,6 +51,7 @@ public:
     explicit fake_timer(std::shared_ptr<fake_timer_state> _state) : state_(std::move(_state)) { }
     void cancel() override { ++state_->cancel_count_; }
     void expires_after(std::chrono::milliseconds _timeout) override { state_->interval_ = _timeout; }
+    void expires_at(std::chrono::steady_clock::time_point _expiration) override { state_->expiration_date_ = _expiration; }
     void async_wait(handler_t _handler) override {
         state_->handler_ = std::move(_handler);
         ++state_->start_count_;

@@ -289,6 +289,47 @@ bool eventgroupinfo::update_remote_subscription(const std::shared_ptr<remote_sub
 
     if (its_subscriber) {
         {
+            std::scoped_lock its_lock(events_mutex_);
+            for (const auto& its_event : events_) {
+                its_events.insert(its_event);
+            }
+        }
+        for (const auto& its_event : its_events) {
+            its_event->remove_pending(its_subscriber);
+        }
+    }
+
+    return its_result;
+}
+
+bool eventgroupinfo::unsubscribe_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription,
+                                                     std::set<client_t>& _removed) {
+
+    if (_subscription == nullptr) {
+        VSOMEIP_ERROR_P << "Received ptr is null";
+        return false;
+    }
+
+    std::shared_ptr<endpoint_definition> its_subscriber;
+    std::set<std::shared_ptr<event>> its_events;
+
+    {
+        std::scoped_lock its_lock(subscriptions_mutex_);
+
+        const auto its_entry = subscriptions_.find(_subscription->get_id());
+        if (its_entry == subscriptions_.end() || its_entry->second != _subscription) {
+            return false;
+        }
+
+        _removed = _subscription->update(_subscription->get_clients(), std::chrono::steady_clock::now(), false);
+
+        if (_subscription->is_pending()) {
+            its_subscriber = _subscription->get_subscriber();
+        }
+    }
+
+    if (its_subscriber) {
+        {
             // Build set of events first to avoid having to
             // hold the "events_mutex_" in parallel to the internal event mutexes.
             std::scoped_lock its_lock(events_mutex_);
@@ -301,7 +342,7 @@ bool eventgroupinfo::update_remote_subscription(const std::shared_ptr<remote_sub
         }
     }
 
-    return its_result;
+    return true;
 }
 
 bool eventgroupinfo::is_remote_subscription_limit_reached(const std::shared_ptr<remote_subscription>& _subscription) {

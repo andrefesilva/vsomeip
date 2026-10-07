@@ -29,6 +29,7 @@ struct timer_state {
     uint32_t cancel_count_{0};
     uint32_t start_count_{0};
     std::optional<std::chrono::milliseconds> timeout_;
+    std::optional<std::chrono::steady_clock::time_point> expiration_date_;
     abstract_timer::handler_t handler_;
 };
 
@@ -38,6 +39,8 @@ public:
     virtual void cancel() override { ++state_->cancel_count_; }
 
     virtual void expires_after(std::chrono::milliseconds _timeout) override { state_->timeout_ = _timeout; }
+
+    virtual void expires_at(std::chrono::steady_clock::time_point _expiration) override { state_->expiration_date_ = _expiration; }
 
     virtual void async_wait(handler_t _handler) {
         state_->handler_ = std::move(_handler);
