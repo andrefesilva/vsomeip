@@ -148,7 +148,7 @@ public:
 
     // interface "service_discovery_host"
     versioned_services_t get_offered_services() const;
-    std::shared_ptr<serviceinfo> get_offered_service(service_t _service, instance_t _instance) const;
+    std::shared_ptr<serviceinfo> get_offered_service(service_t _service, instance_t _instance, major_version_t _major) const;
     std::vector<std::shared_ptr<serviceinfo>> get_offered_service_instances(service_t _service) const;
 
     std::shared_ptr<boardnet_endpoint> create_service_discovery_endpoint(const std::string& _address, uint16_t _port, bool _reliable);
@@ -244,11 +244,6 @@ public:
     // ANY_MAJOR-is-a-wildcard semantics) against any of them, not just whichever single major
     // find_service(..., ANY_MAJOR) happens to arbitrarily resolve to.
     std::map<major_version_t, std::shared_ptr<serviceinfo>> find_services(service_t _service, instance_t _instance) const;
-    // Returns the serviceinfo this host itself offers for (service, instance), regardless of
-    // major version -- unlike find_service(..., ANY_MAJOR), never returns an entry that only
-    // exists because a *different* host announced a different major of the same
-    // (service, instance) via SD.
-    std::shared_ptr<serviceinfo> find_local_service(service_t _service, instance_t _instance) const;
     bool offer_service_base(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
     std::shared_ptr<serviceinfo> create_service_info(service_t _service, instance_t _instance, major_version_t _major,
                                                      minor_version_t _minor, ttl_t _ttl, bool _is_local_service);
@@ -364,7 +359,7 @@ private:
     void send_unsubscription(const std::shared_ptr<eventgroupinfo>& _info, const std::set<client_t>& _removed,
                              const remote_subscription_id_t _id);
 
-    void send_expired_subscription(client_t _offering_client, const service_t _service, const instance_t _instance,
+    void send_expired_subscription(client_t _offering_client, const service_t _service, const instance_t _instance, major_version_t _major,
                                    const eventgroup_t _eventgroup, const std::set<client_t>& _removed, const remote_subscription_id_t _id);
 
     void cleanup_server_endpoint(service_t _service, const std::shared_ptr<boardnet_endpoint>& _endpoint);
@@ -377,7 +372,7 @@ private:
 
     bool get_guest(client_t _client, boost::asio::ip::address& _address, port_t& _port) const;
 
-    bool is_acl_message_allowed(boardnet_endpoint* _receiver, service_t _service, instance_t _instance,
+    bool is_acl_message_allowed(boardnet_endpoint* _receiver, service_t _service, instance_t _instance, major_version_t _major,
                                 const boost::asio::ip::address& _remote_address) const;
 
     bool has_subscribed_eventgroup(service_t _service, instance_t _instance, major_version_t _major) const;

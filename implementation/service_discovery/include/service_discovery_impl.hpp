@@ -162,7 +162,8 @@ private:
     bool serialize_and_send(const std::vector<std::shared_ptr<message_impl>>& _messages, const boost::asio::ip::address& _address);
     bool serialize_and_send(const std::shared_ptr<message_impl>& _message, const boost::asio::ip::address& _address);
 
-    bool is_tcp_connected(service_t _service, instance_t _instance, const std::shared_ptr<endpoint_definition>& its_endpoint);
+    bool is_tcp_connected(service_t _service, instance_t _instance, major_version_t _major,
+                          const std::shared_ptr<endpoint_definition>& its_endpoint);
 
     void start_ttl_timer(int _shift = 0);
     void stop_ttl_timer();

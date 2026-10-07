@@ -768,13 +768,13 @@ void routing_manager_stub::inform_requesters(client_t _hoster, service_t _servic
     }
 }
 
-void routing_manager_stub::send_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup,
-                                              event_t _event) {
+void routing_manager_stub::send_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                              eventgroup_t _eventgroup, event_t _event) {
 
     if (auto its_target = find_local_routing_endpoint(_client); its_target) {
         its_target->send(protocol::create_subscribe_ack_cmd(
                 VSOMEIP_ROUTING_CLIENT,
-                protocol::subscribe_answer_data{.service_key_ = {.service = _service, .instance = _instance, .major = ANY_MAJOR},
+                protocol::subscribe_answer_data{.service_key_ = {.service = _service, .instance = _instance, .major = _major},
                                                 .eventgroup_ = _eventgroup,
                                                 .subscriber_ = _client,
                                                 .event_ = _event,

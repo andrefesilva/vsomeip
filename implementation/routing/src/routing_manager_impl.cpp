@@ -636,7 +636,7 @@ bool routing_manager_impl::send(client_t _client, const byte_t* _data, length_t 
         its_target_client = its_client;
         if (its_local_target
             && (utility::is_response(_data[VSOMEIP_MESSAGE_TYPE_POS]) || utility::is_error(_data[VSOMEIP_MESSAGE_TYPE_POS]))) {
-            if (std::shared_ptr<serviceinfo> its_info = find_service(its_service, _instance, ANY_MAJOR);
+            if (std::shared_ptr<serviceinfo> its_info = find_service(its_service, _instance, its_major);
                 (!its_info || !its_info->is_local()) && !is_requester(its_client, its_service, _instance)) {
                 const session_t its_session = bithelper::read_uint16_be(&_data[VSOMEIP_SESSION_POS_MIN]);
                 VSOMEIP_WARNING_P << "Dropping response/error for client (" << hex4(its_client)
@@ -1126,7 +1126,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
         if (discovery_ && its_method == sd::method) {
             if (configuration_->get_sd_port() == _remote_port) {
                 // ACL check SD message
-                if (!is_acl_message_allowed(_receiver, its_service, ANY_INSTANCE, _remote_address)) {
+                if (!is_acl_message_allowed(_receiver, its_service, ANY_INSTANCE, ANY_MAJOR, _remote_address)) {
                     VSOMEIP_WARNING_P << "Dropped SD message due to ACL from " << message_str();
                     return;
                 }
@@ -1201,7 +1201,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
         }
 
         // ACL check message
-        if (!is_acl_message_allowed(_receiver, its_service, its_instance, _remote_address)) {
+        if (!is_acl_message_allowed(_receiver, its_service, its_instance, its_major, _remote_address)) {
             VSOMEIP_WARNING_P << "Dropped message due to ACL from " << message_str();
             return;
         }
@@ -1552,11 +1552,10 @@ versioned_services_t routing_manager_impl::get_offered_services() const {
     return its_services;
 }
 
-std::shared_ptr<serviceinfo> routing_manager_impl::get_offered_service(service_t _service, instance_t _instance) const {
-    // find_local_service(), not find_service(..., ANY_MAJOR): on a host that also knows a
-    // remotely-offered major of the same (service, instance), ANY_MAJOR could arbitrarily pick
-    // that remote entry instead of the local one, wrongly appearing to not offer the service.
-    return find_local_service(_service, _instance);
+std::shared_ptr<serviceinfo> routing_manager_impl::get_offered_service(service_t _service, instance_t _instance,
+                                                                       major_version_t _major) const {
+    auto its_info = find_service(_service, _instance, _major);
+    return its_info && its_info->is_local() ? its_info : nullptr;
 }
 
 std::vector<std::shared_ptr<serviceinfo>> routing_manager_impl::get_offered_service_instances(service_t _service) const {
@@ -1576,11 +1575,10 @@ std::vector<std::shared_ptr<serviceinfo>> routing_manager_impl::get_offered_serv
 }
 
 bool routing_manager_impl::is_acl_message_allowed(boardnet_endpoint* _receiver, service_t _service, instance_t _instance,
-                                                  const boost::asio::ip::address& _remote_address) const {
+                                                  major_version_t _major, const boost::asio::ip::address& _remote_address) const {
     if (message_acceptance_handler_ && _receiver) {
         // Check the ACL whitelist rules if shall accepts the message
-        // TODO major version
-        std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance, ANY_MAJOR));
+        std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance, _major));
         const bool is_local = its_info && its_info->is_local();
 
         message_acceptance_t message_acceptance{_remote_address.to_v4().to_uint(), _receiver->get_local_port(), is_local, _service,
@@ -1708,9 +1706,7 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
         }
 
         its_info = create_service_info(_service, _instance, _major, _minor, _ttl, is_local);
-        // init_service_info() looks up its own entry via find_local_service(), so it can only
-        // do anything useful (and only needs to be called) for a service we're offering
-        // ourselves; a purely remote entry has nothing for it to find or set up.
+        // init_service_info() only creates server endpoints, which a purely remote entry does not have.
         if (is_local) {
             init_service_info(_service, _instance, _major, is_local);
         }
@@ -2258,7 +2254,7 @@ void routing_manager_impl::on_subscribe_ack(client_t _client, service_t _service
         }
 
         for (const auto& its_subscriber : subscribed_clients) {
-            stub_->send_subscribe_ack(its_subscriber, _service, _instance, _eventgroup, _event);
+            stub_->send_subscribe_ack(its_subscriber, _service, _instance, _major, _eventgroup, _event);
         }
     }
 }
@@ -2417,6 +2413,7 @@ void routing_manager_impl::remove_expired_subscription(const std::shared_ptr<rem
     const auto its_service = its_info->get_service();
     const auto its_instance = its_info->get_instance();
     const auto its_eventgroup = its_info->get_eventgroup();
+    const auto its_major = its_info->get_major();
 
     _subscription->set_expired();
 
@@ -2426,7 +2423,7 @@ void routing_manager_impl::remove_expired_subscription(const std::shared_ptr<rem
         return;
     }
 
-    const client_t its_offering_client = find_local_provider(its_service, its_instance, its_info->get_major());
+    const client_t its_offering_client = find_local_provider(its_service, its_instance, its_major);
     its_info->remove_remote_subscription(_subscription->get_id());
 
     if (its_info->get_remote_subscriptions().size() == 0) {
@@ -2448,7 +2445,8 @@ void routing_manager_impl::remove_expired_subscription(const std::shared_ptr<rem
         }
     }
 
-    send_expired_subscription(its_offering_client, its_service, its_instance, its_eventgroup, its_removed, _subscription->get_id());
+    send_expired_subscription(its_offering_client, its_service, its_instance, its_major, its_eventgroup, its_removed,
+                              _subscription->get_id());
 }
 
 std::chrono::steady_clock::time_point routing_manager_impl::expire_subscriptions(bool _force) {
@@ -3419,7 +3417,7 @@ void routing_manager_impl::handle_subscription_state(client_t _client, service_t
     if (its_state != remote_subscription_state_.end()) {
         if (its_state->second == subscription_state_e::SUBSCRIPTION_ACKNOWLEDGED) {
             // Subscription already acknowledged!
-            stub_->send_subscribe_ack(_client, _service, _instance, _eventgroup, _event);
+            stub_->send_subscribe_ack(_client, _service, _instance, _major, _eventgroup, _event);
         }
     }
 }
@@ -3687,7 +3685,7 @@ void routing_manager_impl::service_endpoint_disconnected(service_t _service, ins
 }
 
 void routing_manager_impl::send_unsubscription(const std::shared_ptr<eventgroupinfo>& _info, const std::set<client_t>& _removed,
-                                               remote_subscription_id_t _id) {
+                                               const remote_subscription_id_t _id) {
 
     const auto its_service = _info->get_service();
     const auto its_instance = _info->get_instance();
@@ -3703,7 +3701,7 @@ void routing_manager_impl::send_unsubscription(const std::shared_ptr<eventgroupi
     for (const auto its_client : _removed) {
         if (!target->send(protocol::create_unsubscribe_cmd(
                     its_client,
-                    protocol::subscribe_data{.service_key_ = {.service = its_service, .instance = its_instance, .major = ANY_MAJOR},
+                    protocol::subscribe_data{.service_key_ = {.service = its_service, .instance = its_instance, .major = its_major},
                                              .eventgroup_ = its_eventgroup,
                                              .event_ = ANY_EVENT,
                                              .pending_id_ = _id}))) {
@@ -3722,7 +3720,7 @@ void routing_manager_impl::send_unsubscription(const std::shared_ptr<eventgroupi
 }
 
 void routing_manager_impl::send_expired_subscription(client_t _offering_client, service_t _service, instance_t _instance,
-                                                     eventgroup_t _eventgroup, const std::set<client_t>& _removed,
+                                                     major_version_t _major, eventgroup_t _eventgroup, const std::set<client_t>& _removed,
                                                      remote_subscription_id_t _id) {
 
     {
@@ -3730,7 +3728,7 @@ void routing_manager_impl::send_expired_subscription(client_t _offering_client, 
             if (auto target = find_routing_endpoint(_offering_client); !target
                 || !target->send(protocol::create_expire_cmd(
                         its_client,
-                        protocol::subscribe_data{.service_key_ = {.service = _service, .instance = _instance, .major = ANY_MAJOR},
+                        protocol::subscribe_data{.service_key_ = {.service = _service, .instance = _instance, .major = _major},
                                                  .eventgroup_ = _eventgroup,
                                                  .event_ = ANY_EVENT,
                                                  .pending_id_ = _id}))) {
@@ -4019,22 +4017,6 @@ std::map<major_version_t, std::shared_ptr<serviceinfo>> routing_manager_impl::fi
         }
     }
     return {};
-}
-
-std::shared_ptr<serviceinfo> routing_manager_impl::find_local_service(service_t _service, instance_t _instance) const {
-    std::scoped_lock its_lock(services_mutex_);
-    auto found_service = services_.find(_service);
-    if (found_service != services_.end()) {
-        auto found_instance = found_service->second.find(_instance);
-        if (found_instance != found_service->second.end()) {
-            for (auto const& [major, info] : found_instance->second) {
-                if (info && info->is_local()) {
-                    return info;
-                }
-            }
-        }
-    }
-    return nullptr;
 }
 
 versioned_services_t routing_manager_impl::get_services() const {

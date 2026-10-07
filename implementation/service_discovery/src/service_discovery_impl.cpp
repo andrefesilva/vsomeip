@@ -1153,8 +1153,7 @@ void service_discovery_impl::check_sent_offers(const message_impl::entries_t& _e
             auto its_instance = (*iter)->get_instance();
             if ((*iter)->get_ttl() > 0) {
                 // Offer service.
-                // TODO major version
-                std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(its_service, its_instance);
+                std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(its_service, its_instance, (*iter)->get_major_version());
                 if (its_info) {
                     offers_received_++;
                 }
@@ -2038,8 +2037,7 @@ void service_discovery_impl::handle_eventgroup_subscription(
     }
 
     if (_ttl > 0) {
-        // TODO major version
-        std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(_service, _instance);
+        std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(_service, _instance, _major);
         bool send_nack = false;
         if (!its_info) {
             VSOMEIP_ERROR_P << "SubNack for " << dump_entry() << " due to unknown service";
@@ -2077,7 +2075,7 @@ void service_discovery_impl::handle_eventgroup_subscription(
             if (_is_first_reliable) { // tcp unicast
                 its_reliable = its_subscriber;
                 // check if TCP connection is established by client
-                if (_ttl > 0 && !is_tcp_connected(_service, _instance, its_reliable)) {
+                if (_ttl > 0 && !is_tcp_connected(_service, _instance, _major, its_reliable)) {
                     insert_subscription_ack(_acknowledgement, _info, 0, nullptr, _clients);
                     VSOMEIP_ERROR_P << "SubNack for " << dump_entry() << " due to missing TCP connection to "
                                     << its_reliable->get_address().to_string() << ":" << its_reliable->get_port();
@@ -2093,7 +2091,7 @@ void service_discovery_impl::handle_eventgroup_subscription(
             if (_is_second_reliable) { // tcp unicast
                 its_reliable = its_subscriber;
                 // check if TCP connection is established by client
-                if (_ttl > 0 && !is_tcp_connected(_service, _instance, its_reliable)) {
+                if (_ttl > 0 && !is_tcp_connected(_service, _instance, _major, its_reliable)) {
                     insert_subscription_ack(_acknowledgement, _info, 0, nullptr, _clients);
                     VSOMEIP_ERROR_P << "SubNack for " << dump_entry() << " due to missing TCP connection to "
                                     << its_reliable->get_address().to_string() << ":" << its_reliable->get_port();
@@ -2193,11 +2191,10 @@ void service_discovery_impl::handle_eventgroup_subscription_ack(service_t _servi
     }
 }
 
-bool service_discovery_impl::is_tcp_connected(service_t _service, instance_t _instance,
+bool service_discovery_impl::is_tcp_connected(service_t _service, instance_t _instance, major_version_t _major,
                                               const std::shared_ptr<endpoint_definition>& its_endpoint) {
     bool is_connected = false;
-    // TODO major version
-    std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(_service, _instance);
+    std::shared_ptr<serviceinfo> its_info = host_->get_offered_service(_service, _instance, _major);
     if (its_info) {
         // get reliable server endpoint
         auto its_reliable_server_endpoint = std::dynamic_pointer_cast<tcp_server_endpoint_impl>(its_info->get_endpoint(true));
