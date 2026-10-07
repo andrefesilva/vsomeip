@@ -328,8 +328,6 @@ private:
     void init_pending_services();
 
     void add_requested_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
-    void remove_requested_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                  minor_version_t _minor);
 
     bool has_requester(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
     bool has_requester_unlocked(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
