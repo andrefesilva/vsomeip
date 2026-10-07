@@ -5,14 +5,10 @@
 
 #pragma once
 
-#include <memory>
-
 #include <boost/asio/ip/address.hpp>
 
 #include <vsomeip/primitive_types.hpp>
 #include <vsomeip/vsomeip_sec.h>
-
-#include "internal.hpp"
 
 namespace vsomeip_v3 {
 

@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include <list>
 #include <map>
 #include <memory>
 #include <mutex>

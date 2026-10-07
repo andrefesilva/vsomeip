@@ -7,7 +7,6 @@
 
 #include "../../configuration/include/debounce_filter_impl.hpp"
 #include "../../endpoints/include/abstract_socket_factory.hpp"
-#include "../../endpoints/include/abstract_clock.hpp"
 
 #include <vsomeip/function_types.hpp>
 #include <vsomeip/payload.hpp>

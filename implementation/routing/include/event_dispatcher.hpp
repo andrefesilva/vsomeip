@@ -5,7 +5,14 @@
 
 #pragma once
 
+#include <memory>
+
+#include <vsomeip/primitive_types.hpp>
+
 namespace vsomeip_v3 {
+
+class endpoint_definition;
+class message;
 
 class event_dispatcher {
 public:

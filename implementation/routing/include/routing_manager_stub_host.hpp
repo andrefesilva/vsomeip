@@ -10,7 +10,6 @@
 #include <vsomeip/primitive_types.hpp>
 #include <vsomeip/vsomeip_sec.h>
 #include "types.hpp"
-#include "../../protocol/include/command_types.hpp"
 
 #include <memory>
 

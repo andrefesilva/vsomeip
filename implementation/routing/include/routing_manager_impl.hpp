@@ -11,7 +11,6 @@
 #include <mutex>
 #include <queue>
 #include <vector>
-#include <list>
 #include <unordered_set>
 #include <unordered_map>
 #include <boost/functional/hash.hpp>
@@ -31,7 +30,6 @@
 #include "event.hpp"
 #include "types.hpp"
 #include "event_dispatcher.hpp"
-#include "local_service_table.hpp"
 #include "local_offering_table.hpp"
 #include "serviceinfo.hpp"
 

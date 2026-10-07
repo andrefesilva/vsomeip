@@ -13,16 +13,11 @@
 #include <span>
 #include <tuple>
 #include <vector>
-#include <condition_variable>
-#include <functional>
-#include <queue>
-#include <unordered_set>
 
 #include <vsomeip/constants.hpp>
 #include <vsomeip/vsomeip_sec.h>
 
 #include "event.hpp"
-#include "serviceinfo.hpp"
 #include "routing_host.hpp"
 #include "eventgroupinfo.hpp"
 #include "routing_manager_host.hpp"
@@ -39,7 +34,6 @@
 #include "event_dispatcher.hpp"
 #include "provider_event.hpp"
 #include "types.hpp"
-#include "../../protocol/include/protocol.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../endpoints/include/local_endpoint_manager_host.hpp"
 #include "../../utility/include/service_instance_map.hpp"
