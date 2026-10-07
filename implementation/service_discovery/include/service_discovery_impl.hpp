@@ -19,6 +19,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "../../configuration/include/configuration.hpp"
+#include "../../endpoints/include/abstract_timer.hpp"
 #include "../../endpoints/include/endpoint_definition.hpp"
 #include "../../routing/include/types.hpp"
 #include "../../routing/include/remote_subscription.hpp"
@@ -172,6 +173,7 @@ private:
     void start_subscription_expiration_timer_unlocked();
     void stop_subscription_expiration_timer();
     void stop_subscription_expiration_timer_unlocked();
+    void refresh_subscription_expiration_timer();
     void expire_subscriptions(const boost::system::error_code& _error);
 
     bool check_ipv4_address(const boost::asio::ip::address& its_address, const boost::asio::ip::address& _sender) const;
@@ -318,7 +320,7 @@ private:
 
     // TTL handling for subscriptions done by other hosts
     std::mutex subscription_expiration_timer_mutex_;
-    boost::asio::steady_timer subscription_expiration_timer_;
+    std::unique_ptr<abstract_timer> subscription_expiration_timer_;
     std::chrono::steady_clock::time_point next_subscription_expiration_;
 
     // RNG + SD parameters

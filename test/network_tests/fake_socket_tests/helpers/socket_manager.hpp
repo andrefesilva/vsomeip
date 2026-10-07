@@ -560,6 +560,17 @@ public:
     void allow_ip_address_to_external(boost::asio::ip::address _ip, bool _allow);
 
     /**
+     * Called by a spin_detecting_timer of @param _io that keeps firing back to back.
+     */
+    void report_spinning_timer(boost::asio::io_context* _io);
+
+    /**
+     * Applications report_spinning_timer() was called for. Checked for every fake socket test by
+     * base_fake_socket_fixture::TearDown().
+     */
+    [[nodiscard]] std::set<std::string> spinning_timer_apps() const;
+
+    /**
      * Returns and removes from stashed_netconn_states_ the state for the netlink connector
      * saved for the provided io context
      */
@@ -692,5 +703,6 @@ private:
     std::set<port_t> fail_on_tcp_port_bind_;
     std::set<std::string> ignore_broken_pipe_;
     std::set<std::string> ignore_all_multicast_joins_;
+    std::set<std::string> spinning_timer_apps_;
 };
 }

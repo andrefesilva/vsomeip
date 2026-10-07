@@ -1356,6 +1356,19 @@ void socket_manager::allow_ip_address_to_external(boost::asio::ip::address _ip, 
     }
 }
 
+void socket_manager::report_spinning_timer(boost::asio::io_context* _io) {
+    std::scoped_lock lck(mtx_);
+    auto const its_name = context_to_name_.find(_io);
+    std::string const its_app = its_name != context_to_name_.end() ? its_name->second : "an unidentified application";
+    LOCAL_LOG << "[ERROR] " << its_app << " keeps re-arming a timer at a deadline that had already passed";
+    spinning_timer_apps_.insert(its_app);
+}
+
+std::set<std::string> socket_manager::spinning_timer_apps() const {
+    std::scoped_lock lck(mtx_);
+    return spinning_timer_apps_;
+}
+
 std::optional<fake_netlink_connector::state_e> socket_manager::extract_state(boost::asio::io_context* _io) {
     std::scoped_lock lck(mtx_);
     if (auto client = context_to_name_.find(_io); client != context_to_name_.end()) {

@@ -22,6 +22,7 @@
 #include "../../../../implementation/service_discovery/include/deserializer.hpp"
 #include "../../../../implementation/service_discovery/include/eventgroupentry_impl.hpp"
 #include "../../../../implementation/service_discovery/include/ipv4_option_impl.hpp"
+#include "../../../../implementation/service_discovery/include/selective_option_impl.hpp"
 #include "../../../../implementation/service_discovery/include/serviceentry_impl.hpp"
 #include "../../../../implementation/utility/include/utility.hpp"
 
@@ -97,12 +98,13 @@ namespace vsomeip_v3::testing {
     return sd_message;
 }
 
-std::vector<unsigned char> construct_subscription(event_ids const& _subscription, boost::asio::ip::address _address, uint16_t _port) {
-    return construct_subscription(std::vector<event_ids>{_subscription}, _address, _port);
+std::vector<unsigned char> construct_subscription(event_ids const& _subscription, boost::asio::ip::address _address, uint16_t _port,
+                                                  subscription_options const& _options) {
+    return construct_subscription(std::vector<event_ids>{_subscription}, _address, _port, _options);
 }
 
 std::vector<unsigned char> construct_subscription(std::vector<event_ids> const& _subscriptions, boost::asio::ip::address _address,
-                                                  uint16_t _port) {
+                                                  uint16_t _port, subscription_options const& _options) {
     auto its_current_message = std::make_shared<vsomeip_v3::sd::message_impl>();
 
     for (auto const& its_subscription : _subscriptions) {
@@ -111,14 +113,25 @@ std::vector<unsigned char> construct_subscription(std::vector<event_ids> const& 
         its_entry->set_service(its_subscription.si_.service_);
         its_entry->set_instance(its_subscription.si_.instance_);
         its_entry->set_eventgroup(its_subscription.eventgroup_id_);
-        its_entry->set_major_version(its_subscription.si_.major_);
-        its_entry->set_ttl(0x03);
+        its_entry->set_major_version(_options.major_.value_or(its_subscription.si_.major_));
+        its_entry->set_ttl(_options.ttl_);
 
-        std::vector<std::shared_ptr<vsomeip_v3::sd::option_impl>> options_{
-                std::make_shared<vsomeip_v3::sd::ipv4_option_impl>(_address, _port, false)};
+        std::vector<std::shared_ptr<vsomeip_v3::sd::option_impl>> options_{std::make_shared<vsomeip_v3::sd::ipv4_option_impl>(
+                _address, _port, its_subscription.reliability_ == vsomeip::reliability_type_e::RT_RELIABLE)};
+
+        if (!_options.selective_clients_.empty()) {
+            auto its_selective_option = std::make_shared<vsomeip_v3::sd::selective_option_impl>();
+            its_selective_option->set_clients(_options.selective_clients_);
+            options_.push_back(its_selective_option);
+        }
 
         its_current_message->add_entry_data(std::static_pointer_cast<vsomeip_v3::sd::entry_impl>(its_entry), options_);
     }
+
+    if (_options.session_) {
+        its_current_message->set_session(*_options.session_);
+    }
+    its_current_message->set_reboot_flag(_options.reboot_flag_);
 
     vsomeip_v3::serializer serializer{VSOMEIP_DEFAULT_BUFFER_SHRINK_THRESHOLD};
     serializer.serialize(its_current_message.get());

@@ -281,6 +281,16 @@ private:
     // Assumes mutex_ is already held by the caller, passed via `_lock`
     void set_routing_state_internal(std::unique_lock<std::mutex>& _lock, routing_state_internal_e _routing_state);
 
+    // The unsubscribe counterpart of on_remote_unsubscribe() for a _subscription this process
+    // already holds, e.g. because the connection carrying it went down. Does nothing when it is no
+    // longer one of the stored subscriptions.
+    void unsubscribe_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription);
+
+    // Takes _subscription itself down: its clients, the entry, and the shadow payloads it was the
+    // last remote subscriber of. Does nothing when it is no longer one of the stored subscriptions.
+    // The caller must hold update_remote_subscription_mutex_ and does its own logging.
+    void remove_expired_subscription(const std::shared_ptr<remote_subscription>& _subscription);
+
     bool is_locally_available(service_t _service, instance_t _instance, major_version_t _major) const;
 
     [[nodiscard]] bool is_local_client(client_t _client) const;
@@ -351,8 +361,7 @@ private:
                            const eventgroup_t _eventgroup, const major_version_t _major, const std::set<client_t>& _clients,
                            const remote_subscription_id_t _id);
 
-    void send_unsubscription(client_t _offering_client, const service_t _service, const instance_t _instance,
-                             const eventgroup_t _eventgroup, const major_version_t _major, const std::set<client_t>& _removed,
+    void send_unsubscription(const std::shared_ptr<eventgroupinfo>& _info, const std::set<client_t>& _removed,
                              const remote_subscription_id_t _id);
 
     void send_expired_subscription(client_t _offering_client, const service_t _service, const instance_t _instance,

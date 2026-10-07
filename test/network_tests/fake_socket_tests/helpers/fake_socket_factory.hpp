@@ -15,7 +15,51 @@
 #include "sockets/fake_udp_socket.hpp"
 #include "socket_manager.hpp"
 
+#include <atomic>
+
 namespace vsomeip_v3::testing {
+
+/// Forwards to a real asio_timer, and reports a timer re-armed twice in a row, each time right
+/// after it expired, at a deadline earlier than that expiry: a working handler always schedules
+/// something later, so such a timer fires back to back. @see socket_manager::spinning_timer_apps()
+class spin_detecting_timer : public abstract_timer {
+public:
+    spin_detecting_timer(std::weak_ptr<socket_manager> _sm, boost::asio::io_context& _io) :
+        socket_manager_(std::move(_sm)), io_(&_io), timer_(std::make_unique<asio_timer>(_io)) { }
+
+private:
+    void cancel() override { timer_->cancel(); }
+
+    void expires_after(std::chrono::milliseconds _timeout) override { timer_->expires_after(_timeout); }
+
+    void expires_at(std::chrono::steady_clock::time_point _expiration) override {
+        auto const its_expiry = expired_at_->exchange({});
+        stale_arms_ = its_expiry != std::chrono::steady_clock::time_point{} && _expiration < its_expiry ? stale_arms_ + 1 : 0;
+        if (stale_arms_ == 2) {
+            if (auto sm = socket_manager_.lock()) {
+                sm->report_spinning_timer(io_);
+            }
+        }
+        timer_->expires_at(_expiration);
+    }
+
+    void async_wait(handler_t _handler) override {
+        timer_->async_wait([expired_at = expired_at_, handler = std::move(_handler)](boost::system::error_code _error) {
+            if (!_error) {
+                expired_at->store(std::chrono::steady_clock::now());
+            }
+            handler(_error);
+        });
+    }
+
+    std::weak_ptr<socket_manager> socket_manager_;
+    boost::asio::io_context* io_;
+    std::unique_ptr<abstract_timer> timer_;
+    std::shared_ptr<std::atomic<std::chrono::steady_clock::time_point>> expired_at_{
+            std::make_shared<std::atomic<std::chrono::steady_clock::time_point>>()};
+    size_t stale_arms_{0};
+};
+
 /**
  * Fake impl of the abstract_socket_factory, that will register each
  * created fake_socket_handle (that is owned by the fake_socket) with the
@@ -75,7 +119,7 @@ private:
 
     std::unique_ptr<abstract_timer> create_timer(boost::asio::io_context& _io) override {
         // do not tinker with timeouts in network tests for now
-        return std::make_unique<asio_timer>(_io);
+        return std::make_unique<spin_detecting_timer>(socket_manager_, _io);
     }
 
     std::shared_ptr<abstract_clock> get_clock() override { return clock_; }

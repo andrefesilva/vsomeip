@@ -77,9 +77,16 @@ public:
 
     std::shared_ptr<remote_subscription> get_remote_subscription(const remote_subscription_id_t _id);
 
+    // For a _subscription the caller built from a SubscribeEventgroup/StopSubscribe entry that
+    // arrived: it is not one of the stored subscriptions, so the stored one it stands for is the
+    // first that equals() it.
     bool update_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription,
                                     const std::chrono::steady_clock::time_point& _expiration, std::set<client_t>& _changed,
                                     remote_subscription_id_t& _id, const bool _is_subscribe);
+
+    // For a _subscription the caller already holds: removes its clients, reports them in _removed,
+    // and leaves the entry itself to remove_remote_subscription().
+    bool unsubscribe_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription, std::set<client_t>& _removed);
 
     bool is_remote_subscription_limit_reached(const std::shared_ptr<remote_subscription>& _subscription);
 
