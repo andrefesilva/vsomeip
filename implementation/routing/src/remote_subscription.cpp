@@ -9,8 +9,8 @@
 
 namespace vsomeip_v3 {
 
-remote_subscription::remote_subscription() :
-    id_(PENDING_SUBSCRIPTION_ID), is_initial_(true), force_initial_events_(false), ttl_(DEFAULT_TTL), reserved_(0), counter_(0),
+remote_subscription::remote_subscription(const std::shared_ptr<eventgroupinfo>& _info, bool _force_initial_events, ttl_t _ttl) :
+    eventgroupinfo_(_info), force_initial_events_(_force_initial_events), ttl_(_ttl), id_(PENDING_SUBSCRIPTION_ID), is_initial_(true),
     answers_(1), final_destination_{destiny::none} { }
 
 remote_subscription::~remote_subscription() { }
@@ -56,10 +56,6 @@ bool remote_subscription::force_initial_events() const {
     return force_initial_events_;
 }
 
-void remote_subscription::set_force_initial_events(const bool _force_initial_events) {
-    force_initial_events_ = _force_initial_events;
-}
-
 remote_subscription_id_t remote_subscription::get_id() const {
     return id_;
 }
@@ -72,32 +68,8 @@ std::shared_ptr<eventgroupinfo> remote_subscription::get_eventgroupinfo() const 
     return eventgroupinfo_.lock();
 }
 
-void remote_subscription::set_eventgroupinfo(const std::shared_ptr<eventgroupinfo>& _info) {
-    eventgroupinfo_ = _info;
-}
-
 ttl_t remote_subscription::get_ttl() const {
     return ttl_;
-}
-
-void remote_subscription::set_ttl(const ttl_t _ttl) {
-    ttl_ = _ttl;
-}
-
-uint16_t remote_subscription::get_reserved() const {
-    return reserved_;
-}
-
-void remote_subscription::set_reserved(const uint16_t _reserved) {
-    reserved_ = _reserved;
-}
-
-uint8_t remote_subscription::get_counter() const {
-    return counter_;
-}
-
-void remote_subscription::set_counter(uint8_t _counter) {
-    counter_ = _counter;
 }
 
 std::set<client_t> remote_subscription::get_clients() const {
@@ -184,16 +156,6 @@ bool remote_subscription::is_pending() const {
         }
     }
     return false;
-}
-
-bool remote_subscription::is_acknowledged() const {
-    std::scoped_lock its_lock(mutex_);
-    for (auto its_client : clients_) {
-        if (its_client.second.first != remote_subscription_state_e::SUBSCRIPTION_ACKED) {
-            return false;
-        }
-    }
-    return true;
 }
 
 std::chrono::steady_clock::time_point remote_subscription::get_expiration(const client_t _client) const {

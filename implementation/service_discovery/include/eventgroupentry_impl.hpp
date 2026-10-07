@@ -23,12 +23,6 @@ public:
     eventgroup_t get_eventgroup() const;
     void set_eventgroup(eventgroup_t _eventgroup);
 
-    uint16_t get_reserved() const;
-    void set_reserved(uint16_t _reserved);
-
-    uint8_t get_counter() const;
-    void set_counter(uint8_t _counter);
-
     bool serialize(vsomeip_v3::serializer* _to) const;
     bool deserialize(vsomeip_v3::deserializer* _from);
 

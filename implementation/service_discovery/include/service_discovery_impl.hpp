@@ -234,7 +234,6 @@ private:
     configuration::ttl_factor_t get_ttl_factor(service_t _service, instance_t _instance, const configuration::ttl_map_t& _ttl_map) const;
 
     reliability_type_e get_remote_offer_type(service_t _service, instance_t _instance) const;
-    reliability_type_e get_remote_offer_type(const std::shared_ptr<subscription>& _subscription) const;
 
     bool update_remote_offer_type(service_t _service, instance_t _instance, reliability_type_e _offer_type,
                                   const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,

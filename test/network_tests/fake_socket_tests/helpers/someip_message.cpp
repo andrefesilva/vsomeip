@@ -111,7 +111,6 @@ std::vector<unsigned char> construct_subscription(std::vector<event_ids> const& 
         its_entry->set_service(its_subscription.si_.service_);
         its_entry->set_instance(its_subscription.si_.instance_);
         its_entry->set_eventgroup(its_subscription.eventgroup_id_);
-        its_entry->set_counter(0);
         its_entry->set_major_version(its_subscription.si_.major_);
         its_entry->set_ttl(0x03);
 
