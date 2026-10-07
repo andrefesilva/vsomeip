@@ -3,10 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#include <iomanip>
-
 #include "../include/routing_client_state_machine.hpp"
-#include "../../utility/include/is_value.hpp"
 #include "../../utility/include/utility.hpp"
 #include "logger_ext.hpp"
 

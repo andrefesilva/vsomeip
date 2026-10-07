@@ -5,9 +5,7 @@
 
 #include <atomic>
 #include <chrono>
-#include <iomanip>
 #include <sstream>
-#include <thread>
 
 #include <vsomeip/constants.hpp>
 #include <vsomeip/defines.hpp>

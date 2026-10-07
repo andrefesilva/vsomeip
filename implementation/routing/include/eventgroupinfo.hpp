@@ -7,11 +7,9 @@
 
 #include <atomic>
 #include <chrono>
-#include <list>
 #include <memory>
 #include <mutex>
 #include <set>
-#include <vector>
 
 #include <boost/asio/ip/address.hpp>
 

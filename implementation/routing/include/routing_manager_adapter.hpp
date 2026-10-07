@@ -6,6 +6,8 @@
 #ifndef VSOMEIP_V3_ROUTING_MANAGER_ADAPTER_
 #define VSOMEIP_V3_ROUTING_MANAGER_ADAPTER_
 
+#include <vsomeip/primitive_types.hpp>
+
 namespace vsomeip_v3 {
 
 class routing_manager;

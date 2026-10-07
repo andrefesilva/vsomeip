@@ -5,11 +5,9 @@
 
 #include "vsomeip/defines.hpp"
 #include <climits>
-#include <iomanip>
 #include <memory>
 #include <sstream>
 #include <forward_list>
-#include <thread>
 #include <vsomeip/primitive_types.hpp>
 
 #if defined(__linux__) || defined(__QNX__)
@@ -36,14 +34,11 @@
 #include "../../configuration/include/configuration.hpp"
 #include "../../endpoints/include/endpoint_definition.hpp"
 #include "../../endpoints/include/tcp_client_endpoint_impl.hpp"
-#include "../../endpoints/include/tcp_server_endpoint_impl.hpp"
 #include "../../endpoints/include/udp_client_endpoint_impl.hpp"
 #include "../../endpoints/include/udp_server_endpoint_impl.hpp"
 #include "../../endpoints/include/abstract_socket_factory.hpp"
-#include "../../endpoints/include/virtual_server_endpoint_impl.hpp"
 #include "../../message/include/message_impl.hpp"
 #include "../../message/include/serializer.hpp"
-#include "../../plugin/include/plugin_manager_impl.hpp"
 #include "../../protocol/include/protocol.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "../../security/include/policy_manager_impl.hpp"
@@ -62,7 +57,6 @@
 #include "../../e2e_protection/include/buffer/buffer.hpp"
 #include "../../e2e_protection/include/e2exf/config.hpp"
 
-#include "../../e2e_protection/include/e2e/profile/e2e_provider.hpp"
 #include "../../e2e_protection/include/e2e/profile/e2e_provider_impl.hpp"
 #endif
 
