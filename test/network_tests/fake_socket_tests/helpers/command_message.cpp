@@ -63,7 +63,7 @@ namespace vsomeip_v3::testing {
         return deal_with_payload(std::vector<protocol::register_event_data>{});
     } else if (_out_message.header_.id_ == protocol::id_e::UNREGISTER_EVENT_ID) {
         return deal_with_payload(protocol::unregister_event_data{});
-    } else if (_out_message.header_.id_ == protocol::id_e::UNSUBSCRIBE_ID) {
+    } else if (is_value(_out_message.header_.id_).any_of(protocol::id_e::UNSUBSCRIBE_ID, protocol::id_e::EXPIRE_ID)) {
         // SUBSCRIBE_ID is deliberately absent: its payload carries a trailing debounce filter, so a
         // subscribe_data parse would report fewer bytes than the message holds and mis-frame the stream.
         return deal_with_payload(protocol::subscribe_data{});

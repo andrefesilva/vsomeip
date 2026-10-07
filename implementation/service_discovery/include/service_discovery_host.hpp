@@ -87,7 +87,7 @@ public:
 
     virtual std::chrono::steady_clock::time_point expire_subscriptions(bool _force) = 0;
 
-    virtual std::shared_ptr<serviceinfo> get_offered_service(service_t _service, instance_t _instance) const = 0;
+    virtual std::shared_ptr<serviceinfo> get_offered_service(service_t _service, instance_t _instance, major_version_t _major) const = 0;
     virtual std::vector<std::shared_ptr<serviceinfo>> get_offered_service_instances(service_t _service) const = 0;
 
     virtual std::set<eventgroup_t> get_subscribed_eventgroups(service_t _service, instance_t _instance, major_version_t _major) = 0;

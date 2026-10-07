@@ -68,7 +68,8 @@ public:
     void on_stop_offer_service_unlocked(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                         minor_version_t _minor);
 
-    void send_subscribe_ack(client_t _client, service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event);
+    void send_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
+                            event_t _event);
 
     bool contained_in_routing_info(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
                                    minor_version_t _minor) const;
