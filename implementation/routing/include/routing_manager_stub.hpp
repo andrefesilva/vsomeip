@@ -106,7 +106,6 @@ public:
     bool send_cached_security_policies(client_t _client);
 
     bool add_requester_policies(uid_t _uid, gid_t _gid, const std::set<std::shared_ptr<policy>>& _policies);
-    void remove_requester_policies(uid_t _uid, gid_t _gid);
 #endif // !VSOMEIP_DISABLE_SECURITY
 
     void lazy_load(const std::string& _client_host) override;

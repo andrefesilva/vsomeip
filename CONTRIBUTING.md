@@ -100,7 +100,7 @@ Formatting your code using Clang Format is seamlessly integrated into the develo
 #### Step 1: Install `pre-commit`
 
 ```
-pip install pre-commit
+pipx install pre-commit
 ```
 
 #### Step 2: Navigate to the project's root directory

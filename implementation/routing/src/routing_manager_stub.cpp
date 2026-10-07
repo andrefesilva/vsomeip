@@ -1129,18 +1129,6 @@ bool routing_manager_stub::add_requester_policies(uid_t _uid, gid_t _gid, const 
     return true;
 }
 
-void routing_manager_stub::remove_requester_policies(uid_t _uid, gid_t _gid) {
-
-    std::scoped_lock its_lock{requester_policies_mutex_};
-    auto found_uid = requester_policies_.find(_uid);
-    if (found_uid != requester_policies_.end()) {
-        found_uid->second.erase(_gid);
-        if (found_uid->second.empty()) {
-            requester_policies_.erase(_uid);
-        }
-    }
-}
-
 void routing_manager_stub::get_requester_policies(uid_t _uid, gid_t _gid, std::set<std::shared_ptr<policy>>& _policies) const {
 
     std::scoped_lock its_lock{requester_policies_mutex_};
