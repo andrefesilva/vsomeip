@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -78,6 +79,19 @@ TEST(hex_test, append_hex_handles_empty_input) {
     std::string out = "unchanged";
     vsomeip_v3::append_hex(out, {});
     EXPECT_EQ(out, "unchanged");
+}
+
+TEST(hex_test, hex4_list_empty_range_writes_nothing) {
+    std::ostringstream os;
+    os << vsomeip_v3::hex4_list(std::set<vsomeip_v3::eventgroup_t>{});
+    EXPECT_EQ(os.str(), "");
+}
+
+TEST(hex_test, hex4_list_writes_comma_separated_ids) {
+    std::ostringstream os;
+    os << "{" << vsomeip_v3::hex4_list(std::set<vsomeip_v3::eventgroup_t>{0x0001}) << "}";
+    os << "{" << vsomeip_v3::hex4_list(std::vector<vsomeip_v3::eventgroup_t>{0x0001, 0x8001, 0xffff}) << "}";
+    EXPECT_EQ(os.str(), "{0001}{0001,8001,ffff}");
 }
 
 TEST(dump_test, dump_empty_data_returns_empty_string) {

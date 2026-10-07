@@ -238,18 +238,39 @@ inline void append_hex(std::string& _out, std::span<const byte_t> _data) {
     }
 }
 
-// Comma-separated 4-digit hex ids, e.g. "0001,8001" - for logging id sets such as eventgroups.
+// Stream adapter for hex4_list(); references the range, so use it within the streaming expression.
 template<typename Range>
-std::string hex4_list(Range const& _ids) {
-    std::string out;
-    for (uint16_t const id : _ids) {
-        if (!out.empty()) {
-            out += ',';
-        }
-        append_hex_byte(out, static_cast<uint8_t>(id >> 8));
-        append_hex_byte(out, static_cast<uint8_t>(id & 0xff));
+class hex4_list_t {
+public:
+    explicit constexpr hex4_list_t(Range const& _ids) noexcept : ids_(_ids) { }
+    Range const& get() const { return ids_; }
+
+private:
+    Range const& ids_;
+};
+
+// Comma-separated 4-digit hex ids, e.g. "0001,8001" - for logging id sets such as eventgroups.
+// Written straight to the stream, no allocation.
+template<typename Range>
+hex4_list_t<Range> hex4_list(Range const& _ids) {
+    return hex4_list_t<Range>(_ids);
+}
+
+template<typename Range>
+std::ostream& operator<<(std::ostream& os, hex4_list_t<Range> const& v) {
+    std::array<char, 5> buf{',', 0, 0, 0, 0};
+    bool is_first(true);
+    for (uint16_t const id : v.get()) {
+        const auto high = hex_chars(static_cast<uint8_t>(id >> 8));
+        const auto low = hex_chars(static_cast<uint8_t>(id & 0xff));
+        buf[1] = high[0];
+        buf[2] = high[1];
+        buf[3] = low[0];
+        buf[4] = low[1];
+        os.write(is_first ? buf.data() + 1 : buf.data(), is_first ? 4 : 5);
+        is_first = false;
     }
-    return out;
+    return os;
 }
 
 inline std::ostream& operator<<(std::ostream& os, utility::Hex v) {
