@@ -58,10 +58,14 @@ void udp_client_endpoint_impl::connect() {
         if (its_error) {
             VSOMEIP_WARNING_P << "Couldn't enable SO_REUSEADDR: " << its_error.message() << " remote:" << get_address_port_remote();
         }
-        socket_->set_option(boost::asio::socket_base::receive_buffer_size(static_cast<int>(udp_receive_buffer_size_)), its_error);
-        if (its_error) {
-            VSOMEIP_WARNING_P << "Couldn't set SO_RCVBUF: " << its_error.message() << " to: " << udp_receive_buffer_size_
-                              << " local port:" << local_.port() << " remote:" << get_address_port_remote();
+
+        if (udp_receive_buffer_size_ > 0) {
+            socket_->set_option(boost::asio::socket_base::receive_buffer_size(static_cast<int>(udp_receive_buffer_size_)), its_error);
+            if (its_error) {
+                VSOMEIP_ERROR_P << "Couldn't set SO_RCVBUF: " << its_error.message() << " to: " << udp_receive_buffer_size_
+                                << " local port:" << local_.port() << " remote:" << get_address_port_remote();
+                its_error.clear(); // non-fatal error
+            }
         }
 
         boost::asio::socket_base::receive_buffer_size its_option;
@@ -69,20 +73,21 @@ void udp_client_endpoint_impl::connect() {
 #if defined(__linux__)
         // If regular setting of the buffer size did not work, try to force
         // (requires CAP_NET_ADMIN to be successful)
-        if (its_option.value() < 0 || its_option.value() < udp_receive_buffer_size_) {
+        if (udp_receive_buffer_size_ > 0 && (its_option.value() < 0 || its_option.value() < udp_receive_buffer_size_)) {
             socket_->set_option(udp_receive_buffer_force{udp_receive_buffer_size_}, its_error);
             if (!its_error) {
                 VSOMEIP_INFO_P << "SO_RCVBUFFORCE successful!";
             } else {
-                VSOMEIP_INFO_P << "SO_RCVBUFFORCE failed, " << its_error.message();
-                its_error = {};
+                VSOMEIP_ERROR_P << "SO_RCVBUFFORCE failed, " << its_error.message();
+                its_error.clear();
             }
+
             socket_->get_option(its_option, its_error);
         }
 #endif
         if (its_error) {
-            VSOMEIP_WARNING_P << "Couldn't get SO_RCVBUF: " << its_error.message() << " local port:" << local_.port()
-                              << " remote:" << get_address_port_remote();
+            VSOMEIP_ERROR_P << "Couldn't get SO_RCVBUF: " << its_error.message() << " local port:" << local_.port()
+                            << " remote:" << get_address_port_remote();
         } else {
             VSOMEIP_INFO_P << "SO_RCVBUF is: " << its_option.value() << " (" << udp_receive_buffer_size_ << ")"
                            << " local port:" << local_.port() << " remote:" << get_address_port_remote();

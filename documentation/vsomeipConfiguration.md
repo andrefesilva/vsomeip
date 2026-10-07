@@ -694,7 +694,7 @@ The general filter rules are:
 
 ## UDP Receive Buffer Size
 
-- **udp-receive-buffer-size** - Specifies the size of the socket receive buffer (SO_RCVBUF) used for UDP client and server endpoints in bytes. Requires CAP_NET_ADMIN to be successful. The default value is: `1703936`.
+- **udp-receive-buffer-size** - Specifies the size of the socket receive buffer (SO_RCVBUF) used for UDP client and server endpoints in bytes. In Linux, depending on system configuration, may require CAP_NET_ADMIN to be successful. The default value is: `0` (disabled).
 
 
 ## Service Discovery

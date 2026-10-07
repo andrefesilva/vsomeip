@@ -150,12 +150,14 @@ void udp_server_endpoint_impl::init_unlocked(const endpoint_type& _local, boost:
     }
 
     const int its_udp_recv_buffer_size = configuration_->get_udp_receive_buffer_size();
-    unicast_socket_->set_option(boost::asio::socket_base::receive_buffer_size(static_cast<int>(its_udp_recv_buffer_size)), _error);
+    if (its_udp_recv_buffer_size > 0) {
+        unicast_socket_->set_option(boost::asio::socket_base::receive_buffer_size(static_cast<int>(its_udp_recv_buffer_size)), _error);
 
-    if (_error) {
-        VSOMEIP_ERROR_P << instance_name_ << "Failed to configure receive buffer size, " << _error.message();
-        // Non-fatal error
-        _error.clear();
+        if (_error) {
+            VSOMEIP_ERROR_P << instance_name_ << "Failed to configure receive buffer size, " << _error.message();
+            // Non-fatal error
+            _error.clear();
+        }
     }
 
     boost::asio::socket_base::receive_buffer_size its_option;
@@ -167,13 +169,23 @@ void udp_server_endpoint_impl::init_unlocked(const endpoint_type& _local, boost:
     if (its_option.value() < 0 || its_option.value() < its_udp_recv_buffer_size) {
         unicast_socket_->set_option(udp_receive_buffer_force{its_udp_recv_buffer_size}, _error);
         if (_error) {
-            VSOMEIP_INFO_P << instance_name_ << "Failed to force receive buffer size " << its_udp_recv_buffer_size << ", "
-                           << _error.message();
+            VSOMEIP_ERROR_P << instance_name_ << "Failed to force receive buffer size " << its_udp_recv_buffer_size << ", "
+                            << _error.message();
             // Non-fatal error
             _error.clear();
         }
+
+        unicast_socket_->get_option(its_option, _error);
     }
 #endif
+
+    if (_error) {
+        VSOMEIP_ERROR_P << instance_name_ << "Could not getsockopt(SO_RCVBUFF) due to error " << _error.message();
+        unicast_socket_.reset();
+        return;
+    }
+
+    VSOMEIP_INFO_P << instance_name_ << "SO_RCVBUF is: " << its_option.value();
 
     if (local_ != _local) {
         instance_name_ += _local.address().to_string();
@@ -898,15 +910,14 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
                 return;
             }
 
-            // TODO(): Check why changing the receive buffer size? By default it is 256KiB.
-            //         In addition, it prevents Linux from doing some optimizations.
             const int its_udp_recv_buffer_size = configuration_->get_udp_receive_buffer_size();
-
-            multicast_socket_->set_option(boost::asio::socket_base::receive_buffer_size(its_udp_recv_buffer_size), _error);
-            if (_error) {
-                VSOMEIP_ERROR_P << instance_name_ << "Failed to configure received buffer size, " << _error.message();
-                // Non-fatal error
-                _error.clear();
+            if (its_udp_recv_buffer_size > 0) {
+                multicast_socket_->set_option(boost::asio::socket_base::receive_buffer_size(its_udp_recv_buffer_size), _error);
+                if (_error) {
+                    VSOMEIP_ERROR_P << instance_name_ << "Failed to configure received buffer size, " << _error.message();
+                    // Non-fatal error
+                    _error.clear();
+                }
             }
 
             boost::asio::socket_base::receive_buffer_size its_option;
@@ -919,12 +930,19 @@ void udp_server_endpoint_impl::set_multicast_option_unlocked(const boost::asio::
 #if defined(__linux__)
             // If regular setting of the buffer size did not work, try to force
             // (requires CAP_NET_ADMIN to be successful)
-            if (its_option.value() < 0 || its_option.value() < its_udp_recv_buffer_size) {
+            if (its_udp_recv_buffer_size && (its_option.value() < 0 || its_option.value() < its_udp_recv_buffer_size)) {
                 multicast_socket_->set_option(udp_receive_buffer_force{its_udp_recv_buffer_size}, _error);
                 if (_error) {
-                    VSOMEIP_INFO_P << instance_name_ << "Failed to force received buffer size, " << _error.message();
+                    VSOMEIP_ERROR_P << instance_name_ << "Failed to force received buffer size, " << _error.message();
                     // Non-fatal error
                     _error.clear();
+                }
+
+                multicast_socket_->get_option(its_option, _error);
+                if (_error) {
+                    VSOMEIP_ERROR_P << instance_name_ << "Failed to get received buffer size, " << _error.message();
+                    multicast_socket_.reset();
+                    return;
                 }
             }
 #endif
