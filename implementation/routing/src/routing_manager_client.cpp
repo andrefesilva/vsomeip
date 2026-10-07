@@ -314,7 +314,7 @@ bool routing_manager_client::offer_service(client_t _client, service_t _service,
             for (auto const& its_registration : its_resolved_registrations) {
                 VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): ["
                              << event_key{its_registration.service_key_, its_registration.event_} << ":is_provider=" << std::boolalpha
-                             << true << "]";
+                             << true << ":eventgroups={" << hex4_list(its_registration.eventgroups_) << "}]";
             }
         }
         its_batch.add(protocol::create_offer_service_cmd(its_client, offer_data));
@@ -566,7 +566,8 @@ void routing_manager_client::register_event(client_t _client, service_t _service
         if (send_event_registrations(its_client, std::span{&reg_event_data, 1}, lock)) {
             if (_is_provided) {
                 VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): [" << event_key{reg_event_data.service_key_, _notifier}
-                             << ":is_provider=" << std::boolalpha << _is_provided << "]";
+                             << ":is_provider=" << std::boolalpha << _is_provided << ":eventgroups={"
+                             << hex4_list(reg_event_data.eventgroups_) << "}]";
             }
         } else {
             VSOMEIP_ERROR_P << "Failed to send the event registration [" << event_key{reg_event_data.service_key_, _notifier}
@@ -1112,9 +1113,10 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                     return;
                                 }
                                 uint32_t its_count(0);
-                                if (_subscription_accepted) {
-                                    insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter,
-                                                        VSOMEIP_ROUTING_CLIENT, its_lock);
+                                bool const is_inserted = _subscription_accepted
+                                        && insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter,
+                                                               VSOMEIP_ROUTING_CLIENT, its_lock);
+                                if (is_inserted) {
                                     // NOTE: order matters, send ACK _after_ inserting the subscription
                                     send_subscribe_ack(its_client, its_service, its_instance, its_eventgroup, its_event, its_pending_id,
                                                        its_lock);
@@ -1127,9 +1129,8 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                 }
                                 VSOMEIP_INFO << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance)
                                              << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << ":"
-                                             << static_cast<uint16_t>(its_major) << "] "
-                                             << (_subscription_accepted ? "accepted." : "not accepted.") << " id=" << hex4(its_pending_id)
-                                             << " subscribers=" << its_count;
+                                             << static_cast<uint16_t>(its_major) << "] " << (is_inserted ? "accepted." : "not accepted.")
+                                             << " id=" << hex4(its_pending_id) << " subscribers=" << its_count;
                             });
                 } else {
                     send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, its_pending_id, lock);
@@ -1170,8 +1171,16 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
 
                 std::scoped_lock lock{provider_mutex_};
                 auto self = shared_from_this();
-                if (auto its_info = offered_services_.find({.key_ = {its_service, its_instance, its_major}, .minor_version_ = ANY_MINOR});
-                    its_info) {
+                if (auto its_provided = its_event != ANY_EVENT ? find_provided_event(its_service, its_instance, its_event, lock) : nullptr;
+                    its_provided && !its_provided->accepts(its_eventgroup)) {
+                    // can never be served: nack without asking the application, which would count a subscriber that is not stored
+                    VSOMEIP_ERROR_P << "SUBSCRIBE(" << hex4(its_client) << "): [" << hex4(its_service) << "." << hex4(its_instance) << "."
+                                    << hex4(its_eventgroup) << ":" << hex4(its_event) << ":" << static_cast<uint16_t>(its_major)
+                                    << "] event offered with eventgroups={" << hex4_list(its_provided->groups()) << "}, not accepted.";
+                    send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, PENDING_SUBSCRIPTION_ID, lock);
+                } else if (auto its_info =
+                                   offered_services_.find({.key_ = {its_service, its_instance, its_major}, .minor_version_ = ANY_MINOR});
+                           its_info) {
                     host_->on_subscription(
                             its_service, its_instance, its_eventgroup, its_client, &_peer_data.sec_client_, _peer_data.env_, true,
                             [this, self, its_client, its_filter, its_pending_id, its_service, its_instance, its_eventgroup, its_event,
@@ -1186,13 +1195,13 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                                  << "] client connection superseded, discarding stale continuation.";
                                     return;
                                 }
-                                if (!_subscription_accepted) {
+                                bool const is_inserted = _subscription_accepted
+                                        && insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter, its_client,
+                                                               its_lock);
+                                if (!is_inserted) {
                                     send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event,
                                                         PENDING_SUBSCRIPTION_ID, its_lock);
                                 } else {
-
-                                    insert_subscription(its_service, its_instance, its_eventgroup, its_event, its_filter, its_client,
-                                                        its_lock);
                                     // NOTE: order matters, send ACK _after_ inserting
                                     // the subscription
                                     send_subscribe_ack(its_client, its_service, its_instance, its_eventgroup, its_event,
@@ -1204,7 +1213,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
                                              << "." << hex4(its_eventgroup) << ":" << hex4(its_event) << ":"
                                              << static_cast<uint16_t>(its_major) << "] " << std::boolalpha
                                              << (its_pending_id != PENDING_SUBSCRIPTION_ID)
-                                             << (_subscription_accepted ? " accepted" : "not accepted");
+                                             << (is_inserted ? " accepted" : " not accepted");
                             });
                 } else {
                     send_subscribe_nack(its_client, its_service, its_instance, its_eventgroup, its_event, PENDING_SUBSCRIPTION_ID, lock);
@@ -2091,7 +2100,7 @@ void routing_manager_client::clear_remote_subscriber_count(service_t _service, i
     remote_subscriber_count_.erase({_service, _instance});
 }
 
-void routing_manager_client::create_placeholder_event_and_subscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
+bool routing_manager_client::create_placeholder_event_and_subscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
                                                                     event_t _notifier,
                                                                     const std::shared_ptr<debounce_filter_impl_t>& _filter,
                                                                     client_t _client,
@@ -2102,10 +2111,11 @@ void routing_manager_client::create_placeholder_event_and_subscribe(service_t _s
         // TODO this should be discouraged, because it means for any service we are offering,
         // a client can flood our memory with "unknown" events
         event = std::make_shared<provider_event>();
-        event->add_subscriber(_eventgroup, _client, _filter);
+        return event->add_subscriber(_eventgroup, _client, _filter);
     } else {
         VSOMEIP_WARNING_P << "service: [" << hex4(_service) << "." << hex4(_instance)
                           << "] not offered. Not caching subscription for client: 0x" << hex4(_client);
+        return false;
     }
 }
 
@@ -2217,7 +2227,8 @@ void routing_manager_client::resend_provided_event_registrations() {
         }
         if (send_event_registrations(its_client, std::span{&reg, 1}, inner_lock)) {
             VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): [" << event_key{reg.service_key_, reg.event_}
-                         << ":is_provider=" << std::boolalpha << reg.is_provided_ << "]";
+                         << ":is_provider=" << std::boolalpha << reg.is_provided_ << ":eventgroups={" << hex4_list(reg.eventgroups_)
+                         << "}]";
         } else {
             VSOMEIP_ERROR_P << "Failed to resend the event registration [" << event_key{reg.service_key_, reg.event_}
                             << ":is_provider=" << std::boolalpha << reg.is_provided_ << "]";
@@ -2942,12 +2953,20 @@ void routing_manager_client::register_provider_event(service_t _service, instanc
     // Move over the subscribers (and their per-client debounce filters) that accumulated on the
     // placeholder while the event was not yet offered.
     if (placeholder) {
-        event->adopt_subscribers(*placeholder);
+        for (auto const& [eventgroup, clients] : event->adopt_subscribers(*placeholder)) {
+            for (auto const client : clients) {
+                // acknowledged while the event was unknown, but it is offered without this eventgroup: take it back
+                send_subscribe_nack(client, _service, _instance, eventgroup, _notifier, PENDING_SUBSCRIPTION_ID, _lock);
+                auto const ep = find_provider_endpoint(client, _lock);
+                auto const sec_client = ep ? ep->get_sec_client() : vsomeip_sec_client_t{};
+                host_->on_subscription(_service, _instance, eventgroup, client, &sec_client, ep ? ep->get_env() : "", false, [](bool) {});
+            }
+        }
     }
     if (auto any_event = find_provided_event(_service, _instance, ANY_EVENT, _lock); any_event) {
         for (eventgroup_t eventgroup : event->groups()) {
             for (auto subscriber : any_event->get_subscriber(eventgroup)) {
-                event->add_subscriber(eventgroup, subscriber, nullptr);
+                std::ignore = event->add_subscriber(eventgroup, subscriber, nullptr);
             }
         }
     }
@@ -3067,39 +3086,41 @@ void routing_manager_client::unsubscribe_base(client_t _client, service_t _servi
     }
 }
 
-void routing_manager_client::insert_subscription(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
+bool routing_manager_client::insert_subscription(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
                                                  const std::shared_ptr<debounce_filter_impl_t>& _filter, client_t _client,
                                                  std::scoped_lock<std::mutex> const& _lock) {
 
     if (_event != ANY_EVENT) { // subscribe to specific event
         auto its_event = find_provided_event(_service, _instance, _event, _lock);
         if (its_event) {
-            its_event->add_subscriber(_eventgroup, _client, _filter);
+            return its_event->add_subscriber(_eventgroup, _client, _filter);
         } else {
             VSOMEIP_WARNING_P << "(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup)
                               << "." << hex4(_event) << "] received subscription for unknown (unrequested /unoffered) event. Creating"
                               << " placeholder event holding subscription until event is requested/offered.";
-            create_placeholder_event_and_subscribe(_service, _instance, _eventgroup, _event, _filter, _client, _lock);
+            return create_placeholder_event_and_subscribe(_service, _instance, _eventgroup, _event, _filter, _client, _lock);
         }
     } else { // subscribe to all events of the eventgroup
         auto its_events = find_provided_events_by_group(_service, _instance, _eventgroup, _lock);
         if (!its_events.empty()) {
+            // only events that are part of the eventgroup are found, none of them can reject it
             for (auto const& event : its_events) {
-                event->add_subscriber(_eventgroup, _client, _filter);
+                std::ignore = event->add_subscriber(_eventgroup, _client, _filter);
             }
+            return true;
         } else {
             if (auto its_event = find_provided_event(_service, _instance, ANY_EVENT, _lock); its_event) {
                 // in case we already have a placeholder add the client to the placeholder for future subscriptions
-                its_event->add_subscriber(_eventgroup, _client, _filter);
                 VSOMEIP_WARNING_P << ":(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup)
                                   << "." << hex4(_event)
                                   << "] received subscription for unknown eventgroup. Adding the client of the placeholder";
+                return its_event->add_subscriber(_eventgroup, _client, _filter);
             } else {
                 VSOMEIP_WARNING_P << ":(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup)
                                   << "." << hex4(_event)
                                   << "] received subscription for unknown (unrequested /unoffered) eventgroup. Creating"
                                   << " placeholder event holding subscription until event is requested/offered.";
-                create_placeholder_event_and_subscribe(_service, _instance, _eventgroup, _event, _filter, _client, _lock);
+                return create_placeholder_event_and_subscribe(_service, _instance, _eventgroup, _event, _filter, _client, _lock);
             }
         }
     }

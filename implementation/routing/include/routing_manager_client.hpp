@@ -230,9 +230,9 @@ private:
                                          std::scoped_lock<std::mutex> const& _lock);
     void clear_remote_subscriber_count(service_t _service, instance_t _instance, std::scoped_lock<std::mutex> const& _lock);
 
-    void create_placeholder_event_and_subscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _notifier,
-                                                const std::shared_ptr<debounce_filter_impl_t>& _filter, client_t _client,
-                                                std::scoped_lock<std::mutex> const& _lock);
+    [[nodiscard]] bool create_placeholder_event_and_subscribe(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
+                                                              event_t _notifier, const std::shared_ptr<debounce_filter_impl_t>& _filter,
+                                                              client_t _client, std::scoped_lock<std::mutex> const& _lock);
 
     void request_debounce_timeout_cbk(boost::system::error_code const& _error);
 
@@ -312,10 +312,11 @@ private:
      * @brief insert subscription into events/eventgroups
      *
      * Caller *MUST* hold `provider_mutex_` through not only call, but also during the subscription ack/nack and initial events
+     * @return false if the subscription was not stored (e.g. eventgroup not offered for the event); the caller must nack it.
      */
-    void insert_subscription(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
-                             const std::shared_ptr<debounce_filter_impl_t>& _filter, client_t _client,
-                             std::scoped_lock<std::mutex> const& _lock);
+    [[nodiscard]] bool insert_subscription(service_t _service, instance_t _instance, eventgroup_t _eventgroup, event_t _event,
+                                           const std::shared_ptr<debounce_filter_impl_t>& _filter, client_t _client,
+                                           std::scoped_lock<std::mutex> const& _lock);
 
     std::set<std::tuple<service_t, instance_t, eventgroup_t>> unsubscribe_client(const client_t _client,
                                                                                  std::scoped_lock<std::mutex> const& _provider_lock);
