@@ -93,6 +93,8 @@ public:
     [[nodiscard]] event_t get_event() const;
     [[nodiscard]] bool is_subscribed(client_t _client) const;
     [[nodiscard]] bool is_part_of(eventgroup_t _group) const;
+    /// @brief Whether add_subscriber() would store a subscriber for _group: a placeholder takes any group, an event only its own.
+    [[nodiscard]] bool accepts(eventgroup_t _group) const;
     std::set<eventgroup_t> const& groups() const;
     std::set<client_t> const& get_subscriber(eventgroup_t _group) const;
     /// @brief Last cached field message (nullptr for a plain event or a never-set field).
@@ -113,13 +115,15 @@ public:
      * @note Used when the real event is offered: subscribers accumulated on the placeholder are
      *       moved onto this event's valid groups, preserving each client's compiled filter.
      *       Subscribers for groups this event does not define are dropped (with a warning).
+     * @return the dropped subscribers per eventgroup; their subscriptions were acknowledged, the caller must nack them.
      */
-    void adopt_subscribers(provider_event& _placeholder);
+    [[nodiscard]] std::map<eventgroup_t, std::set<client_t>> adopt_subscribers(provider_event& _placeholder);
 
     /**
      * @brief Registers a subscriber for an eventgroup, with an optional debounce filter.
+     * @return false if the eventgroup is not part of this event's definition (the client is not stored).
      */
-    void add_subscriber(eventgroup_t _group, client_t _client, const std::shared_ptr<debounce_filter_impl_t>& _filter);
+    [[nodiscard]] bool add_subscriber(eventgroup_t _group, client_t _client, const std::shared_ptr<debounce_filter_impl_t>& _filter);
     void remove_subscriber(eventgroup_t _group, client_t _client);
 
     void reset();

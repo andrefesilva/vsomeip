@@ -238,6 +238,20 @@ inline void append_hex(std::string& _out, std::span<const byte_t> _data) {
     }
 }
 
+// Comma-separated 4-digit hex ids, e.g. "0001,8001" - for logging id sets such as eventgroups.
+template<typename Range>
+std::string hex4_list(Range const& _ids) {
+    std::string out;
+    for (uint16_t const id : _ids) {
+        if (!out.empty()) {
+            out += ',';
+        }
+        append_hex_byte(out, static_cast<uint8_t>(id >> 8));
+        append_hex_byte(out, static_cast<uint8_t>(id & 0xff));
+    }
+    return out;
+}
+
 inline std::ostream& operator<<(std::ostream& os, utility::Hex v) {
     std::array<char, 8> buf{};
     uint32_t value = v.get();

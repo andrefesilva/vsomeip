@@ -435,7 +435,8 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
 
                 VSOMEIP_INFO << "REGISTER EVENT(" << hex4(its_client) << "): [" << event_key{reg.service_key_, reg.event_}
                              << ":eventtype=" << static_cast<int>(reg.event_type_) << ":is_provided=" << std::boolalpha << reg.is_provided_
-                             << ":reliable=" << static_cast<int>(reg.reliability_) << "]";
+                             << ":reliable=" << static_cast<int>(reg.reliability_) << ":eventgroups={" << hex4_list(reg.eventgroups_)
+                             << "}]";
             }
 
         } else {

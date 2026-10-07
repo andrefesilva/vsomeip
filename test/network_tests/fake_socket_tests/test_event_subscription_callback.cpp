@@ -16,6 +16,7 @@
 #include "helpers/availability_checker.hpp"
 #include "sample_configurations.hpp"
 
+#include "../../../implementation/routing/include/types.hpp"
 #include "../../../implementation/utility/include/utility.hpp"
 
 #include "sample_interfaces.hpp"
@@ -113,6 +114,137 @@ TEST_F(test_event_subscription_callback_local, subscriptions_do_not_leak_across_
     EXPECT_TRUE(client_->message_record_.wait_for(field_two_checker_)) << client_->message_record_;
     // if received, it should have been received before the one checked above
     EXPECT_FALSE(client_->message_record_.wait_for(field_one_checker_, std::chrono::milliseconds(100)));
+}
+
+TEST_F(test_event_subscription_callback_local, subscribing_under_an_eventgroup_the_event_is_not_offered_in_is_nacked) {
+    /**
+     * The provider rejects a subscriber for an eventgroup the event was not offered in, so the
+     * subscription must be nacked and then never served.
+     * 1. Server offers field_one in eventgroup 0x8001
+     * 2. Client subscribes to field_one under eventgroup 0x0001
+     * 3. Client receives a NACK
+     **/
+    start_apps();
+    server_->offer(interface_);
+
+    event_ids const wrong_group{interface_.instance_, field_one_.event_id_, 0x0001};
+
+    attribute_recorder<event_subscription> status_record;
+    client_->get_application()->register_subscription_status_handler(
+            wrong_group.si_.service_, wrong_group.si_.instance_, wrong_group.eventgroup_id_, wrong_group.event_id_,
+            [&status_record, wrong_group](vsomeip::service_t, vsomeip::instance_t, vsomeip::eventgroup_t, vsomeip::event_t,
+                                          uint16_t _error) { status_record.record(event_subscription{wrong_group, _error}); },
+            true);
+    client_->request_service(interface_.instance_);
+    client_->subscribe_field(wrong_group);
+
+    EXPECT_TRUE(status_record.wait_for_last(event_subscription{wrong_group, static_cast<uint16_t>(subscription_outcome_e::REJECTED)}))
+            << status_record;
+}
+
+struct subscription_call {
+    vsomeip::client_t client_;
+    bool subscribed_;
+    [[nodiscard]] bool operator==(subscription_call const& rhs) const { return client_ == rhs.client_ && subscribed_ == rhs.subscribed_; }
+};
+
+inline std::ostream& operator<<(std::ostream& _out, subscription_call const& _c) {
+    return _out << "{client=" << hex4(_c.client_) << ", subscribed=" << std::boolalpha << _c.subscribed_ << "}";
+}
+
+TEST_F(test_event_subscription_callback_local,
+       provider_app_is_not_asked_about_a_subscription_for_an_eventgroup_the_event_is_not_offered_in) {
+    /**
+     * The subscription can never be served, so the provider app must not be asked: it would count a
+     * subscriber that vsomeip never stores and never withdraws.
+     * 1. Server installs subscription handlers for eventgroup 0x0001 (not offered for field_one) and 0x8002 (control)
+     * 2. Client subscribes to field_one under 0x0001 (NACKed) and to field_two under 0x8002 (ACKed)
+     * 3. Only the control handler is called (subscribed=true)
+     * 4. The client <-> server connection breaks: the control handler is called with subscribed=false
+     * 5. The 0x0001 handler was never called
+     **/
+    start_apps();
+
+    event_ids const wrong_group{interface_.instance_, field_one_.event_id_, 0x0001};
+    auto const rejected = static_cast<uint16_t>(subscription_outcome_e::REJECTED);
+
+    attribute_recorder<subscription_call> wrong_group_calls;
+    attribute_recorder<subscription_call> control_calls;
+    server_->register_group_subscription_handler_sec(
+            wrong_group,
+            [&wrong_group_calls](vsomeip::client_t _client, vsomeip_sec_client_t const*, std::string const&, bool _subscribed) {
+                wrong_group_calls.record({_client, _subscribed});
+                return true;
+            });
+    server_->register_group_subscription_handler_sec(
+            field_two_, [&control_calls](vsomeip::client_t _client, vsomeip_sec_client_t const*, std::string const&, bool _subscribed) {
+                control_calls.record({_client, _subscribed});
+                return true;
+            });
+    server_->offer(interface_);
+
+    attribute_recorder<event_subscription> status_record;
+    client_->get_application()->register_subscription_status_handler(
+            wrong_group.si_.service_, wrong_group.si_.instance_, wrong_group.eventgroup_id_, wrong_group.event_id_,
+            [&status_record, wrong_group](vsomeip::service_t, vsomeip::instance_t, vsomeip::eventgroup_t, vsomeip::event_t,
+                                          uint16_t _error) { status_record.record(event_subscription{wrong_group, _error}); },
+            true);
+    client_->request_service(interface_.instance_);
+    client_->subscribe_field(wrong_group);
+    client_->subscribe_field(field_two_);
+    ASSERT_TRUE(status_record.wait_for_last(event_subscription{wrong_group, rejected})) << status_record;
+    ASSERT_TRUE(client_->subscription_record_.wait_for_any(event_subscription::successfully_subscribed_to(field_two_)))
+            << client_->subscription_record_;
+
+    auto const client_id = client_->get_client();
+    ASSERT_TRUE(control_calls.wait_for_any(subscription_call{client_id, true})) << control_calls;
+
+    ASSERT_TRUE(disconnect(client_name_, boost::asio::error::connection_reset, server_name_, boost::asio::error::connection_reset));
+    ASSERT_TRUE(control_calls.wait_for_any(subscription_call{client_id, false})) << control_calls;
+
+    // the subscription handler runs before the continuation that nacks, so any call would already be recorded
+    EXPECT_FALSE(wrong_group_calls.wait_for([](auto const& _record) { return !_record.empty(); }, std::chrono::milliseconds(0)))
+            << wrong_group_calls;
+}
+
+TEST_F(test_event_subscription_callback_local, subscription_acked_before_the_event_is_offered_is_nacked_if_the_eventgroup_does_not_match) {
+    /**
+     * A subscription for a not yet offered event is held on a placeholder and acknowledged. If the event is then
+     * offered without that eventgroup, the subscriber is dropped and must be nacked (and withdrawn from the app).
+     * 1. Server offers the service, but not field_one yet
+     * 2. Client subscribes to field_one under eventgroup 0x0001 and receives an ACK
+     * 3. Server offers field_one in eventgroup 0x8001
+     * 4. Client receives a NACK, the server's subscription handler is called with subscribed=false
+     **/
+    start_apps();
+
+    event_ids const wrong_group{interface_.instance_, field_one_.event_id_, 0x0001};
+
+    attribute_recorder<subscription_call> wrong_group_calls;
+    server_->register_group_subscription_handler_sec(
+            wrong_group,
+            [&wrong_group_calls](vsomeip::client_t _client, vsomeip_sec_client_t const*, std::string const&, bool _subscribed) {
+                wrong_group_calls.record({_client, _subscribed});
+                return true;
+            });
+    server_->offer(interface_.instance_);
+
+    attribute_recorder<event_subscription> status_record;
+    client_->get_application()->register_subscription_status_handler(
+            wrong_group.si_.service_, wrong_group.si_.instance_, wrong_group.eventgroup_id_, wrong_group.event_id_,
+            [&status_record, wrong_group](vsomeip::service_t, vsomeip::instance_t, vsomeip::eventgroup_t, vsomeip::event_t,
+                                          uint16_t _error) { status_record.record(event_subscription{wrong_group, _error}); },
+            true);
+    client_->request_service(interface_.instance_);
+    client_->subscribe_field(wrong_group);
+    ASSERT_TRUE(status_record.wait_for_last(event_subscription::successfully_subscribed_to(wrong_group))) << status_record;
+
+    server_->offer_field(interface_.instance_, interface_.fields_[0]);
+
+    EXPECT_TRUE(status_record.wait_for_last(event_subscription{wrong_group, static_cast<uint16_t>(subscription_outcome_e::REJECTED)}))
+            << status_record;
+    auto const client_id = client_->get_client();
+    EXPECT_TRUE(wrong_group_calls.wait_for_last(subscription_call{client_id, false})) << wrong_group_calls;
 }
 
 TEST_F(test_event_subscription_callback_local, subscriptions_callbacks_do_no_leak_across_stop_start) {

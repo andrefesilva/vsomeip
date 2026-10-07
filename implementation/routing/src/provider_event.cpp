@@ -57,6 +57,10 @@ bool provider_event::is_part_of(eventgroup_t _group) const {
     return subscriber_.count(_group) > 0;
 }
 
+bool provider_event::accepts(eventgroup_t _group) const {
+    return is_placeholder_ || is_part_of(_group);
+}
+
 event_t provider_event::get_event() const {
     return definition_.event_;
 }
@@ -88,17 +92,14 @@ std::set<eventgroup_t> provider_event::unsubscribe(client_t _client) {
     return groups;
 }
 
-void provider_event::add_subscriber(eventgroup_t _group, client_t _client, const std::shared_ptr<debounce_filter_impl_t>& _filter) {
-    if (auto it = subscriber_.find(_group); it != subscriber_.end()) {
-        it->second.insert(_client);
-    } else if (is_placeholder_) {
-        subscriber_[_group].insert(_client);
-    } else {
+bool provider_event::add_subscriber(eventgroup_t _group, client_t _client, const std::shared_ptr<debounce_filter_impl_t>& _filter) {
+    if (!accepts(_group)) {
         VSOMEIP_ERROR_P << "client 0x" << hex4(_client) << " tried to subscribe for unknown eventgroup: " << hex4(_group) << " for event: ["
                         << hex4(definition_.service_) << "." << hex4(definition_.instance_) << "." << static_cast<int>(major_) << ":"
-                        << hex4(definition_.event_) << "]";
-        return;
+                        << hex4(definition_.event_) << "] offered with eventgroups={" << hex4_list(definition_.groups_) << "}";
+        return false;
     }
+    subscriber_[_group].insert(_client);
 
     // A per-client debounce filter overrides the event-wide default epsilon for that client;
     // a null filter clears any previously installed one (falls back to the default epsilon).
@@ -125,16 +126,19 @@ void provider_event::add_subscriber(eventgroup_t _group, client_t _client, const
     } else {
         filters_.erase(_client);
     }
+    return true;
 }
 
-void provider_event::adopt_subscribers(provider_event& _placeholder) {
+std::map<eventgroup_t, std::set<client_t>> provider_event::adopt_subscribers(provider_event& _placeholder) {
+    std::map<eventgroup_t, std::set<client_t>> dropped;
     // Move the subscribers accumulated on the placeholder onto this event's structural groups.
     for (auto const& [group, clients] : _placeholder.subscriber_) {
         auto it = subscriber_.find(group);
         if (it == subscriber_.end()) {
             VSOMEIP_WARNING_P << "dropping " << clients.size() << " subscriber(s) for unknown eventgroup 0x" << hex4(group)
                               << " while adopting into event: [" << hex4(definition_.service_) << "." << hex4(definition_.instance_) << ":"
-                              << hex4(definition_.event_) << "]";
+                              << hex4(definition_.event_) << "] offered with eventgroups={" << hex4_list(definition_.groups_) << "}";
+            dropped.emplace(group, clients);
             continue;
         }
         it->second.insert(clients.begin(), clients.end());
@@ -146,6 +150,7 @@ void provider_event::adopt_subscribers(provider_event& _placeholder) {
             filters_[client] = std::move(filter);
         }
     }
+    return dropped;
 }
 
 void provider_event::remove_subscriber(eventgroup_t _group, client_t _client) {
