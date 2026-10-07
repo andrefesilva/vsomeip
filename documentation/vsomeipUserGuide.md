@@ -271,17 +271,6 @@ make vsomeip_ctrl
 ./vsomeip_ctrl --tcp --instance 5678 --message 12340bb8000000081344000101010000
 ```
 
-## vsomeip-dissector
-Wireshark plugin dissector for vSomeip internal communication via TCP
-
-### How To Use
-
-1. Place `vsomeip-dissector.lua` file in `~/.config/wireshark/plugins/vsomeip/vsomeip-dissector.lua`
-   (create `plugins` directory if it doesn't exist)
-2. In wireshark go to `Analyze` > `Reload Lua Plugins`
-3. In wireshark go to `Analyze` > `Enable Protocols` and search for `vsomeip` and enable it
-
-
 # vsomeip Hello World
 
 The vsomeip Hello World consists in a client and a service.
