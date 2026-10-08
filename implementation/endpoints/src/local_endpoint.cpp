@@ -527,9 +527,25 @@ void local_endpoint::send_cbk(boost::system::error_code const& _ec, [[maybe_unus
         return false;
     }
 
-    if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
-        VSOMEIP_WARNING_P << "Discarding buffered data of a terminated endpoint, " << status_unlock();
-        return false;
+    auto const check_stop_processing = [this]() {
+        if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
+            VSOMEIP_WARNING_P << "Stopping message processing, endpoint is terminated. Dropping any remaining buffered data, "
+                              << status_unlock();
+            return std::optional<bool>{false};
+        }
+        if (is_flushing_) {
+            VSOMEIP_WARNING_P << "Stopping message processing, endpoint is flushing. Dropping any remaining buffered data, "
+                              << status_unlock();
+            if (partial_message_timebox_) {
+                partial_message_timebox_->stop();
+            }
+            return std::optional<bool>{true};
+        }
+        return std::optional<bool>{};
+    };
+
+    if (auto const its_stop = check_stop_processing(); its_stop.has_value()) {
+        return its_stop.value();
     }
 
     // avoid checking every incoming messages, if a client id was already received
@@ -566,9 +582,8 @@ void local_endpoint::send_cbk(boost::system::error_code const& _ec, [[maybe_unus
                 its_handler(its_due_to_error);
                 _lock.lock();
             }
-            if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
-                VSOMEIP_WARNING_P << "Stopping message processing, endpoint state: " << status_unlock();
-                return false;
+            if (auto const its_stop = check_stop_processing(); its_stop.has_value()) {
+                return its_stop.value();
             }
         }
     } else {
@@ -586,12 +601,12 @@ void local_endpoint::send_cbk(boost::system::error_code const& _ec, [[maybe_unus
                 its_handler(its_due_to_error);
                 _lock.lock();
             }
-            if (is_value(state_).any_of(state_e::FAILED, state_e::STOPPED)) {
-                VSOMEIP_WARNING_P << "Stopping message processing, endpoint state: " << status_unlock();
-                return false;
+            if (auto const its_stop = check_stop_processing(); its_stop.has_value()) {
+                return its_stop.value();
             }
         }
     }
+
     if (result.error_) {
         VSOMEIP_ERROR_P << "Received parsing error, socket > " << status_unlock();
         return false;
