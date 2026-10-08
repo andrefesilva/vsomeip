@@ -34,26 +34,72 @@
 
 namespace vsomeip_v3::testing {
 
-struct test_multiversion_support_single_ecu : public base_fake_socket_fixture {
+struct multiversion_fixture : public base_fake_socket_fixture {
+    struct ecu_apps {
+        ecu_setup& ecu_;
+        std::vector<std::string> names_;
+    };
+
+    static constexpr vsomeip::service_t service_id_{0x1000};
+    static constexpr vsomeip::instance_t instance_id_{0x1};
+
+    static service_instance si(vsomeip::major_version_t _major) {
+        return service_instance{.service_ = service_id_, .instance_ = instance_id_, .major_ = _major, .minor_ = 0x0};
+    }
+
+    // add_app(), prepare() and start_apps() run in the given ECU order.
+    static void start(std::initializer_list<ecu_apps> _ecus) {
+        for (auto const& its_ecu : _ecus) {
+            for (auto const& its_name : its_ecu.names_) {
+                its_ecu.ecu_.add_app(its_name);
+            }
+        }
+        for (auto const& its_ecu : _ecus) {
+            its_ecu.ecu_.prepare();
+        }
+        for (auto const& its_ecu : _ecus) {
+            its_ecu.ecu_.start_apps();
+        }
+    }
+
+    static app* get(ecu_setup& _ecu, std::string const& _name) { return _ecu.apps_.at(_name); }
+
+    static void await_registered(std::initializer_list<app*> _apps) {
+        for (auto* its_app : _apps) {
+            ASSERT_TRUE(its_app->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        }
+    }
+
+    // A record here proves the subscription reached _provider. The consumer-side callback cannot be
+    // used: the local SUBSCRIBE_ACK is sent even when SD dropped or NACKed the subscription.
+    static void record_remote_subscriptions(app* _provider, event_ids const& _ei, attribute_recorder<bool>& _record) {
+        _provider->register_group_subscription_handler(_ei, [&_record](client_t, uid_t, gid_t, std::string const&, bool _is_subscribed) {
+            _record.record(_is_subscribed);
+            return true;
+        });
+    }
+
+    // The SD multicast group address (VSOMEIP_SD_DEFAULT_MULTICAST); none of the ecu_configs used
+    // here override it. FindService/OfferService sent to this address still go out as an ordinary
+    // sendto() on the sender's own unicast SD socket -- joining the group is only needed to
+    // *receive* multicast traffic, so gating on this as the receiver party does not depend on
+    // whether the multicast join has completed.
+    boost::asio::ip::udp::endpoint const sd_multicast_ep_{boost::asio::ip::make_address("224.224.224.0"), 30490};
+};
+
+struct test_multiversion_support_single_ecu : public multiversion_fixture {
     void start_apps() {
-        ecu_.add_app(client_v1_name_);
-        ecu_.add_app(client_v2_name_);
-        ecu_.add_app(server_v1_name_);
-        ecu_.add_app(server_v2_name_);
-        ecu_.add_app(prope_client_name_);
-        ecu_.add_app(extra_app_one_name_);
-        ecu_.add_app(extra_app_two_name_);
+        start({{ecu_,
+                {client_v1_name_, client_v2_name_, server_v1_name_, server_v2_name_, prope_client_name_, extra_app_one_name_,
+                 extra_app_two_name_}}});
 
-        ecu_.prepare();
-        ecu_.start_apps();
-
-        server_v1_ = ecu_.apps_[server_v1_name_];
-        server_v2_ = ecu_.apps_[server_v2_name_];
-        client_v1_ = ecu_.apps_[client_v1_name_];
-        client_v2_ = ecu_.apps_[client_v2_name_];
-        prope_client_ = ecu_.apps_[prope_client_name_];
-        extra_app_one_ = ecu_.apps_[extra_app_one_name_];
-        extra_app_two_ = ecu_.apps_[extra_app_two_name_];
+        server_v1_ = get(ecu_, server_v1_name_);
+        server_v2_ = get(ecu_, server_v2_name_);
+        client_v1_ = get(ecu_, client_v1_name_);
+        client_v2_ = get(ecu_, client_v2_name_);
+        prope_client_ = get(ecu_, prope_client_name_);
+        extra_app_one_ = get(ecu_, extra_app_one_name_);
+        extra_app_two_ = get(ecu_, extra_app_two_name_);
     }
 
     std::string const prope_client_name_{"prope_client"};
@@ -64,12 +110,8 @@ struct test_multiversion_support_single_ecu : public base_fake_socket_fixture {
     std::string const extra_app_one_name_{"extra_app_one"};
     std::string const extra_app_two_name_{"extra_app_two"};
 
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
-    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
+    interface interface_v1_{si(0x1), {}, {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
+    interface interface_v2_{si(0x2), {}, {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
 
     ecu_setup ecu_{"single-ecu", ecu_config{boardnet::ecu_one_config}, *socket_manager_};
 
@@ -404,57 +446,33 @@ TEST_F(test_multiversion_support_single_ecu, when_v1_and_v2_are_reofferd_both_in
  * separate, not yet supported concern) -- it purely tests the consumer's bookkeeping of
  * two independently-discovered remote offers.
  */
-struct test_multiversion_support_aggregate_consumption : public base_fake_socket_fixture {
+struct test_multiversion_support_aggregate_consumption : public multiversion_fixture {
     void start_apps() {
-        provider_v1_ecu_.add_app(provider_v1_name_);
-        provider_v2_ecu_.add_app(provider_v2_name_);
-        consumer_ecu_.add_app(client_v1_name_);
-        consumer_ecu_.add_app(client_v2_name_);
-        consumer_ecu_.add_app("client_any");
+        start({{provider_v1_ecu_, {provider_v1_name_}},
+               {provider_v2_ecu_, {provider_v2_name_}},
+               {consumer_ecu_, {client_v1_name_, client_v2_name_, client_any_name_}}});
 
-        provider_v1_ecu_.prepare();
-        provider_v2_ecu_.prepare();
-        consumer_ecu_.prepare();
+        provider_v1_ = get(provider_v1_ecu_, provider_v1_name_);
+        provider_v2_ = get(provider_v2_ecu_, provider_v2_name_);
+        client_v1_ = get(consumer_ecu_, client_v1_name_);
+        client_v2_ = get(consumer_ecu_, client_v2_name_);
+        client_any_ = get(consumer_ecu_, client_any_name_);
 
-        provider_v1_ecu_.start_apps();
-        provider_v2_ecu_.start_apps();
-        consumer_ecu_.start_apps();
-
-        provider_v1_ = provider_v1_ecu_.apps_[provider_v1_name_];
-        provider_v2_ = provider_v2_ecu_.apps_[provider_v2_name_];
-        client_v1_ = consumer_ecu_.apps_[client_v1_name_];
-        client_v2_ = consumer_ecu_.apps_[client_v2_name_];
-        client_any_ = consumer_ecu_.apps_["client_any"];
-
-        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_any_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        await_registered({provider_v1_, provider_v2_, client_v1_, client_v2_, client_any_});
     }
 
     std::string const provider_v1_name_{"provider_v1"};
     std::string const provider_v2_name_{"provider_v2"};
     std::string const client_v1_name_{"client_v1"};
     std::string const client_v2_name_{"client_v2"};
+    std::string const client_any_name_{"client_any"};
 
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_RELIABLE}}};
-    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v1_{si(0x1), {}, {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v2_{si(0x2), {}, {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_RELIABLE}}};
 
     vsomeip::method_t const method_{0x1111};
     request request_v1_{interface_v1_.instance_, method_, vsomeip::message_type_e::MT_REQUEST, false, {}};
     request request_v2_{interface_v2_.instance_, method_, vsomeip::message_type_e::MT_REQUEST, false, {}};
-
-    // The SD multicast group address (VSOMEIP_SD_DEFAULT_MULTICAST); none of the ecu_configs used
-    // here override it. FindService/OfferService sent to this address still go out as an ordinary
-    // sendto() on the sender's own unicast SD socket -- joining the group is only needed to
-    // *receive* multicast traffic, so gating on this as the receiver party does not depend on
-    // whether the multicast join has completed.
-    boost::asio::ip::udp::endpoint const sd_multicast_ep_{boost::asio::ip::make_address("224.224.224.0"), 30490};
 
     // provider_v1_ecu_/provider_v2_ecu_ each offer only their own major -- reusing the
     // client-only boardnet::ecu_one_config/ecu_two_config bases (stripped of the unrelated
@@ -1558,25 +1576,15 @@ TEST_F(test_multiversion_support_aggregate_consumption, any_major_request_does_n
 
 // Selective eventgroups carry real client ids in the SD subscription; a non-selective one holds only
 // VSOMEIP_ROUTING_CLIENT, so the per-client StopSubscribe on release is observable only here.
-struct test_multiversion_release_selective : public base_fake_socket_fixture {
+struct test_multiversion_release_selective : public multiversion_fixture {
     void start_apps() {
-        consumer_ecu_.add_app(client_a_name_);
-        consumer_ecu_.add_app(client_b_name_);
-        provider_ecu_.add_app(server_name_);
+        start({{consumer_ecu_, {client_a_name_, client_b_name_}}, {provider_ecu_, {server_name_}}});
 
-        consumer_ecu_.prepare();
-        provider_ecu_.prepare();
+        client_a_ = get(consumer_ecu_, client_a_name_);
+        client_b_ = get(consumer_ecu_, client_b_name_);
+        server_ = get(provider_ecu_, server_name_);
 
-        consumer_ecu_.start_apps();
-        provider_ecu_.start_apps();
-
-        client_a_ = consumer_ecu_.apps_[client_a_name_];
-        client_b_ = consumer_ecu_.apps_[client_b_name_];
-        server_ = provider_ecu_.apps_[server_name_];
-
-        ASSERT_TRUE(client_a_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_b_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        await_registered({client_a_, client_b_, server_});
     }
 
     std::string const client_a_name_{"client_a"};
@@ -1584,9 +1592,7 @@ struct test_multiversion_release_selective : public base_fake_socket_fixture {
     std::string const server_name_{"server"};
 
     // One event in its own eventgroup, as selectivity requires.
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}},
-                            {}};
+    interface interface_v1_{si(0x1), {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}, {}};
     event_ids event_{interface_v1_.instance_, interface_v1_.events_[0]};
 
     std::shared_ptr<attribute_recorder<vsomeip::client_t>> subscribed_ = std::make_shared<attribute_recorder<vsomeip::client_t>>();
@@ -1638,9 +1644,7 @@ TEST_F(test_multiversion_release_selective, releasing_one_selective_subscriber_s
 TEST_F(test_multiversion_release_selective, notify_one_reaches_the_selective_subscriber_of_that_major) {
     start_apps();
 
-    interface const its_v2{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                           {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}},
-                           {}};
+    interface const its_v2{si(0x2), {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}, {}};
     event_ids const its_event{its_v2.instance_, its_v2.events_[0]};
 
     server_->register_group_subscription_handler(its_event,
@@ -1668,30 +1672,20 @@ TEST_F(test_multiversion_release_selective, notify_one_reaches_the_selective_sub
 }
 
 // Unreliable eventgroups have no connection teardown; the SD StopSubscribe is the provider's only signal.
-struct test_multiversion_release_unreliable : public base_fake_socket_fixture {
+struct test_multiversion_release_unreliable : public multiversion_fixture {
     void start_apps() {
-        consumer_ecu_.add_app(client_name_);
-        provider_ecu_.add_app(server_name_);
+        start({{consumer_ecu_, {client_name_}}, {provider_ecu_, {server_name_}}});
 
-        consumer_ecu_.prepare();
-        provider_ecu_.prepare();
+        client_ = get(consumer_ecu_, client_name_);
+        server_ = get(provider_ecu_, server_name_);
 
-        consumer_ecu_.start_apps();
-        provider_ecu_.start_apps();
-
-        client_ = consumer_ecu_.apps_[client_name_];
-        server_ = provider_ecu_.apps_[server_name_];
-
-        ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        await_registered({client_, server_});
     }
 
     std::string const client_name_{"client"};
     std::string const server_name_{"server"};
 
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
+    interface interface_v1_{si(0x1), {}, {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_UNRELIABLE}}};
     event_ids field_{interface_v1_.instance_, interface_v1_.fields_[0]};
 
     // Declared before the ecu_setups: the provider's subscription handler holds a reference.
@@ -1729,30 +1723,20 @@ TEST_F(test_multiversion_release_unreliable, releasing_sends_the_stop_subscribe_
 // release_service() takes no major, so the router recovers ANY_MAJOR from requested_services_, while
 // remote_services_ is keyed by the offered major: the exact lookup in clear_client_endpoints() misses
 // and the client endpoint is never stopped. Observable as the boardnet TCP connection staying up.
-struct test_multiversion_release_any_major_reliable : public base_fake_socket_fixture {
+struct test_multiversion_release_any_major_reliable : public multiversion_fixture {
     void start_apps() {
-        consumer_ecu_.add_app(client_name_);
-        consumer_ecu_.add_app(other_client_name_);
-        provider_ecu_.add_app(server_name_);
+        start({{consumer_ecu_, {client_name_, other_client_name_}}, {provider_ecu_, {server_name_}}});
 
-        consumer_ecu_.prepare();
-        provider_ecu_.prepare();
-
-        consumer_ecu_.start_apps();
-        provider_ecu_.start_apps();
-
-        client_ = consumer_ecu_.apps_[client_name_];
-        other_client_ = consumer_ecu_.apps_[other_client_name_];
-        server_ = provider_ecu_.apps_[server_name_];
+        client_ = get(consumer_ecu_, client_name_);
+        other_client_ = get(consumer_ecu_, other_client_name_);
+        server_ = get(provider_ecu_, server_name_);
     }
 
     std::string const client_name_{"client"};
     std::string const other_client_name_{"other_client"};
     std::string const server_name_{"server"};
 
-    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_RELIABLE}},
-                            {}};
+    interface interface_v2_{si(0x2), {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_RELIABLE}}, {}};
     event_ids event_{interface_v2_.instance_, interface_v2_.events_[0]};
 
     ecu_setup provider_ecu_{"provider", ecu_config{boardnet::ecu_one_config}.add_interface({interface_v2_}), *socket_manager_};
@@ -1826,31 +1810,19 @@ TEST_F(test_multiversion_release_any_major_reliable,
  *   - consumer_v1_ecu_ only ever requests/consumes, never offers v1 and v2.
  *
  */
-struct test_multiversion_support_aggregate_offering : public base_fake_socket_fixture {
+struct test_multiversion_support_aggregate_offering : public multiversion_fixture {
     // does not start the _any_ client
     void start_three_ecu_setup() {
-        provider_ecu_.add_app(provider_v1_name_);
-        provider_ecu_.add_app(provider_v2_name_);
-        consumer_v1_ecu_.add_app(client_v1_name_);
-        consumer_v2_ecu_.add_app(client_v2_name_);
+        start({{provider_ecu_, {provider_v1_name_, provider_v2_name_}},
+               {consumer_v1_ecu_, {client_v1_name_}},
+               {consumer_v2_ecu_, {client_v2_name_}}});
 
-        provider_ecu_.prepare();
-        consumer_v1_ecu_.prepare();
-        consumer_v2_ecu_.prepare();
+        provider_v1_ = get(provider_ecu_, provider_v1_name_);
+        provider_v2_ = get(provider_ecu_, provider_v2_name_);
+        client_v1_ = get(consumer_v1_ecu_, client_v1_name_);
+        client_v2_ = get(consumer_v2_ecu_, client_v2_name_);
 
-        provider_ecu_.start_apps();
-        consumer_v1_ecu_.start_apps();
-        consumer_v2_ecu_.start_apps();
-
-        provider_v1_ = provider_ecu_.apps_[provider_v1_name_];
-        provider_v2_ = provider_ecu_.apps_[provider_v2_name_];
-        client_v1_ = consumer_v1_ecu_.apps_[client_v1_name_];
-        client_v2_ = consumer_v2_ecu_.apps_[client_v2_name_];
-
-        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_NO_FATAL_FAILURE(await_registered({provider_v1_, provider_v2_, client_v1_, client_v2_}));
 
         ASSERT_TRUE(set_udp_data_pipe({std::nullopt, provider_ecu_.router_name_}, udp_party::any(), provider_send_gate_->get_data_pipe()));
         ASSERT_TRUE(set_udp_data_pipe({std::nullopt, consumer_v1_ecu_.router_name_}, udp_party::any(),
@@ -1859,29 +1831,16 @@ struct test_multiversion_support_aggregate_offering : public base_fake_socket_fi
                                       consumer_v2_send_gate_->get_data_pipe()));
     }
     void start_two_ecu_setup() {
-        provider_ecu_.add_app(provider_v1_name_);
-        provider_ecu_.add_app(provider_v2_name_);
-        consumer_v1_ecu_.add_app(client_v1_name_);
-        consumer_v1_ecu_.add_app(client_v2_name_);
-        consumer_v1_ecu_.add_app(client_any_name_);
+        start({{provider_ecu_, {provider_v1_name_, provider_v2_name_}},
+               {consumer_v1_ecu_, {client_v1_name_, client_v2_name_, client_any_name_}}});
 
-        provider_ecu_.prepare();
-        consumer_v1_ecu_.prepare();
+        provider_v1_ = get(provider_ecu_, provider_v1_name_);
+        provider_v2_ = get(provider_ecu_, provider_v2_name_);
+        client_v1_ = get(consumer_v1_ecu_, client_v1_name_);
+        client_v2_ = get(consumer_v1_ecu_, client_v2_name_);
+        client_any_ = get(consumer_v1_ecu_, client_any_name_);
 
-        provider_ecu_.start_apps();
-        consumer_v1_ecu_.start_apps();
-
-        provider_v1_ = provider_ecu_.apps_[provider_v1_name_];
-        provider_v2_ = provider_ecu_.apps_[provider_v2_name_];
-        client_v1_ = consumer_v1_ecu_.apps_[client_v1_name_];
-        client_v2_ = consumer_v1_ecu_.apps_[client_v2_name_];
-        client_any_ = consumer_v1_ecu_.apps_[client_any_name_];
-
-        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_any_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_NO_FATAL_FAILURE(await_registered({provider_v1_, provider_v2_, client_v1_, client_v2_, client_any_}));
 
         ASSERT_TRUE(set_udp_data_pipe({std::nullopt, provider_ecu_.router_name_}, udp_party::any(), provider_send_gate_->get_data_pipe()));
         ASSERT_TRUE(
@@ -1896,23 +1855,12 @@ struct test_multiversion_support_aggregate_offering : public base_fake_socket_fi
     std::string const local_client_v1_name_{"local_client_v1"};
     std::string const local_client_v2_name_{"local_client_v2"};
 
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_RELIABLE}}};
-    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                            {},
-                            {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v1_{si(0x1), {}, {event_spec{0x8001, {0x8001}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v2_{si(0x2), {}, {event_spec{0x8002, {0x8002}, vsomeip::reliability_type_e::RT_RELIABLE}}};
 
     vsomeip::method_t const method_{0x1111};
     request request_v1_{interface_v1_.instance_, method_, vsomeip::message_type_e::MT_REQUEST, false, {}};
     request request_v2_{interface_v2_.instance_, method_, vsomeip::message_type_e::MT_REQUEST, false, {}};
-
-    // The SD multicast group address (VSOMEIP_SD_DEFAULT_MULTICAST); none of the ecu_configs used
-    // here override it. FindService/OfferService sent to this address still go out as an ordinary
-    // sendto() on the sender's own unicast SD socket -- joining the group is only needed to
-    // *receive* multicast traffic, so gating on this as the receiver party does not depend on
-    // whether the multicast join has completed.
-    boost::asio::ip::udp::endpoint const sd_multicast_ep_{boost::asio::ip::make_address("224.224.224.0"), 30490};
 
     // provider_v1_ecu_/provider_v2_ecu_ each offer only their own major -- reusing the
     // client-only boardnet::ecu_one_config/ecu_two_config bases (stripped of the unrelated
@@ -2498,32 +2446,21 @@ TEST_F(test_multiversion_support_aggregate_offering, v2_with_any_instance_become
 
 // Three-ECU topology of test_multiversion_support_aggregate_consumption, with both majors reusing
 // the same event id and the same eventgroup id.
-struct test_multiversion_support_aggregate_events : public base_fake_socket_fixture {
+struct test_multiversion_support_aggregate_events : public multiversion_fixture {
     void start_apps() {
-        provider_v1_ecu_.add_app(provider_v1_name_);
-        provider_v2_ecu_.add_app(provider_v2_name_);
-        consumer_ecu_.add_app(client_v1_name_);
-        consumer_ecu_.add_app(client_v2_name_);
+        start({{provider_v1_ecu_, {provider_v1_name_}},
+               {provider_v2_ecu_, {provider_v2_name_}},
+               {consumer_ecu_, {client_v1_name_, client_v2_name_}}});
 
-        provider_v1_ecu_.prepare();
-        provider_v2_ecu_.prepare();
-        consumer_ecu_.prepare();
+        provider_v1_ = get(provider_v1_ecu_, provider_v1_name_);
+        provider_v2_ = get(provider_v2_ecu_, provider_v2_name_);
+        client_v1_ = get(consumer_ecu_, client_v1_name_);
+        client_v2_ = get(consumer_ecu_, client_v2_name_);
 
-        provider_v1_ecu_.start_apps();
-        provider_v2_ecu_.start_apps();
-        consumer_ecu_.start_apps();
-
-        provider_v1_ = provider_v1_ecu_.apps_[provider_v1_name_];
-        provider_v2_ = provider_v2_ecu_.apps_[provider_v2_name_];
-        client_v1_ = consumer_ecu_.apps_[client_v1_name_];
-        client_v2_ = consumer_ecu_.apps_[client_v2_name_];
-
-        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        await_registered({provider_v1_, provider_v2_, client_v1_, client_v2_});
     }
 
+    // Each provider ECU hosts exactly one major, so a recorded subscription proves which major it reached.
     void offer_and_subscribe_both() {
         record_remote_subscriptions(provider_v1_, field_v1_, subscribed_at_v1_);
         record_remote_subscriptions(provider_v2_, field_v2_, subscribed_at_v2_);
@@ -2564,16 +2501,6 @@ struct test_multiversion_support_aggregate_events : public base_fake_socket_fixt
     someip_sd_record_message const stop_subscribe_{sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0};
     someip_sd_record_message const nack_{sd::entry_type_e::SUBSCRIBE_EVENTGROUP_ACK, 0};
 
-    // Each provider ECU hosts exactly one major, so a record here proves the subscription reached
-    // that major's provider. The consumer-side callback cannot be used: the local SUBSCRIBE_ACK is
-    // sent even when SD dropped the subscription.
-    void record_remote_subscriptions(app* _provider, event_ids const& _ei, attribute_recorder<bool>& _record) {
-        _provider->register_group_subscription_handler(_ei, [&_record](client_t, uid_t, gid_t, std::string const&, bool _is_subscribed) {
-            _record.record(_is_subscribed);
-            return true;
-        });
-    }
-
     std::string const provider_v1_name_{"provider_v1"};
     std::string const provider_v2_name_{"provider_v2"};
     std::string const client_v1_name_{"client_v1"};
@@ -2582,12 +2509,8 @@ struct test_multiversion_support_aggregate_events : public base_fake_socket_fixt
     static constexpr vsomeip::event_t shared_event_{0x8001};
     static constexpr vsomeip::eventgroup_t shared_eventgroup_{0x8001};
 
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {},
-                            {event_spec{shared_event_, {shared_eventgroup_}, vsomeip::reliability_type_e::RT_RELIABLE}}};
-    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                            {},
-                            {event_spec{shared_event_, {shared_eventgroup_}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v1_{si(0x1), {}, {event_spec{shared_event_, {shared_eventgroup_}, vsomeip::reliability_type_e::RT_RELIABLE}}};
+    interface interface_v2_{si(0x2), {}, {event_spec{shared_event_, {shared_eventgroup_}, vsomeip::reliability_type_e::RT_RELIABLE}}};
 
     event_ids field_v1_{interface_v1_.instance_, interface_v1_.fields_[0]};
     event_ids field_v2_{interface_v2_.instance_, interface_v2_.fields_[0]};
@@ -3090,40 +3013,18 @@ TEST_F(test_multiversion_support_aggregate_events, stopping_v1_offer_keeps_v2_no
 
 // Same three-ECU topology, but each major defines an event the other one does not. No eventgroup id
 // is shared, so the two subscriptions never meet in service_discovery_impl::subscribed_.
-struct test_multiversion_support_exclusive_events : public base_fake_socket_fixture {
+struct test_multiversion_support_exclusive_events : public multiversion_fixture {
     void start_apps() {
-        provider_v1_ecu_.add_app(provider_v1_name_);
-        provider_v2_ecu_.add_app(provider_v2_name_);
-        consumer_ecu_.add_app(client_v1_name_);
-        consumer_ecu_.add_app(client_v2_name_);
+        start({{provider_v1_ecu_, {provider_v1_name_}},
+               {provider_v2_ecu_, {provider_v2_name_}},
+               {consumer_ecu_, {client_v1_name_, client_v2_name_}}});
 
-        provider_v1_ecu_.prepare();
-        provider_v2_ecu_.prepare();
-        consumer_ecu_.prepare();
+        provider_v1_ = get(provider_v1_ecu_, provider_v1_name_);
+        provider_v2_ = get(provider_v2_ecu_, provider_v2_name_);
+        client_v1_ = get(consumer_ecu_, client_v1_name_);
+        client_v2_ = get(consumer_ecu_, client_v2_name_);
 
-        provider_v1_ecu_.start_apps();
-        provider_v2_ecu_.start_apps();
-        consumer_ecu_.start_apps();
-
-        provider_v1_ = provider_v1_ecu_.apps_[provider_v1_name_];
-        provider_v2_ = provider_v2_ecu_.apps_[provider_v2_name_];
-        client_v1_ = consumer_ecu_.apps_[client_v1_name_];
-        client_v2_ = consumer_ecu_.apps_[client_v2_name_];
-
-        ASSERT_TRUE(provider_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(provider_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v1_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_v2_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-    }
-
-    // Each provider ECU hosts exactly one major, so a record here proves the subscription reached
-    // that major's provider. The consumer-side callback cannot be used: the local SUBSCRIBE_ACK is
-    // sent even when the subscription was dropped or NACKed.
-    void record_remote_subscriptions(app* _provider, event_ids const& _ei, attribute_recorder<bool>& _record) {
-        _provider->register_group_subscription_handler(_ei, [&_record](client_t, uid_t, gid_t, std::string const&, bool _is_subscribed) {
-            _record.record(_is_subscribed);
-            return true;
-        });
+        await_registered({provider_v1_, provider_v2_, client_v1_, client_v2_});
     }
 
     std::string const provider_v1_name_{"provider_v1"};
@@ -3137,12 +3038,8 @@ struct test_multiversion_support_exclusive_events : public base_fake_socket_fixt
     static constexpr vsomeip::eventgroup_t exclusive_group_v2_{0x9002};
     static constexpr auto reliable_{vsomeip::reliability_type_e::RT_RELIABLE};
 
-    interface interface_v1_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                            {event_spec{exclusive_event_v1_, {exclusive_group_v1_}, reliable_}},
-                            {}};
-    interface interface_v2_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x2, .minor_ = 0x0},
-                            {event_spec{exclusive_event_v2_, {exclusive_group_v2_}, reliable_}},
-                            {}};
+    interface interface_v1_{si(0x1), {event_spec{exclusive_event_v1_, {exclusive_group_v1_}, reliable_}}, {}};
+    interface interface_v2_{si(0x2), {event_spec{exclusive_event_v2_, {exclusive_group_v2_}, reliable_}}, {}};
 
     event_ids only_v1_{interface_v1_.instance_, exclusive_event_v1_, exclusive_group_v1_};
     event_ids only_v2_{interface_v2_.instance_, exclusive_event_v2_, exclusive_group_v2_};
@@ -3302,22 +3199,14 @@ TEST_F(test_multiversion_support_exclusive_events, an_exclusive_event_is_consuma
 // ANY_EVENT but only ever registers field_a_, so a notification for field_b_ arrives for an event
 // the host does not know -- deliver_notification()'s caching branch, gated by
 // has_subscribed_eventgroup().
-struct test_multiversion_any_major_requester : public base_fake_socket_fixture {
+struct test_multiversion_any_major_requester : public multiversion_fixture {
     void start_apps() {
-        provider_ecu_.add_app(provider_name_);
-        consumer_ecu_.add_app(client_name_);
+        start({{provider_ecu_, {provider_name_}}, {consumer_ecu_, {client_name_}}});
 
-        provider_ecu_.prepare();
-        consumer_ecu_.prepare();
+        provider_ = get(provider_ecu_, provider_name_);
+        client_ = get(consumer_ecu_, client_name_);
 
-        provider_ecu_.start_apps();
-        consumer_ecu_.start_apps();
-
-        provider_ = provider_ecu_.apps_[provider_name_];
-        client_ = consumer_ecu_.apps_[client_name_];
-
-        ASSERT_TRUE(provider_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        await_registered({provider_, client_});
     }
 
     std::string const provider_name_{"provider_v1"};
@@ -3328,9 +3217,7 @@ struct test_multiversion_any_major_requester : public base_fake_socket_fixture {
     static constexpr vsomeip::eventgroup_t shared_group_{0x8001};
     static constexpr auto reliable_{vsomeip::reliability_type_e::RT_RELIABLE};
 
-    interface interface_{service_instance{.service_ = 0x1000, .instance_ = 0x1, .major_ = 0x1, .minor_ = 0x0},
-                         {},
-                         {event_spec{event_a_, {shared_group_}, reliable_}, event_spec{event_b_, {shared_group_}, reliable_}}};
+    interface interface_{si(0x1), {}, {event_spec{event_a_, {shared_group_}, reliable_}, event_spec{event_b_, {shared_group_}, reliable_}}};
 
     event_ids field_a_{interface_.instance_, event_a_, shared_group_};
     event_ids field_b_{interface_.instance_, event_b_, shared_group_};
