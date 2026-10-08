@@ -28,6 +28,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <future>
@@ -39,6 +40,36 @@
 #include <thread>
 
 namespace vsomeip_v3::testing {
+
+// Behaves like an asio_timer, but reports every arming (timer::start() always sets the expiry
+// first) together with its interval. Lets a test tell that a timer was started without having to
+// wait for it to expire.
+class reporting_timer : public abstract_timer {
+public:
+    using on_armed_t = std::function<void(std::chrono::milliseconds)>;
+
+    reporting_timer(boost::asio::io_context& _io, on_armed_t _on_armed) :
+        timer_(std::make_unique<asio_timer>(_io)), on_armed_(std::move(_on_armed)) { }
+
+    void cancel() override { timer_->cancel(); }
+
+    void expires_after(std::chrono::milliseconds _timeout) override {
+        on_armed_(_timeout);
+        timer_->expires_after(_timeout);
+    }
+
+    void expires_at(std::chrono::steady_clock::time_point _expiration) override {
+        ADD_FAILURE() << "reporting_timer was armed through expires_at";
+        timer_->expires_at(_expiration);
+    }
+
+    void async_wait(handler_t _handler) override { timer_->async_wait(std::move(_handler)); }
+
+private:
+    // held as abstract_timer, as asio_timer only implements the interface privately
+    std::unique_ptr<abstract_timer> timer_;
+    on_armed_t on_armed_;
+};
 
 class stub_factory : public abstract_socket_factory {
 public:
@@ -57,6 +88,9 @@ public:
         return std::make_unique<asio_udp_socket>(_io);
     }
     virtual std::unique_ptr<abstract_timer> create_timer(boost::asio::io_context& _io) override {
+        if (on_timer_armed_) {
+            return std::make_unique<reporting_timer>(_io, on_timer_armed_);
+        }
         return std::make_unique<asio_timer>(_io);
     }
     std::shared_ptr<abstract_clock> get_clock() override {
@@ -69,6 +103,10 @@ public:
         return std::make_unique<asio_uds_acceptor>(_io);
     }
 #endif
+
+    // When set, timers created from now on report each arming with its interval. Only a copy is
+    // handed to each timer, so set it before the io threads run and leave it alone afterwards.
+    reporting_timer::on_armed_t on_timer_armed_;
 };
 
 struct test_uds_local_endpoint : base_endpoint_fixture {
@@ -299,6 +337,42 @@ TEST_F(test_uds_local_endpoint, a_terminated_endpoint_abandons_the_rest_of_the_b
     EXPECT_EQ(dispatched, 1u);
 }
 
+TEST_F(test_uds_local_endpoint, a_flushing_endpoint_does_not_dispatch_incoming_messages) {
+
+    auto server = create_server();
+    auto client = create_client_ep();
+    server->start([this](auto const& ep) {
+        server_eps_.push_back(ep);
+        ep->start();
+    });
+    client->start();
+    io_.poll();
+    auto config_msg = create_client_config_command();
+    client->send(&config_msg[0], static_cast<uint32_t>(config_msg.size()));
+    io_.poll();
+    ASSERT_FALSE(server_eps_.empty());
+
+    std::optional<bool> cleanup_due_to_error;
+    // Deliberately does not stop the endpoint, so that the offers below still reach it after the flush completed.
+    server_eps_.front()->register_cleanup_handler([&](bool _due_to_error) { cleanup_due_to_error = _due_to_error; });
+
+    server_eps_.front()->start_flushing();
+
+    EXPECT_CALL(*server_routing_host_, on_message).Times(0);
+    std::vector<std::vector<byte_t>> send_messages;
+    add_offer_service_command(send_messages);
+    add_offer_service_command(send_messages);
+    add_offer_service_command(send_messages);
+    for (auto const& msg : send_messages) {
+        client->send(&msg[0], static_cast<uint32_t>(msg.size()));
+    }
+    io_.poll();
+
+    // Discarding the incoming messages must not turn the flush into an error.
+    ASSERT_TRUE(cleanup_due_to_error.has_value());
+    EXPECT_FALSE(*cleanup_due_to_error);
+}
+
 // Fixture for the cases that need the io context to be driven by more than one thread: the
 // interleaving under test is a cleanup running on one thread while another is inside on_message.
 struct test_uds_local_endpoint_mt : test_uds_local_endpoint {
@@ -481,6 +555,96 @@ TEST_F(test_uds_local_endpoint_mt, a_flush_completing_during_a_dispatch_is_held_
     std::unique_lock lk{m_};
     EXPECT_TRUE(cv_.wait_for(lk, std::chrono::seconds(5), [this] { return events_.size() == 2; })) << "cleanup handler was not invoked";
     // A completed flush is a deliberate shutdown, so it must not be reported as an error.
+    EXPECT_EQ(events_, (std::vector<std::string>{"dispatch_end", "cleanup_flushed"}));
+}
+
+TEST_F(test_uds_local_endpoint_mt, a_flush_started_during_a_dispatch_drops_the_rest_of_the_burst) {
+
+    connect_and_settle();
+    block_in_on_message();
+    // Only the first message of the burst may be dispatched.
+    EXPECT_CALL(*server_routing_host_, on_message).Times(1);
+
+    server_eps_.front()->register_cleanup_handler([this](bool _due_to_error) {
+        {
+            std::scoped_lock lk{m_};
+            events_.emplace_back(_due_to_error ? "cleanup_error" : "cleanup_flushed");
+        }
+        cv_.notify_all();
+    });
+
+    run_io(2);
+
+    // Both messages go out in a single write, so that they are received as one burst.
+    std::vector<std::vector<byte_t>> send_messages;
+    add_offer_service_command(send_messages);
+    add_offer_service_command(send_messages);
+    std::vector<byte_t> burst;
+    for (auto const& msg : send_messages) {
+        burst.insert(burst.end(), msg.begin(), msg.end());
+    }
+    client_->send(&burst[0], static_cast<uint32_t>(burst.size()));
+
+    await_dispatch();
+    server_eps_.front()->start_flushing();
+    release_dispatch();
+
+    std::unique_lock lk{m_};
+    EXPECT_TRUE(cv_.wait_for(lk, std::chrono::seconds(5), [this] { return events_.size() == 2; })) << "cleanup handler was not invoked";
+    EXPECT_EQ(events_, (std::vector<std::string>{"dispatch_end", "cleanup_flushed"}));
+}
+
+TEST_F(test_uds_local_endpoint_mt, a_flush_started_during_the_last_dispatch_does_not_start_the_sanity_timer) {
+
+    connect_and_settle();
+    block_in_on_message();
+
+    // The partial message sanity timer is the only 5s timer of a local endpoint (see process()), so
+    // an arming with that interval is the sanity timer being started. Must be set before run_io(),
+    // as the timer is only created on the first partial read, on an io thread.
+    factory_->on_timer_armed_ = [this](std::chrono::milliseconds _timeout) {
+        if (_timeout == std::chrono::seconds(5)) {
+            {
+                std::scoped_lock lk{m_};
+                events_.emplace_back("sanity_timer_armed");
+            }
+            cv_.notify_all();
+        }
+    };
+
+    server_eps_.front()->register_cleanup_handler([this](bool _due_to_error) {
+        {
+            std::scoped_lock lk{m_};
+            events_.emplace_back(_due_to_error ? "cleanup_error" : "cleanup_flushed");
+        }
+        cv_.notify_all();
+    });
+
+    run_io(2);
+
+    // A complete offer followed by a truncated one, in a single write: the only message that can be
+    // dispatched is the last one of the burst, and a partial message remains in the buffer after it.
+    std::vector<std::vector<byte_t>> send_messages;
+    add_offer_service_command(send_messages);
+    add_offer_service_command(send_messages);
+    std::vector<byte_t> burst{send_messages[0]};
+    burst.insert(burst.end(), send_messages[1].begin(), send_messages[1].end() - 2);
+    client_->send(&burst[0], static_cast<uint32_t>(burst.size()));
+
+    await_dispatch();
+    server_eps_.front()->start_flushing();
+    release_dispatch();
+
+    std::unique_lock lk{m_};
+    EXPECT_TRUE(cv_.wait_for(lk, std::chrono::seconds(5), [this] {
+        return std::find(events_.begin(), events_.end(), "cleanup_flushed") != events_.end();
+    })) << "cleanup handler was not invoked";
+    // Were the flush not noticed after the last dispatch, the same process() call would go on to arm
+    // the sanity timer for the partial message, right after running the held back flushed cleanup.
+    // The short wait covers that.
+    EXPECT_FALSE(cv_.wait_for(lk, std::chrono::milliseconds(200), [this] {
+        return std::find(events_.begin(), events_.end(), "sanity_timer_armed") != events_.end();
+    })) << "the sanity timer was started on the flushing endpoint";
     EXPECT_EQ(events_, (std::vector<std::string>{"dispatch_end", "cleanup_flushed"}));
 }
 

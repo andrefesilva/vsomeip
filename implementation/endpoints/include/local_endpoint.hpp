@@ -257,6 +257,8 @@ public:
     /**
      * Sets an internal flag to reject any new send and trigger the
      * cleanup_handler_ as soon as all data has been flushed.
+     * From that moment on, incoming messages are discarded instead of dispatched,
+     * including the remainder of a batch that is currently being dispatched.
      **/
     void start_flushing();
 
@@ -312,6 +314,11 @@ private:
     void connect_cbk(boost::system::error_code const& _ec);
     void send_cbk(boost::system::error_code const& _ec, size_t _bytes, std::vector<uint8_t> _send_buffer);
     void receive_cbk(boost::system::error_code const& _ec, size_t _bytes);
+
+    /**
+     * @brief Dispatches every complete message in the receive buffer, then schedules the next read.
+     * @return false if the caller must escalate, true otherwise.
+     */
     [[nodiscard]] bool process(size_t _new_bytes, std::unique_lock<std::mutex>& _lock);
 
     void assignment_timeout();
@@ -335,7 +342,8 @@ private:
     // nothing should have been send.
     bool is_started_{false};
     bool is_sending_{false};
-    // this flag is stating whether a graceful shutdown is targeted (note that this flag can be set for an endpoint in any of the states
+    // this flag is stating whether a graceful shutdown is targeted, meaning new sends are rejected and incoming messages are discarded
+    // (note that this flag can be set for an endpoint in any of the states
     // INIT, CONNECTING, CONNECTED and can therefore not be easily represented as a state itself)
     bool is_flushing_{false};
     state_e state_{state_e::STOPPED};

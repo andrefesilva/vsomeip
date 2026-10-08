@@ -182,27 +182,13 @@ async::hook routing_manager_client::stop() {
         ++provider_token_;
     }
 
-    async::hook when_sender_stopped;
+    async::hook when_no_sender;
     {
         std::scoped_lock lock{mutex_};
         state_machine_->target_shutdown();
         // Transition to ST_DEREGISTERED so that a subsequent start() finds a clean state.
-
-        if (on_sender_stopped_) {
-            VSOMEIP_INFO_P << "Interrupting the reconnect process due to stop";
-        }
-
-        on_sender_stopped_ = async::trigger(io_);
-        when_sender_stopped = on_sender_stopped_.get_hook();
         state_machine_->deregistered();
-        if (sender_) {
-            VSOMEIP_INFO_P << "starting to flush the sender";
-            sender_->start_flushing();
-        } else {
-            VSOMEIP_INFO_P << "sender already cleared";
-            on_sender_stopped_.fire();
-            on_sender_stopped_ = {};
-        }
+        when_no_sender = flush_sender(lock);
         auto stop_and_clear = [](auto& receiver) {
             if (receiver) {
                 receiver->stop();
@@ -222,40 +208,25 @@ async::hook routing_manager_client::stop() {
         version_logger_->stop();
     }
 
-    auto when_no_provider_eps = flush_provider().when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
-        VSOMEIP_WARNING << "rmc::stop: producer endpoints were not flushed and stopped within time. Requesting their cleanup";
-        if (auto self = weak_self.lock(); self) {
-            std::scoped_lock lock{self->provider_mutex_};
-            for (auto const& [client, data] : self->provider_endpoints_) {
-                if (data.active_) {
-                    data.active_->request_cleanup(true);
-                }
-            }
-        }
-    });
+    // Unlike the consumer endpoints below, the provider endpoints can be flushed right away, without
+    // waiting for the sender to stop.
+    auto when_no_provider_eps = flush_provider();
 
-    auto when_no_consumer_eps = flush_consumer().when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
-        VSOMEIP_WARNING << "rmc::stop: consumer endpoints were not flushed within time. Requesting their cleanup";
+    // The consumer endpoints are only flushed once the sender stopped. Because once the sender is stopped no in-flight routing info is used
+    // to create a new consumer endpoint.
+    // When the sender is cleaned up, no new routing info can be received, and the routing info for which there
+    // wasn't a consumer endpoint created was also removed by the flush_sender. As such, no consumer endpoints
+    // can be created after the sender has finished its flush.
+    async::trigger consumers_stopped{io_};
+    auto when_no_consumer_eps = consumers_stopped.get_hook();
+    auto when_sender_done = when_no_sender.then([weak_self = weak_from_this(), consumers_stopped] {
         if (auto self = weak_self.lock(); self) {
-            std::scoped_lock lock{self->consumer_mutex_};
-            for (auto const& [client, data] : self->consumer_) {
-                if (data.ep_) {
-                    data.ep_->request_cleanup(true);
-                }
-            }
-        }
-    });
-    auto when_no_sender = when_sender_stopped.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
-        VSOMEIP_WARNING << "rmc::stop: sender was not flushed and stopped within time. Requesting its cleanup";
-        if (auto self = weak_self.lock(); self) {
-            std::scoped_lock lock{self->mutex_};
-            if (self->sender_) {
-                self->sender_->request_cleanup(false);
-            }
+            VSOMEIP_INFO << "rmc::stop: sender stopped. Flushing the consumer endpoints";
+            self->flush_consumer().then([consumers_stopped] { consumers_stopped.fire(); });
         }
     });
     auto when_no_eps = async::when_all(when_no_provider_eps, when_no_consumer_eps);
-    auto when_all_stopped = async::when_all(when_no_eps, when_no_sender);
+    auto when_all_stopped = async::when_all(when_no_eps, when_sender_done);
     return when_all_stopped.then([weak_self = weak_from_this()] {
         if (auto self = weak_self.lock(); self) {
             VSOMEIP_INFO << "rmc::stop: All endpoints cleared. Finishing the shutdown";
@@ -1672,6 +1643,24 @@ void routing_manager_client::reconnect() {
         ++provider_token_;
     }
     {
+        // No further routing info arrives as the sender was stopped before reconnecting.
+        // Drop the routing info for which no consumer endpoint was created, so that a racing subscribe or
+        // request can no longer create one once the consumer endpoints flush begins.
+        // The entries with an endpoint are kept.
+        std::scoped_lock consumer_lock{consumer_mutex_};
+        for (auto it = consumer_.begin(); it != consumer_.end();) {
+            if (!it->second.ep_) {
+                auto removed = available_services_.remove_all_for_client(it->first);
+                for (auto const& [its_service, its_instance, its_major, its_minor, its_client] : removed) {
+                    on_stop_offer_service(its_service, its_instance, its_major, its_minor, true, consumer_lock);
+                }
+                it = consumer_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    {
         std::scoped_lock lock{mutex_};
         // ensure that no further connections will be added to the list of endpoints
         if (routing_mode_ != routing_mode_e::UDS_ONLY) {
@@ -1711,7 +1700,6 @@ void routing_manager_client::reconnect() {
 }
 
 void routing_manager_client::finish_reconnect() {
-
     // Clean-up Phase
     //
     {
@@ -3582,6 +3570,54 @@ std::optional<vsomeip_sec_client_t> routing_manager_client::find_consumer_sec_cl
     return it == consumer_.end() ? std::nullopt : it->second.sec_client_;
 }
 
+async::hook routing_manager_client::flush_sender([[maybe_unused]] std::scoped_lock<std::mutex> const& _lock) {
+    // Takes the lock of the caller, so that stop() flushes the sender within the same critical
+    // section in which it deregistered
+    if (on_sender_stopped_) {
+        VSOMEIP_INFO_P << "Interrupting the reconnect process due to stop";
+    }
+    on_sender_stopped_ = async::trigger(io_);
+    auto ret = on_sender_stopped_.get_hook();
+    if (sender_) {
+        VSOMEIP_INFO_P << "starting to flush the sender";
+        sender_->start_flushing();
+    } else {
+        VSOMEIP_INFO_P << "sender already cleared";
+        on_sender_stopped_.fire();
+        on_sender_stopped_ = {};
+    }
+    // Flushing that takes longer than expected escalates to a cleanup of the sender, whose
+    // cleanup handler then still fires the trigger the returned hook waits on
+    auto when_stopped = ret.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
+        VSOMEIP_WARNING << "rmc::stop: sender was not flushed and stopped within time. Requesting its cleanup";
+        if (auto self = weak_self.lock(); self) {
+            std::scoped_lock lock{self->mutex_};
+            if (self->sender_) {
+                self->sender_->request_cleanup(true);
+            }
+        }
+    });
+    // No further routing info arrives once the sender is stopped. Drop the routing info for which no consumer endpoint
+    // was created, so that a racing subscribe or request can no longer create one once the consumer endpoints flush begins.
+    // The entries with an endpoint are kept.
+    return when_stopped.then([weak_self = weak_from_this()] {
+        if (auto self = weak_self.lock(); self) {
+            std::scoped_lock its_lock{self->consumer_mutex_};
+            for (auto it = self->consumer_.begin(); it != self->consumer_.end();) {
+                if (!it->second.ep_) {
+                    auto removed = self->available_services_.remove_all_for_client(it->first);
+                    for (auto const& [its_service, its_instance, its_major, its_minor, its_client] : removed) {
+                        self->on_stop_offer_service(its_service, its_instance, its_major, its_minor, true, its_lock);
+                    }
+                    it = self->consumer_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    });
+}
+
 async::hook routing_manager_client::flush_consumer() {
     std::scoped_lock its_lock{consumer_mutex_};
     if (on_consumer_cleaned_) {
@@ -3604,7 +3640,19 @@ async::hook routing_manager_client::flush_consumer() {
         on_consumer_cleaned_.fire();
         on_consumer_cleaned_ = {};
     }
-    return ret;
+    // Flushing that takes longer than expected escalates to a cleanup of the endpoints, whose
+    // cleanup handlers then still fire the trigger the returned hook waits on
+    return ret.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
+        VSOMEIP_WARNING << "rmc::stop: consumer endpoints were not flushed within time. Requesting their cleanup";
+        if (auto self = weak_self.lock(); self) {
+            std::scoped_lock lock{self->consumer_mutex_};
+            for (auto const& [client, data] : self->consumer_) {
+                if (data.ep_) {
+                    data.ep_->request_cleanup(true);
+                }
+            }
+        }
+    });
 }
 
 async::hook routing_manager_client::flush_provider() {
@@ -3633,7 +3681,19 @@ async::hook routing_manager_client::flush_provider() {
         on_provider_cleaned_.fire();
         on_provider_cleaned_ = {};
     }
-    return ret;
+    // Flushing that takes longer than expected escalates to a cleanup of the endpoints, whose
+    // cleanup handlers then still fire the trigger the returned hook waits on
+    return ret.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
+        VSOMEIP_WARNING << "rmc::stop: producer endpoints were not flushed and stopped within time. Requesting their cleanup";
+        if (auto self = weak_self.lock(); self) {
+            std::scoped_lock lock{self->provider_mutex_};
+            for (auto const& [client, data] : self->provider_endpoints_) {
+                if (data.active_) {
+                    data.active_->request_cleanup(true);
+                }
+            }
+        }
+    });
 }
 
 std::shared_ptr<policy_manager_impl> routing_manager_client::get_policy_manager() const {

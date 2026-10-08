@@ -2407,4 +2407,52 @@ TEST_F(test_payload_set, stale_stop_offer_must_not_clear_reoffered_field_payload
 
     EXPECT_TRUE(client_->message_record_.wait_for(field_checker_)) << client_->message_record_;
 }
+
+struct test_late_routing_info : public test_client_lifecycle {
+    // Start the applications without the client receiving the offer for the event.
+    // This way, the subscription stay on client pending subscriptions,
+    // and will only be sent after the offer is received by the client.
+    void start_apps_without_offer() {
+        start_router();
+
+        server_ = start_client(server_name_);
+        ASSERT_NE(server_, nullptr);
+        ASSERT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        server_->offer_event(offered_event_.si_, offered_event_.to_event_spec());
+
+        start_client_app();
+    }
+};
+
+// Ensure that no consumer endpoint is created after the client has began to stop
+// To do so, begin the stop process on the client, and after deliver an offer for a service
+// which the client has subscribed, and as such is stored in its pending subscriptions
+TEST_F(test_late_routing_info, no_consumer_endpoint_is_created_once_the_client_is_deregistered) {
+    start_apps_without_offer();
+
+    // Subscribe the service so it stays on the client pending subscriptions
+    client_->request_service(service_instance_);
+    client_->subscribe_event(offered_event_);
+
+    // Dont let the offer reach the client
+    // The offer will sit on the client socket, waiting to be processed
+    clear_command_record(client_name_, routingmanager_name_);
+    ASSERT_TRUE(delay_message_processing(client_name_, routingmanager_name_, true, socket_role::client));
+    server_->offer(service_instance_);
+    // Ensure that the offer has reached the client socket
+    ASSERT_TRUE(wait_for_command(client_name_, routingmanager_name_, vsomeip_v3::protocol::id_e::ROUTING_INFO_ID, socket_role::client));
+
+    // Keep the client sender endpoint busy with a send that never completes, so the flush started by
+    // stop() cannot finish before the offer is processed.
+    ASSERT_TRUE(delay_sending(client_name_, routingmanager_name_, true, socket_role::client));
+    // Request an unrelated service so that the client sender endpoint keeps sending
+    client_->request_service(service_instance_two_);
+
+    // Begin the stop process of the client, and only after deliver the offer to it.
+    client_->get_application()->stop();
+    ASSERT_TRUE(delay_message_processing(client_name_, routingmanager_name_, false, socket_role::client));
+
+    EXPECT_FALSE(await_connection(client_name_, server_name_, common::scaled_timeout(std::chrono::milliseconds(100))))
+            << "the client opened a consumer connection to the offering application after it had begun stopping";
+}
 }

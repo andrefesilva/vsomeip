@@ -421,6 +421,8 @@ private:
     std::shared_ptr<local_endpoint> find_or_create_consumer_ep(client_t _client);
     std::shared_ptr<local_endpoint> find_consumer_ep(client_t _client);
 
+    // Flush the endpoints, requesting their cleanup if that does not finish within time
+    async::hook flush_sender(std::scoped_lock<std::mutex> const& _lock);
     async::hook flush_consumer();
     async::hook flush_provider();
 

@@ -74,6 +74,11 @@ void fake_tcp_socket_handle::cancel() {
             boost::asio::post(io_, [handler = std::move(receptor_->handler_)] { handler(boost::asio::error::operation_aborted, 0); });
             receptor_ = std::nullopt;
         }
+        if (stashed_send_) {
+            TEST_LOG << "[fake-socket] aborting stashed send on: " << socket_id_;
+            boost::asio::post(io_, [handler = std::move(stashed_send_->handler_)] { handler(boost::asio::error::operation_aborted, 0); });
+            stashed_send_ = std::nullopt;
+        }
         return remote;
     }();
     if (remote) {
