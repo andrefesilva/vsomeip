@@ -391,7 +391,8 @@ struct test_forced_resubscribe_timing : public base_fake_socket_fixture {
     }
 
     // Subscribes to the field and withholds its initial notification.
-    // Returns with the subscribe just sent, so the half-cycle window starts here.
+    // Returns once the notification is withheld, which on a slow run can be after the repetition-phase
+    // offer at ~200ms was already answered.
     void subscribe_field_with_initial_value_withheld() {
         auto* server = ecu_two_.apps_[ecu_two_server_name_];
 
@@ -415,17 +416,13 @@ struct test_forced_resubscribe_timing : public base_fake_socket_fixture {
 // outside the grace period which would trigger a StopSubscribe/Subscribe.
 TEST_F(test_forced_resubscribe_timing, no_forced_resubscribe_within_half_cycle_of_subscribe_when_initial_field_notification_withheld) {
     prepare_ecus_and_apps();
-    // Don't send the initial notification to the field event, which should trigger the StopSubscribe/Subscribe
+
+    // Don't send the initial notification to the field event, which should trigger the StopSubscribe/Subscribe.
     subscribe_field_with_initial_value_withheld();
 
-    ecu_one_sd_send_gate_->sd_record_.clear();
-
-    // The repetition-phase offer at ~200ms after the subscribe lands inside this window and must be
-    // answered with a plain Subscribe only.
+    // Check that the client sent the initial subscribe and the one answering the repetition phase offer.
+    EXPECT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_count({sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}, 2, half_cycle_ * 9 / 10));
     // Check that the service consumer doesn't send a StopSubscribe within the grace period.
-    // Use a slightly smaller window to ensure that we are really within the grace period, and it didn't elapse already.
-    // Check that the client sent a subscribe, which ensures that the service consumer has received an offer
-    EXPECT_TRUE(ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::SUBSCRIBE_EVENTGROUP, 3}, half_cycle_ * 9 / 10));
     EXPECT_FALSE(
             ecu_one_sd_send_gate_->sd_record_.wait_for_any({sd::entry_type_e::STOP_SUBSCRIBE_EVENTGROUP, 0}, std::chrono::milliseconds(1)));
 
@@ -763,6 +760,9 @@ struct increased_initial_delay_with_multiple_instances : public base_fake_socket
 
         client_ = ecu_one_.apps_["guest_client"];
         server_ = ecu_two_.apps_["guest_server"];
+
+        ASSERT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
     }
     ecu_setup ecu_one_{"ecu_one", boardnet::ecu_one_config, *socket_manager_};
     ecu_setup ecu_two_{"ecu_two",
