@@ -81,10 +81,7 @@ void e2e_profile_04_test_client::on_availability(vsomeip::service_t _service, vs
             is_available_ = false;
         } else if (_is_available && !is_available_) {
             is_available_ = true;
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             app_->subscribe(PROFILE_04_SERVICE, PROFILE_04_INSTANCE, PROFILE_04_EVENTGROUP, PROFILE_04_MAJOR);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             condition_.notify_one();
         }
     }
