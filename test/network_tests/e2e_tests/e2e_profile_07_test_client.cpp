@@ -77,14 +77,11 @@ void e2e_profile_07_test_client::on_availability(vsomeip::service_t _service, vs
 
     if (PROFILE_07_SERVICE == _service && PROFILE_07_INSTANCE == _instance) {
         std::unique_lock its_lock(mutex_);
-        if (is_available_ != !_is_available) {
+        if (is_available_ && !_is_available) {
             is_available_ = false;
         } else if (_is_available && !is_available_) {
             is_available_ = true;
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             app_->subscribe(PROFILE_07_SERVICE, PROFILE_07_INSTANCE, PROFILE_07_EVENTGROUP, PROFILE_07_MAJOR);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             condition_.notify_one();
         }
     }
