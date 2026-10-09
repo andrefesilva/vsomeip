@@ -24,15 +24,7 @@ class eventgroupinfo;
 
 typedef std::map<service_t, std::map<instance_t, std::map<eventgroup_t, std::shared_ptr<eventgroupinfo>>>> eventgroups_t;
 
-enum class remote_subscription_state_e : uint8_t {
-    SUBSCRIPTION_PENDING = 0x00,
-
-    SUBSCRIPTION_ACKED = 0x01,
-    SUBSCRIPTION_NACKED = 0x02,
-
-    SUBSCRIPTION_ERROR = 0x03,
-    SUBSCRIPTION_UNKNOWN = 0xFF
-};
+enum class remote_subscription_state_e : uint8_t { SUBSCRIPTION_PENDING, SUBSCRIPTION_ACKED, SUBSCRIPTION_NACKED };
 
 typedef uint16_t remote_subscription_id_t;
 
