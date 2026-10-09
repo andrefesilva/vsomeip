@@ -771,7 +771,7 @@ TEST_F(test_multiversion_aggregate_offering_events, an_expired_subscription_reac
     its_gate->block(false);
 }
 
-// First subscriber: acknowledged once the remote provider acks (on_subscribe_ack).
+// First subscriber: acknowledged once the remote provider acks (on_ack_outbound_subscribe).
 TEST_F(test_multiversion_aggregate_offering_events, the_subscribe_ack_to_a_remote_majors_subscriber_carries_its_major) {
     auto const its_majors = record_command_majors(consumer_ecu_, client_v2_name_, protocol::id_e::SUBSCRIBE_ACK_ID);
     start_apps();

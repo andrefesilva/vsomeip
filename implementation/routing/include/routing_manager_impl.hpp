@@ -83,12 +83,12 @@ public:
 
     void release_service(client_t _client, versioned_service_instance_t const& _service);
 
-    void subscribe(client_t _client, const vsomeip_sec_client_t* _sec_client, service_t _service, instance_t _instance,
-                   eventgroup_t _eventgroup, major_version_t _major, event_t _event,
-                   const std::shared_ptr<debounce_filter_impl_t>& _filter);
+    void on_outbound_subscribe(client_t _client, const vsomeip_sec_client_t* _sec_client, service_t _service, instance_t _instance,
+                               eventgroup_t _eventgroup, major_version_t _major, event_t _event,
+                               const std::shared_ptr<debounce_filter_impl_t>& _filter);
 
-    void unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
-                     event_t _event);
+    void on_outbound_unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                 eventgroup_t _eventgroup, event_t _event);
 
     bool send_notification(client_t _client, std::shared_ptr<message> _message, bool _force);
 
@@ -109,11 +109,13 @@ public:
     void unregister_shadow_event(client_t _client, service_t _service, instance_t _instance, major_version_t _major, event_t _event,
                                  bool _is_provided);
 
-    void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
-                          event_t _event, remote_subscription_id_t _id);
+    void on_ack_inbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                  eventgroup_t _eventgroup, remote_subscription_id_t _id);
+    void on_ack_outbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                   eventgroup_t _eventgroup);
 
-    void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
-                           bool _remove, remote_subscription_id_t _id);
+    void on_nack_inbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                   eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _id);
 
     // interface to stub
     std::shared_ptr<boardnet_endpoint> find_or_create_remote_client(service_t _service, instance_t _instance, major_version_t _major,
@@ -127,10 +129,11 @@ public:
 
     void on_pong(client_t _client);
 
-    void on_subscribe_ack_with_multicast(service_t _service, instance_t _instance, major_version_t _major,
-                                         const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address, uint16_t _port);
-    void on_unsubscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
-                            remote_subscription_id_t _id);
+    void on_ack_outbound_subscribe_with_multicast(service_t _service, instance_t _instance, major_version_t _major,
+                                                  const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
+                                                  uint16_t _port);
+    void on_ack_inbound_unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                    eventgroup_t _eventgroup, remote_subscription_id_t _id);
 
     // as boardnet_routing_host
     void on_message(const byte_t* _data, length_t _length, boardnet_endpoint* _receiver, const boost::asio::ip::address& _remote_address,
@@ -165,9 +168,9 @@ public:
                                  const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
                                  endpoint_manager_impl::remote_offer_state& _state);
 
-    // Handle remote subscriptions
-    void on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription);
-    void on_remote_unsubscribe(std::shared_ptr<remote_subscription>& _subscription);
+    // Handle remote (inbound, boardnet-originated) subscriptions
+    void on_inbound_subscribe(std::shared_ptr<remote_subscription>& _subscription);
+    void on_inbound_unsubscribe(std::shared_ptr<remote_subscription>& _subscription);
 
     void expire_subscriptions(const boost::asio::ip::address& _address);
     void expire_subscriptions(const boost::asio::ip::address& _address, const port_range_t& _range, bool _reliable);
@@ -276,7 +279,7 @@ private:
     // Assumes mutex_ is already held by the caller, passed via `_lock`
     void set_routing_state_internal(std::unique_lock<std::mutex>& _lock, routing_state_internal_e _routing_state);
 
-    // The unsubscribe counterpart of on_remote_unsubscribe() for a _subscription this process
+    // The unsubscribe counterpart of on_inbound_unsubscribe() for a _subscription this process
     // already holds, e.g. because the connection carrying it went down. Does nothing when it is no
     // longer one of the stored subscriptions.
     void unsubscribe_remote_subscription(const std::shared_ptr<remote_subscription>& _subscription);

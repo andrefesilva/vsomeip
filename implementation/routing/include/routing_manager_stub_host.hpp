@@ -44,21 +44,21 @@ public:
     virtual void unregister_shadow_event(client_t _client, service_t _service, instance_t _instance, major_version_t _major, event_t _event,
                                          bool _is_provided) = 0;
 
-    virtual void subscribe(client_t _client, const vsomeip_sec_client_t* _sec_client, service_t _service, instance_t _instance,
-                           eventgroup_t _eventgroup, major_version_t _major, event_t _event,
-                           const std::shared_ptr<debounce_filter_impl_t>& _filter) = 0;
+    virtual void on_outbound_subscribe(client_t _client, const vsomeip_sec_client_t* _sec_client, service_t _service, instance_t _instance,
+                                       eventgroup_t _eventgroup, major_version_t _major, event_t _event,
+                                       const std::shared_ptr<debounce_filter_impl_t>& _filter) = 0;
 
-    virtual void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                  eventgroup_t _eventgroup, event_t _event, remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_ack_inbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                          eventgroup_t _eventgroup, remote_subscription_id_t _subscription_id) = 0;
 
-    virtual void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                   eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_nack_inbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                           eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _subscription_id) = 0;
 
-    virtual void unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
-                             event_t _event) = 0;
+    virtual void on_outbound_unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                         eventgroup_t _eventgroup, event_t _event) = 0;
 
-    virtual void on_unsubscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                    eventgroup_t _eventgroup, remote_subscription_id_t _unsubscription_id) = 0;
+    virtual void on_ack_inbound_unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                            eventgroup_t _eventgroup, remote_subscription_id_t _unsubscription_id) = 0;
 
     virtual bool on_message(service_t _service, instance_t _instance, major_version_t _major, const byte_t* _data, length_t _size,
                             bool _reliable, client_t _bound_client, const vsomeip_sec_client_t* _sec_client, uint8_t _status_check = 0,

@@ -479,16 +479,16 @@ void routing_manager_impl::release_service(client_t _client, versioned_service_i
     }
 }
 
-void routing_manager_impl::subscribe(client_t _client, [[maybe_unused]] const vsomeip_sec_client_t* _sec_client, service_t _service,
-                                     instance_t _instance, eventgroup_t _eventgroup, major_version_t _major, event_t _event,
-                                     const std::shared_ptr<debounce_filter_impl_t>& _filter) {
+void routing_manager_impl::on_outbound_subscribe(client_t _client, [[maybe_unused]] const vsomeip_sec_client_t* _sec_client,
+                                                 service_t _service, instance_t _instance, eventgroup_t _eventgroup, major_version_t _major,
+                                                 event_t _event, const std::shared_ptr<debounce_filter_impl_t>& _filter) {
 
     VSOMEIP_INFO << "SUBSCRIBE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup) << ":"
                  << hex4(_event) << ":" << static_cast<int>(_major) << "]";
     {
         if (discovery_) {
             // Note: The calls to insert_subscription & handle_subscription_state must not
-            // run concurrently to a call to on_subscribe_ack. Therefore the lock is acquired
+            // run concurrently to a call to on_ack_outbound_subscribe. Therefore the lock is acquired
             // before calling insert_subscription and released after the call to
             // handle_subscription_state.
             const client_t its_local_client = find_local_provider(_service, _instance, _major);
@@ -541,8 +541,8 @@ void routing_manager_impl::subscribe(client_t _client, [[maybe_unused]] const vs
     }
 }
 
-void routing_manager_impl::unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                       eventgroup_t _eventgroup, event_t _event) {
+void routing_manager_impl::on_outbound_unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                   eventgroup_t _eventgroup, event_t _event) {
 
     VSOMEIP_INFO << "UNSUBSCRIBE(" << hex4(_client) << "): [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(_eventgroup) << "."
                  << hex4(_event) << ":" << static_cast<int>(_major) << "]";
@@ -1646,7 +1646,7 @@ void routing_manager_impl::remove_local(client_t _client) {
             std::scoped_lock its_lock{remote_subscription_state_mutex_};
             remote_subscription_state_.erase(std::tuple_cat(s, std::make_tuple(_client)));
         }
-        unsubscribe(_client, service, instance, major, eventgroup, ANY_EVENT);
+        on_outbound_unsubscribe(_client, service, instance, major, eventgroup, ANY_EVENT);
     }
     {
         std::scoped_lock its_lock(services_state_mutex_);
@@ -1845,7 +1845,7 @@ void routing_manager_impl::del_routing_info(service_t _service, instance_t _inst
     std::vector<std::shared_ptr<event>> its_events;
     {
         // Acquire event_registration_mutex_ before eventgroups_mutex_ to serialize with
-        // subscribe()/on_subscribe_ack() and atomically clear subscribers with the service removal.
+        // on_outbound_subscribe()/on_ack_outbound_subscribe() and atomically clear subscribers with the service removal.
         std::scoped_lock its_reg_lock{event_registration_mutex_};
         std::scoped_lock its_lock{eventgroups_mutex_};
         if (const auto found = eventgroups_.find(versioned_service_instance_t{_service, _instance, _major}); found != eventgroups_.end()) {
@@ -2075,7 +2075,7 @@ void routing_manager_impl::init_routing_info() {
     }
 }
 
-void routing_manager_impl::on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription) {
+void routing_manager_impl::on_inbound_subscribe(std::shared_ptr<remote_subscription>& _subscription) {
 
     auto its_eventgroupinfo = _subscription->get_eventgroupinfo();
     if (!its_eventgroupinfo) {
@@ -2158,7 +2158,7 @@ void routing_manager_impl::on_remote_subscribe(std::shared_ptr<remote_subscripti
     _subscription->clear_destiny();
 }
 
-void routing_manager_impl::on_remote_unsubscribe(std::shared_ptr<remote_subscription>& _subscription) {
+void routing_manager_impl::on_inbound_unsubscribe(std::shared_ptr<remote_subscription>& _subscription) {
     std::shared_ptr<eventgroupinfo> its_info = _subscription->get_eventgroupinfo();
     if (!its_info) {
         VSOMEIP_ERROR_P << "Received Unsubscribe for unregistered eventgroup.";
@@ -2190,22 +2190,56 @@ void routing_manager_impl::unsubscribe_remote_subscription(const std::shared_ptr
     }
 }
 
-void routing_manager_impl::on_subscribe_ack_with_multicast(service_t _service, instance_t _instance, major_version_t _major,
-                                                           const boost::asio::ip::address& _sender,
-                                                           const boost::asio::ip::address& _address, uint16_t _port) {
+void routing_manager_impl::on_ack_outbound_subscribe_with_multicast(service_t _service, instance_t _instance, major_version_t _major,
+                                                                    const boost::asio::ip::address& _sender,
+                                                                    const boost::asio::ip::address& _address, uint16_t _port) {
     ep_mgr_impl_->find_or_create_multicast_endpoint(_service, _instance, _major, _sender, _address, _port);
 }
 
-void routing_manager_impl::on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                            eventgroup_t _eventgroup, event_t _event, remote_subscription_id_t _id) {
+void routing_manager_impl::on_ack_outbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                     eventgroup_t _eventgroup) {
     // have to lock event_registration_mutex_ to prevent parallel execution with subscribe
     // as to not miss any acknowledgement for a subscription that is currently being processed
     // (insert_subscription/handle_subscription_state)
     std::unique_lock its_lock{event_registration_mutex_};
-    auto its_eventgroup = find_eventgroup(_service, _instance, _major, _eventgroup);
-    if (its_eventgroup) {
-        auto its_subscription = its_eventgroup->get_remote_subscription(_id);
-        if (its_subscription) {
+    if (auto its_eventgroup = find_eventgroup(_service, _instance, _major, _eventgroup); its_eventgroup) {
+        {
+            std::scoped_lock its_inner_lock{remote_subscription_state_mutex_};
+            const auto its_tuple = std::make_tuple(_service, _instance, _major, _eventgroup, _client);
+            const auto its_state = remote_subscription_state_.find(its_tuple);
+            if (its_state != remote_subscription_state_.end()) {
+                if (its_state->second == subscription_state_e::SUBSCRIPTION_ACKNOWLEDGED) {
+                    // Already notified!
+                    return;
+                }
+            }
+            remote_subscription_state_[its_tuple] = subscription_state_e::SUBSCRIPTION_ACKNOWLEDGED;
+        }
+
+        std::set<client_t> subscribed_clients;
+        if (_client == VSOMEIP_ROUTING_CLIENT) {
+            for (const auto& its_event : its_eventgroup->get_events()) {
+                const auto& its_subscribers = its_event->get_subscribers();
+                subscribed_clients.insert(its_subscribers.begin(), its_subscribers.end());
+            }
+        } else {
+            subscribed_clients.insert(_client);
+        }
+
+        for (const auto& its_subscriber : subscribed_clients) {
+            stub_->send_subscribe_ack(its_subscriber, _service, _instance, _major, _eventgroup, ANY_EVENT);
+        }
+    }
+}
+
+void routing_manager_impl::on_ack_inbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                    eventgroup_t _eventgroup, remote_subscription_id_t _id) {
+    // have to lock event_registration_mutex_ to prevent parallel execution with subscribe
+    // as to not miss any acknowledgement for a subscription that is currently being processed
+    // (insert_subscription/handle_subscription_state)
+    std::unique_lock its_lock{event_registration_mutex_};
+    if (auto its_eventgroup = find_eventgroup(_service, _instance, _major, _eventgroup); its_eventgroup) {
+        if (auto its_subscription = its_eventgroup->get_remote_subscription(_id); its_subscription) {
             its_subscription->set_client_state(_client, remote_subscription_state_e::SUBSCRIPTION_ACKED);
 
             auto its_parent = its_subscription->get_parent();
@@ -2228,33 +2262,6 @@ void routing_manager_impl::on_subscribe_ack(client_t _client, service_t _service
                 discovery_->update_remote_subscription(its_subscription);
                 return;
             }
-        } else {
-            std::scoped_lock its_inner_lock{remote_subscription_state_mutex_};
-            const auto its_tuple = std::make_tuple(_service, _instance, _major, _eventgroup, _client);
-            const auto its_state = remote_subscription_state_.find(its_tuple);
-            if (its_state != remote_subscription_state_.end()) {
-                if (its_state->second == subscription_state_e::SUBSCRIPTION_ACKNOWLEDGED) {
-                    // Already notified!
-                    return;
-                }
-            }
-            remote_subscription_state_[its_tuple] = subscription_state_e::SUBSCRIPTION_ACKNOWLEDGED;
-        }
-
-        std::set<client_t> subscribed_clients;
-        if (_client == VSOMEIP_ROUTING_CLIENT) {
-            for (const auto& its_event : its_eventgroup->get_events()) {
-                if (_event == ANY_EVENT || _event == its_event->get_event()) {
-                    const auto& its_subscribers = its_event->get_subscribers();
-                    subscribed_clients.insert(its_subscribers.begin(), its_subscribers.end());
-                }
-            }
-        } else {
-            subscribed_clients.insert(_client);
-        }
-
-        for (const auto& its_subscriber : subscribed_clients) {
-            stub_->send_subscribe_ack(its_subscriber, _service, _instance, _major, _eventgroup, _event);
         }
     }
 }
@@ -2264,12 +2271,10 @@ std::shared_ptr<boardnet_endpoint> routing_manager_impl::find_or_create_remote_c
     return ep_mgr_impl_->find_or_create_remote_client(_service, _instance, _major, _reliable);
 }
 
-void routing_manager_impl::on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                             eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _id) {
-    auto its_eventgroup = find_eventgroup(_service, _instance, _major, _eventgroup);
-    if (its_eventgroup) {
-        auto its_subscription = its_eventgroup->get_remote_subscription(_id);
-        if (its_subscription) {
+void routing_manager_impl::on_nack_inbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                     eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _id) {
+    if (auto its_eventgroup = find_eventgroup(_service, _instance, _major, _eventgroup); its_eventgroup) {
+        if (auto its_subscription = its_eventgroup->get_remote_subscription(_id); its_subscription) {
             its_subscription->set_client_state(_client, remote_subscription_state_e::SUBSCRIPTION_NACKED);
 
             auto its_parent = its_subscription->get_parent();
@@ -2457,7 +2462,7 @@ std::chrono::steady_clock::time_point routing_manager_impl::expire_subscriptions
         its_eventgroups = eventgroups_;
     }
 
-    // Deciding and acting under the same lock keeps a concurrent on_remote_subscribe()
+    // Deciding and acting under the same lock keeps a concurrent on_inbound_subscribe()
     // from renewing an expiration in between.
     std::scoped_lock its_update_lock{update_remote_subscription_mutex_};
 
@@ -3507,8 +3512,8 @@ void routing_manager_impl::status_log_timer_cbk(boost::system::error_code const&
     }
 }
 
-void routing_manager_impl::on_unsubscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                              eventgroup_t _eventgroup, remote_subscription_id_t _id) {
+void routing_manager_impl::on_ack_inbound_unsubscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                                      eventgroup_t _eventgroup, remote_subscription_id_t _id) {
     std::shared_ptr<eventgroupinfo> its_info = find_eventgroup(_service, _instance, _major, _eventgroup);
     if (its_info) {
         std::unique_lock its_update_lock{update_remote_subscription_mutex_};
@@ -3563,7 +3568,7 @@ void routing_manager_impl::send_subscription(const client_t _offering_client, co
             VSOMEIP_WARNING_P << "Couldn't send subscription to local client [" << hex4(_service) << "." << hex4(_instance) << "."
                               << hex4(_eventgroup) << "." << hex4(ANY_EVENT) << "] subscriber: " << hex4(its_client);
             try {
-                const auto its_callback = std::bind(&routing_manager_stub_host::on_subscribe_nack,
+                const auto its_callback = std::bind(&routing_manager_stub_host::on_nack_inbound_subscribe,
                                                     std::dynamic_pointer_cast<routing_manager_stub_host>(shared_from_this()), its_client,
                                                     _service, _instance, _major, _eventgroup, true, _id);
                 boost::asio::post(io_, its_callback);
@@ -3708,7 +3713,7 @@ void routing_manager_impl::send_unsubscription(const std::shared_ptr<eventgroupi
             VSOMEIP_WARNING_P << "Couldn't send unsubscription to local client [" << hex4(its_service) << "." << hex4(its_instance) << "."
                               << hex4(its_eventgroup) << "." << hex4(ANY_EVENT) << "] subscriber: " << hex4(its_client);
             try {
-                const auto its_callback = std::bind(&routing_manager_stub_host::on_unsubscribe_ack,
+                const auto its_callback = std::bind(&routing_manager_stub_host::on_ack_inbound_unsubscribe,
                                                     std::dynamic_pointer_cast<routing_manager_stub_host>(shared_from_this()), its_client,
                                                     its_service, its_instance, its_major, its_eventgroup, _id);
                 boost::asio::post(io_, its_callback);
