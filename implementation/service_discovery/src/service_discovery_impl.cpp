@@ -1976,7 +1976,7 @@ void service_discovery_impl::process_eventgroupentry(std::shared_ptr<eventgroupe
                 handle_eventgroup_subscription_ack(its_service, its_instance, its_eventgroup, its_major, its_ttl, 0, its_clients, _sender,
                                                    its_first_address, its_first_port);
             } else {
-                handle_eventgroup_subscription_nack(its_service, its_instance, its_eventgroup, its_major, 0, its_clients);
+                handle_eventgroup_subscription_nack(its_service, its_instance, its_eventgroup, its_major);
             }
         }
     }
@@ -2132,7 +2132,7 @@ void service_discovery_impl::handle_eventgroup_subscription(
             if (!_is_stop_subscribe_subscribe) {
                 pending_remote_subscriptions_[its_subscription] = _acknowledgement;
                 _acknowledgement->add_subscription(its_subscription);
-                host_->on_remote_unsubscribe(its_subscription);
+                host_->on_inbound_unsubscribe(its_subscription);
             }
             return;
         }
@@ -2140,22 +2140,18 @@ void service_discovery_impl::handle_eventgroup_subscription(
         pending_remote_subscriptions_[its_subscription] = _acknowledgement;
         _acknowledgement->add_subscription(its_subscription);
 
-        host_->on_remote_subscribe(its_subscription);
+        host_->on_inbound_subscribe(its_subscription);
     }
 }
 
 void service_discovery_impl::handle_eventgroup_subscription_nack(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
-                                                                 major_version_t _major, uint8_t _counter,
-                                                                 const std::set<client_t>& _clients) {
-    (void)_counter;
+                                                                 major_version_t _major) {
 
     if (auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
         if (auto found_eventgroup = found_si->second.find(_eventgroup); found_eventgroup != found_si->second.end()) {
             auto its_subscription = found_eventgroup->second;
-            for (const auto its_client : _clients) {
-                host_->on_subscribe_nack(its_client, _service, _instance, _major, _eventgroup, true, PENDING_SUBSCRIPTION_ID);
-            }
-
+            // Don't inform clients - a NACK can be transient, and the restart below already
+            // drives resubscription; reporting it as a failure to the client would be premature.
             if (!its_subscription->is_selective()) {
                 auto its_reliable = its_subscription->get_endpoint(true);
                 if (its_reliable) {
@@ -2179,11 +2175,11 @@ void service_discovery_impl::handle_eventgroup_subscription_ack(service_t _servi
                 auto itr = found_eventgroup->second->get_clients().find(its_client);
                 if (itr != found_eventgroup->second->get_clients().end() && itr->second == subscription_state_e::ST_NOT_ACKNOWLEDGED) {
                     itr->second = subscription_state_e::ST_ACKNOWLEDGED;
-                    host_->on_subscribe_ack(its_client, _service, _instance, _major, _eventgroup, ANY_EVENT, PENDING_SUBSCRIPTION_ID);
+                    host_->on_ack_outbound_subscribe(its_client, _service, _instance, _major, _eventgroup);
                 }
             }
             if (_address.is_multicast()) {
-                host_->on_subscribe_ack_with_multicast(_service, _instance, _major, _sender, _address, _port);
+                host_->on_ack_outbound_subscribe_with_multicast(_service, _instance, _major, _sender, _address, _port);
             }
         }
     }

@@ -155,8 +155,7 @@ private:
                                             ttl_t _ttl, uint8_t _counter, const std::set<client_t>& _clients,
                                             const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
                                             uint16_t _port);
-    void handle_eventgroup_subscription_nack(service_t _service, instance_t _instance, eventgroup_t _eventgroup, major_version_t _major,
-                                             uint8_t _counter, const std::set<client_t>& _clients);
+    void handle_eventgroup_subscription_nack(service_t _service, instance_t _instance, eventgroup_t _eventgroup, major_version_t _major);
 
     bool send(const std::vector<std::shared_ptr<message_impl>>& _messages);
     bool serialize_and_send(const std::vector<std::shared_ptr<message_impl>>& _messages, const boost::asio::ip::address& _address);

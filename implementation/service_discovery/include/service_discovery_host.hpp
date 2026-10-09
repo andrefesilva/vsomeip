@@ -65,14 +65,14 @@ public:
                                          const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
                                          endpoint_manager_impl::remote_offer_state& _state) = 0;
 
-    virtual void on_remote_unsubscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
+    virtual void on_inbound_unsubscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
 
-    virtual void on_subscribe_ack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                  eventgroup_t _eventgroup, event_t _event, remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_ack_outbound_subscribe(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
+                                           eventgroup_t _eventgroup) = 0;
 
-    virtual void on_subscribe_ack_with_multicast(service_t _service, instance_t _instance, major_version_t _major,
-                                                 const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
-                                                 uint16_t _port) = 0;
+    virtual void on_ack_outbound_subscribe_with_multicast(service_t _service, instance_t _instance, major_version_t _major,
+                                                          const boost::asio::ip::address& _sender, const boost::asio::ip::address& _address,
+                                                          uint16_t _port) = 0;
 
     virtual std::shared_ptr<boardnet_endpoint> find_or_create_remote_client(service_t _service, instance_t _instance,
                                                                             major_version_t _major, bool _reliable) = 0;
@@ -80,10 +80,7 @@ public:
     virtual void expire_subscriptions(const boost::asio::ip::address& _address) = 0;
     virtual void expire_services(const boost::asio::ip::address& _address) = 0;
 
-    virtual void on_remote_subscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
-
-    virtual void on_subscribe_nack(client_t _client, service_t _service, instance_t _instance, major_version_t _major,
-                                   eventgroup_t _eventgroup, bool _remove, remote_subscription_id_t _subscription_id) = 0;
+    virtual void on_inbound_subscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
 
     virtual std::chrono::steady_clock::time_point expire_subscriptions(bool _force) = 0;
 

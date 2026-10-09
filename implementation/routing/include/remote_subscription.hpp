@@ -110,10 +110,10 @@ private:
     // before the subscription could be acknowledged
     uint32_t answers_ = 1;
     // This flag specifies what the "winner" of the
-    // expire_subscriptions()/on_remote_subscribe()
+    // expire_subscriptions()/on_inbound_subscribe()
     // race shall have as destination:
     // - expiration, if expire_subscriptions() runs first
-    // - forwarding, if on_remote_subscribe() runs first
+    // - forwarding, if on_inbound_subscribe() runs first
     enum struct destiny : uint8_t { none, expire, forward };
     destiny final_destination_ = destiny::none;
 };
