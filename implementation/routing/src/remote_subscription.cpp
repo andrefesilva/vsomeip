@@ -4,14 +4,18 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "../include/remote_subscription.hpp"
+#include "../../endpoints/include/endpoint_definition.hpp"
 
 #include <vsomeip/internal/logger.hpp>
 
 namespace vsomeip_v3 {
 
-remote_subscription::remote_subscription(const std::shared_ptr<eventgroupinfo>& _info, bool _force_initial_events, ttl_t _ttl) :
-    eventgroupinfo_(_info), force_initial_events_(_force_initial_events), ttl_(_ttl), id_(PENDING_SUBSCRIPTION_ID), is_initial_(true),
-    answers_(1), final_destination_{destiny::none} { }
+remote_subscription::remote_subscription(const std::shared_ptr<eventgroupinfo>& _info, bool _force_initial_events, ttl_t _ttl,
+                                         const std::shared_ptr<endpoint_definition>& _subscriber,
+                                         const std::shared_ptr<endpoint_definition>& _reliable,
+                                         const std::shared_ptr<endpoint_definition>& _unreliable) :
+    eventgroupinfo_(_info), force_initial_events_(_force_initial_events), ttl_(_ttl), subscriber_(_subscriber), reliable_(_reliable),
+    unreliable_(_unreliable) { }
 
 remote_subscription::~remote_subscription() { }
 
@@ -34,6 +38,7 @@ bool remote_subscription::equals(const std::shared_ptr<remote_subscription>& _ot
 }
 
 void remote_subscription::reset(const std::set<client_t>& _clients) {
+    std::scoped_lock its_lock(mutex_);
     auto its_client_state = std::make_pair(remote_subscription_state_e::SUBSCRIPTION_PENDING, std::chrono::steady_clock::time_point());
     if (_clients.empty()) {
         clients_[0] = its_client_state;
@@ -45,10 +50,12 @@ void remote_subscription::reset(const std::set<client_t>& _clients) {
 }
 
 bool remote_subscription::is_initial() const {
+    std::scoped_lock its_lock(mutex_);
     return is_initial_;
 }
 
 void remote_subscription::set_initial(const bool _is_initial) {
+    std::scoped_lock its_lock(mutex_);
     is_initial_ = _is_initial;
 }
 
@@ -57,10 +64,12 @@ bool remote_subscription::force_initial_events() const {
 }
 
 remote_subscription_id_t remote_subscription::get_id() const {
+    std::scoped_lock its_lock(mutex_);
     return id_;
 }
 
 void remote_subscription::set_id(const remote_subscription_id_t _id) {
+    std::scoped_lock its_lock(mutex_);
     id_ = _id;
 }
 
@@ -102,7 +111,7 @@ remote_subscription_state_e remote_subscription::get_client_state(const client_t
     if (found_client != clients_.end()) {
         return found_client->second.first;
     }
-    return remote_subscription_state_e::SUBSCRIPTION_UNKNOWN;
+    return remote_subscription_state_e::SUBSCRIPTION_PENDING;
 }
 
 void remote_subscription::set_client_state(const client_t _client, remote_subscription_state_e _state) {
@@ -128,24 +137,12 @@ std::shared_ptr<endpoint_definition> remote_subscription::get_subscriber() const
     return subscriber_;
 }
 
-void remote_subscription::set_subscriber(const std::shared_ptr<endpoint_definition>& _subscriber) {
-    subscriber_ = _subscriber;
-}
-
 std::shared_ptr<endpoint_definition> remote_subscription::get_reliable() const {
     return reliable_;
 }
 
-void remote_subscription::set_reliable(const std::shared_ptr<endpoint_definition>& _reliable) {
-    reliable_ = _reliable;
-}
-
 std::shared_ptr<endpoint_definition> remote_subscription::get_unreliable() const {
     return unreliable_;
-}
-
-void remote_subscription::set_unreliable(const std::shared_ptr<endpoint_definition>& _unreliable) {
-    unreliable_ = _unreliable;
 }
 
 bool remote_subscription::is_pending() const {
@@ -199,18 +196,22 @@ std::set<client_t> remote_subscription::update(const std::set<client_t>& _client
 }
 
 std::shared_ptr<remote_subscription> remote_subscription::get_parent() const {
+    std::scoped_lock its_lock(mutex_);
     return parent_.lock();
 }
 
 void remote_subscription::set_parent(const std::shared_ptr<remote_subscription>& _parent) {
+    std::scoped_lock its_lock(mutex_);
     parent_ = _parent;
 }
 
 uint32_t remote_subscription::get_answers() const {
+    std::scoped_lock its_lock(mutex_);
     return answers_;
 }
 
 void remote_subscription::set_answers(const uint32_t _answers) {
+    std::scoped_lock its_lock(mutex_);
     answers_ = _answers;
 }
 
@@ -226,26 +227,32 @@ bool remote_subscription::get_ip_address(boost::asio::ip::address& _address) con
 }
 
 bool remote_subscription::is_expired() const {
-    return this->final_destination_.load(std::memory_order_acquire) == destiny::expire;
+    std::scoped_lock its_lock(mutex_);
+    return final_destination_ == destiny::expire;
 }
 
 void remote_subscription::set_expired() {
-    this->final_destination_.store(destiny::expire, std::memory_order_release);
+    std::scoped_lock its_lock(mutex_);
+    final_destination_ = destiny::expire;
 }
 
 bool remote_subscription::is_forwarded() const {
-    return this->final_destination_.load(std::memory_order_acquire) == destiny::forward;
+    std::scoped_lock its_lock(mutex_);
+    return final_destination_ == destiny::forward;
 }
 
 void remote_subscription::set_forwarded() {
-    this->final_destination_.store(destiny::forward, std::memory_order_release);
+    std::scoped_lock its_lock(mutex_);
+    final_destination_ = destiny::forward;
 }
 
 void remote_subscription::clear_destiny() {
-    this->final_destination_.store(destiny::none, std::memory_order_release);
+    std::scoped_lock its_lock(mutex_);
+    final_destination_ = destiny::none;
 }
 
 std::shared_ptr<remote_subscription> remote_subscription::get_parent_or_self() {
+    std::scoped_lock its_lock(mutex_);
     // check if parent subscription exists, if so return it, otherwise return the subscription itself to be used for checking pending
     // clients
     if (std::shared_ptr<remote_subscription> p = parent_.lock()) {

@@ -5,14 +5,12 @@
 
 #pragma once
 
-#include <atomic>
 #include <map>
 #include <mutex>
 #include <set>
 
 #include <vsomeip/primitive_types.hpp>
 
-#include "../../endpoints/include/endpoint_definition.hpp"
 #include "types.hpp"
 
 #if defined(__QNX__)
@@ -22,12 +20,16 @@
 namespace vsomeip_v3 {
 
 class eventgroupinfo;
+class endpoint_definition;
 
 const remote_subscription_id_t PENDING_SUBSCRIPTION_ID(0);
 
 class remote_subscription : public std::enable_shared_from_this<remote_subscription> {
 public:
-    explicit remote_subscription(const std::shared_ptr<eventgroupinfo>& _info, bool _force_initial_events, ttl_t _ttl);
+    explicit remote_subscription(const std::shared_ptr<eventgroupinfo>& _info, bool _force_initial_events, ttl_t _ttl,
+                                 const std::shared_ptr<endpoint_definition>& _subscriber,
+                                 const std::shared_ptr<endpoint_definition>& _reliable,
+                                 const std::shared_ptr<endpoint_definition>& _unreliable);
     ~remote_subscription();
 
     bool operator==(const remote_subscription& _other) const;
@@ -49,7 +51,6 @@ public:
     std::shared_ptr<eventgroupinfo> get_eventgroupinfo() const;
 
     ttl_t get_ttl() const;
-    void set_ttl(const ttl_t _ttl);
 
     std::set<client_t> get_clients() const;
     bool has_client() const;
@@ -63,13 +64,8 @@ public:
     std::chrono::steady_clock::time_point get_expiration(const client_t _client) const;
 
     std::shared_ptr<endpoint_definition> get_subscriber() const;
-    void set_subscriber(const std::shared_ptr<endpoint_definition>& _subscriber);
-
     std::shared_ptr<endpoint_definition> get_reliable() const;
-    void set_reliable(const std::shared_ptr<endpoint_definition>& _reliable);
-
     std::shared_ptr<endpoint_definition> get_unreliable() const;
-    void set_unreliable(const std::shared_ptr<endpoint_definition>& _unreliable);
 
     bool is_pending() const;
 
@@ -92,37 +88,34 @@ private:
     const std::weak_ptr<eventgroupinfo> eventgroupinfo_;
     const bool force_initial_events_;
     const ttl_t ttl_;
-
-    std::atomic<remote_subscription_id_t> id_;
-    std::atomic<bool> is_initial_;
-    std::weak_ptr<remote_subscription> parent_;
-
-    std::map<client_t, std::pair<remote_subscription_state_e, std::chrono::steady_clock::time_point>> clients_;
-
     // The endpoint that sent(!) the subscription
-    std::shared_ptr<endpoint_definition> subscriber_;
-
+    const std::shared_ptr<endpoint_definition> subscriber_;
     // The endpoints defined by the endpoint options
-    std::shared_ptr<endpoint_definition> reliable_;
-    std::shared_ptr<endpoint_definition> unreliable_;
-
-    // Number of acknowledgements that must be sent
-    // for the subscriptions. This is usally 1, but
-    // may be larger if a matching subscription arrived
-    // before the subscription could be acknowledged
-    std::atomic<uint32_t> answers_;
+    const std::shared_ptr<endpoint_definition> reliable_;
+    const std::shared_ptr<endpoint_definition> unreliable_;
 
     mutable std::mutex mutex_;
 
-    /*
-     * This flag specifies what the "winner" of the
-     * expire_subscriptions()/on_remote_subscribe()
-     * race shall have as destination:
-     * - expiration, if expire_subscriptions() runs first
-     * - forwarding, if on_remote_subscribe() runs first
-     */
+    // unique id within the eventgroup
+    remote_subscription_id_t id_ = PENDING_SUBSCRIPTION_ID;
+    // whether initial events (for fields) must be sent
+    bool is_initial_ = true;
+    // reference to parent; only makes sense for selective subscriptions
+    std::weak_ptr<remote_subscription> parent_;
+    // client state; selective subscriptions can have several clients, otherwise it is always only VSOMEIP_ROUTING_CLIENT
+    std::map<client_t, std::pair<remote_subscription_state_e, std::chrono::steady_clock::time_point>> clients_;
+    // Number of acknowledgements that must be sent
+    // for the subscriptions. This is usually 1, but
+    // may be larger if a matching subscription arrived
+    // before the subscription could be acknowledged
+    uint32_t answers_ = 1;
+    // This flag specifies what the "winner" of the
+    // expire_subscriptions()/on_remote_subscribe()
+    // race shall have as destination:
+    // - expiration, if expire_subscriptions() runs first
+    // - forwarding, if on_remote_subscribe() runs first
     enum struct destiny : uint8_t { none, expire, forward };
-    std::atomic<destiny> final_destination_;
+    destiny final_destination_ = destiny::none;
 };
 
 } // namespace vsomeip_v3

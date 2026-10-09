@@ -2124,10 +2124,8 @@ void service_discovery_impl::handle_eventgroup_subscription(
     if (its_subscriber) {
         // Create subscription object
         auto its_subscription = std::make_shared<remote_subscription>(
-                _info, _force_initial_events, _ttl ? _ttl * get_ttl_factor(_service, _instance, ttl_factor_subscriptions_) : 0);
-        its_subscription->set_subscriber(its_subscriber);
-        its_subscription->set_reliable(its_reliable);
-        its_subscription->set_unreliable(its_unreliable);
+                _info, _force_initial_events, _ttl ? _ttl * get_ttl_factor(_service, _instance, ttl_factor_subscriptions_) : 0,
+                its_subscriber, its_reliable, its_unreliable);
         its_subscription->reset(_clients);
 
         if (_ttl == 0) { // --> unsubscribe
