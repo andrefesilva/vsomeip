@@ -52,7 +52,7 @@ std::shared_ptr<configuration> configuration_plugin_impl::get_configuration(cons
     its_configuration->load(_name);
     configurations_[its_key] = its_configuration;
 
-    VSOMEIP_INFO << "Loaded configuration for application '" << _name << "' from '" << its_key << "'";
+    VSOMEIP_INFO << "Loaded configuration for application '" << _name << "'" << (its_key.empty() ? "" : " from '" + its_key + "'");
 
     return its_configuration;
 }
