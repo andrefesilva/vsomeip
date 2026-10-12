@@ -48,7 +48,7 @@ configuration::~configuration() { }
 #endif
 
 application_impl::application_impl(const std::string& _name, const std::string& _path) :
-    runtime_{runtime::get()}, plugin_manager_{plugin_manager_impl::get()}, client_{VSOMEIP_CLIENT_UNSET}, session_{0},
+    runtime_{runtime::get()}, plugin_manager_{plugin_manager_impl::get()}, client_{VSOMEIP_CLIENT_UNSET}, session_{1},
     is_initialized_{false}, name_{_name}, path_{_path},
 #if defined(__linux__) || defined(__QNX__)
     start_thread_{0},
@@ -1094,12 +1094,19 @@ session_t application_impl::get_session(bool _is_request) {
     }
 
     std::scoped_lock its_lock{session_mutex_};
-    if (0 == ++session_) {
+    auto const its_session = session_++;
+    if (0 == session_) {
         // Smallest allowed session identifier
         session_ = 1;
     }
 
-    return session_;
+    return its_session;
+}
+
+void application_impl::set_session(session_t _session) {
+    std::scoped_lock its_lock{session_mutex_};
+    // Session id 0 is not allowed.
+    session_ = (_session == 0) ? 1 : _session;
 }
 
 vsomeip_sec_client_t application_impl::get_sec_client() const {

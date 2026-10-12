@@ -80,6 +80,7 @@ private:
     client_t get_client() const override;
     void set_client(const client_t& _client) override;
     session_t get_session(bool _is_request) override;
+    void set_session(session_t _session) override;
 
     vsomeip_sec_client_t get_sec_client() const override;
     uid_t get_sec_client_uid() const override;
@@ -110,7 +111,7 @@ private:
 
     boost::asio::io_context& io_;
     std::mutex mtx_;
-    session_t session_{0};
+    session_t session_{1};
 
     // to suffice the routing_manager_host interface
     std::string const name_;

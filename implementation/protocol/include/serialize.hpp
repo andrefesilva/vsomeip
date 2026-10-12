@@ -180,7 +180,7 @@ uint32_t serialize(T const& _value, unsigned char* _mem) {
         }
         return written;
     } else if constexpr (std::is_same_v<T, assign_client_ack_view>) {
-        return write_fields(_mem, _value.assigned_, _value.policies_);
+        return write_fields(_mem, _value.assigned_, _value.session_, _value.policies_);
     } else if constexpr (std::is_same_v<T, routing_info_entry_data>) {
         bool const has_address = !_value.address_.is_unspecified();
 

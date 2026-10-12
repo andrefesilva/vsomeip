@@ -1311,7 +1311,7 @@ void routing_manager_client::on_message(const byte_t* _data, length_t _size, con
     case protocol::id_e::ASSIGN_CLIENT_ACK_ID: {
         if (protocol::assign_client_ack_data its_data;
             protocol::deserialize(its_data, _data + parsed_hdr_bytes, _size - parsed_hdr_bytes)) {
-            on_client_assign_ack(its_data.assigned_, !_peer_data.routing_address_.is_unspecified(), its_data.policies_);
+            on_client_assign_ack(its_data.assigned_, its_data.session_, !_peer_data.routing_address_.is_unspecified(), its_data.policies_);
         } else {
             VSOMEIP_ERROR_P << "Assign client ack command deserialization failed memory: " << utility::dump(_data, _size);
             // If it fails early, tear the
@@ -2268,7 +2268,7 @@ bool routing_manager_client::apply_security_policy_update(protocol::update_secur
 #endif
 
 void routing_manager_client::on_client_assign_ack(
-        const client_t& _client, bool _is_tcp,
+        const client_t& _client, const session_t _session, bool _is_tcp,
         [[maybe_unused]] std::vector<protocol::update_security_policy_data> const& _requester_policy_updates) {
 
     if (_client == VSOMEIP_CLIENT_UNSET) {
@@ -2277,6 +2277,7 @@ void routing_manager_client::on_client_assign_ack(
     }
 
     host_->set_client(_client);
+    host_->set_session(_session);
 
 #ifndef VSOMEIP_DISABLE_SECURITY
     // Bundled with the ack (rather than sent separately beforehand as UPDATE_SECURITY_POLICY_INT_ID)

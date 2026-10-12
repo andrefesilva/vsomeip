@@ -1282,28 +1282,34 @@ struct test_single_connection_breakdown : test_connection_restoration,
 TEST_P(test_single_connection_breakdown, ensure_that_every_dropped_connection_is_restored_with_request_reply) {
 
     auto [from, to] = GetParam();
-    start_apps([this] { answer_requests_with({0x2, 0x3}); });
+    start_apps([this] { server_->echo_requests(request_); });
     ASSERT_TRUE(subscribe_to_event());
 
-    client_->send_request(request_);
-    ASSERT_TRUE(server_->message_record_.wait_for_last(expected_request_));
-    ASSERT_TRUE(client_->message_record_.wait_for_last(expected_reply_));
+    // The server echoes the payload, so different payloads before and after the break tell the replies apart.
+    auto const response_checker = [this](std::vector<unsigned char> _payload) {
+        return message_checker{std::nullopt, service_instance_, method_, vsomeip::message_type_e::MT_RESPONSE, std::move(_payload)};
+    };
+
+    auto before_break = request_;
+    before_break.payload_ = {0x1};
+    client_->send_request(before_break);
+    ASSERT_TRUE(client_->message_record_.wait_for_any(response_checker(before_break.payload_)));
 
     // break one direction
     ASSERT_TRUE(disconnect(from, boost::asio::error::timed_out, to, boost::asio::error::connection_reset));
 
+    auto after_break = request_;
+    after_break.payload_ = {0x2};
     for (int i = 0; i < 10; ++i) {
-        client_->send_request(request_);
+        client_->send_request(after_break);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     // Ensure connection is restored
     ASSERT_TRUE(await_connection(from, to));
 
-    auto next_reply = expected_reply_;
-    // It seems some messages are dropped, but the session bumped anyhow.
-    next_reply.client_session_.session_ += 8;
-    EXPECT_TRUE(client_->message_record_.wait_for_any(next_reply)) << next_reply;
+    // At least one of the requests sent after the break must be answered.
+    EXPECT_TRUE(client_->message_record_.wait_for_any(response_checker(after_break.payload_)));
 }
 
 TEST_P(test_single_connection_breakdown, ensure_that_every_dropped_connection_is_restored_with_events) {
@@ -1317,18 +1323,20 @@ TEST_P(test_single_connection_breakdown, ensure_that_every_dropped_connection_is
     // break single connection
     ASSERT_TRUE(disconnect(from, boost::asio::error::timed_out, to, boost::asio::error::connection_reset));
 
+    // The events sent after the break carry a different payload than the first one.
+    std::vector<unsigned char> const after_break_payload{0x2};
     for (int i = 0; i < 10; ++i) {
-        send_first_message();
+        server_->send_event(offered_event_, after_break_payload);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     // Ensure connection is restored
     ASSERT_TRUE(await_connection(from, to));
 
-    auto some_expected_message = first_expected_message_;
-    // It seems some messages are dropped, but the session bumped anyhow.
-    some_expected_message.client_session_.session_ += 8;
-    EXPECT_TRUE(client_->message_record_.wait_for_any(some_expected_message)) << some_expected_message;
+    // At least one of the events sent after the break must be received.
+    message_checker const after_break_checker{std::nullopt, service_instance_, offered_event_.event_id_,
+                                              vsomeip::message_type_e::MT_NOTIFICATION, after_break_payload};
+    EXPECT_TRUE(client_->message_record_.wait_for_any(after_break_checker));
 }
 
 TEST_F(test_connection_restoration, process_offer_service_during_on_pong_processment) {
@@ -1391,7 +1399,7 @@ TEST_F(test_connection_restoration, double_assign_client_ack_id_diff_ids) {
     EXPECT_TRUE(router_to_server_gate->wait_for_blocked());
 
     // Inject the old client id, different from the one host assigned to server
-    auto assign_client_ack_cmd = protocol::create_assign_client_ack_cmd(0, 0xcafe, {});
+    auto assign_client_ack_cmd = protocol::create_assign_client_ack_cmd(0, 0xcafe, 1, {});
     std::vector<unsigned char> old_client_id_payload(protocol::wire_size(assign_client_ack_cmd));
     protocol::serialize(assign_client_ack_cmd, old_client_id_payload.data());
     inject_command_tcp(server_name_, routingmanager_name_, old_client_id_payload, socket_role::client);

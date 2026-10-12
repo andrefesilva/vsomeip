@@ -141,10 +141,11 @@ TEST(ut_commands_roundtrip, stop_offer_service_roundtrip) {
 // --- Single-field commands ---
 
 TEST(ut_commands_roundtrip, assign_client_ack_roundtrip) {
-    auto cmd = create_assign_client_ack_cmd(0x0000, 0x04CF, {});
+    auto cmd = create_assign_client_ack_cmd(0x0000, 0x04CF, 0x1234, {});
     auto [header, data] = roundtrip(cmd);
     EXPECT_EQ(header, cmd.header_);
     EXPECT_EQ(data.assigned_, cmd.payload_.assigned_);
+    EXPECT_EQ(data.session_, cmd.payload_.session_);
     EXPECT_TRUE(data.policies_.empty());
 }
 
@@ -154,10 +155,11 @@ TEST(ut_commands_roundtrip, assign_client_ack_with_bundled_policies_roundtrip) {
     std::vector<update_security_policy_view> policies{{.update_id_ = 0x11, .policy_ = policy_one},
                                                       {.update_id_ = 0x22, .policy_ = policy_two}};
 
-    auto cmd = create_assign_client_ack_cmd(0x0000, 0x04CF, policies);
+    auto cmd = create_assign_client_ack_cmd(0x0000, 0x04CF, 0x1234, policies);
     auto [header, data] = roundtrip(cmd);
     EXPECT_EQ(header, cmd.header_);
     EXPECT_EQ(data.assigned_, cmd.payload_.assigned_);
+    EXPECT_EQ(data.session_, cmd.payload_.session_);
     ASSERT_EQ(data.policies_.size(), 2u);
     EXPECT_EQ(data.policies_[0].update_id_, 0x11u);
     EXPECT_EQ(data.policies_[0].policy_, policy_one);

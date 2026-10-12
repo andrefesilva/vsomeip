@@ -285,6 +285,11 @@ public:
     void answer_request(request const& _r, std::function<std::vector<unsigned char>()> _payload_creator);
 
     /**
+     * Same as @see answer_request, but the response carries the payload of the received request.
+     */
+    void echo_requests(request const& _r);
+
+    /**
      * Forwards the event payload to the vsomeip::application::notify()
      */
     void send_event(event_ids const& _ei, std::vector<unsigned char> const& _payload, bool _force = false);

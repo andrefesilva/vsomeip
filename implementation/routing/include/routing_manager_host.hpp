@@ -30,6 +30,7 @@ public:
     virtual client_t get_client() const = 0;
     virtual void set_client(const client_t& _client) = 0;
     virtual session_t get_session(bool _is_request) = 0;
+    virtual void set_session(session_t _session) = 0;
 
     virtual vsomeip_sec_client_t get_sec_client() const = 0;
     // Returns only the immutable uid of the sec-client, avoiding a copy of the concurrently-mutated port field.

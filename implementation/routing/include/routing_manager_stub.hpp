@@ -22,6 +22,7 @@
 #include <vsomeip/vsomeip_sec.h>
 #include <vsomeip/enumeration_types.hpp>
 
+#include "session_tracker.hpp"
 #include "types.hpp"
 #include "../include/routing_host.hpp"
 #include "local_offering_table.hpp"
@@ -207,6 +208,9 @@ private:
 
     mutable std::mutex requester_policies_mutex_;
     std::map<uint32_t, std::map<uint32_t, std::set<std::shared_ptr<policy>>>> requester_policies_;
+
+    // Tracks session ids per client.
+    session_tracker sessions_;
 };
 
 } // namespace vsomeip_v3
