@@ -116,6 +116,7 @@ public:
     client_t get_client() const;
     void set_client(const client_t& _client);
     session_t get_session(bool _is_request);
+    void set_session(session_t _session) override;
     vsomeip_sec_client_t get_sec_client() const;
     uid_t get_sec_client_uid() const;
     void set_sec_client_port(port_t _port);

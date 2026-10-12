@@ -243,7 +243,7 @@ private:
     // unless _is_internal).
     bool apply_security_policy_update(protocol::update_security_policy_data const& _data, bool _is_internal);
 #endif
-    void on_client_assign_ack(const client_t& _client, bool _is_tcp,
+    void on_client_assign_ack(const client_t& _client, session_t _session, bool _is_tcp,
                               std::vector<protocol::update_security_policy_data> const& _requester_policy_updates);
 
     /**

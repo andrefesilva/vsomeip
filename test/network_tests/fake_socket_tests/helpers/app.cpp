@@ -198,6 +198,17 @@ void app::answer_request(request const& _r, std::function<std::vector<unsigned c
                                    });
 }
 
+void app::echo_requests(request const& _r) {
+    app_->register_message_handler(_r.service_instance_.service_, _r.service_instance_.instance_, _r.method_, [this](auto const& message) {
+        on_message(message);
+        auto response = vsomeip::runtime::get()->create_response(message);
+        auto payload = vsomeip::runtime::get()->create_payload();
+        payload->set_data(message->get_payload()->get_data(), message->get_payload()->get_length());
+        response->set_payload(payload);
+        app_->send(response);
+    });
+}
+
 void app::request_service(service_instance _si) {
     TEST_LOG << "[app] \"" << app_->get_name() << "\" is requesting: " << _si;
     app_->request_service(_si.service_, _si.instance_, _si.major_, _si.minor_);

@@ -361,6 +361,7 @@ struct update_security_policy_command_data {
 // used for serialization and the compound command
 struct assign_client_ack_view {
     client_t assigned_;
+    session_t session_;
     std::vector<update_security_policy_view> policies_;
 };
 
@@ -372,6 +373,7 @@ struct assign_client_ack_command_data {
 // used for deserialization
 struct assign_client_ack_data {
     client_t assigned_{};
+    session_t session_;
     std::vector<update_security_policy_data> policies_;
 };
 
@@ -476,7 +478,7 @@ inline uint32_t wire_size(update_security_policy_view const& _v) {
 
 inline uint32_t wire_size(assign_client_ack_view const& _d) {
     // count prefix + per-entry length prefix, in addition to each entry's own wire size
-    size_t size = sizeof(client_t) + sizeof(uint32_t);
+    size_t size = sizeof(client_t) + sizeof(session_t) + sizeof(uint32_t);
     for (auto const& p : _d.policies_) {
         size += sizeof(uint32_t) + wire_size(p);
     }
@@ -525,8 +527,9 @@ inline auto create_resend_provided_events_cmd(client_t _client, pending_remote_o
     return single_field_command_data<pending_remote_offer_id_t>::create(id_e::RESEND_PROVIDED_EVENTS_ID, _client, _id);
 }
 
-inline auto create_assign_client_ack_cmd(client_t _client, client_t _assigned_id, std::vector<update_security_policy_view> _policies) {
-    assign_client_ack_view payload{.assigned_ = _assigned_id, .policies_ = std::move(_policies)};
+inline auto create_assign_client_ack_cmd(client_t _client, client_t _assigned_id, session_t _session,
+                                         std::vector<update_security_policy_view> _policies) {
+    assign_client_ack_view payload{.assigned_ = _assigned_id, .session_ = _session, .policies_ = std::move(_policies)};
     uint32_t const length = wire_size(payload);
     return assign_client_ack_command_data{.header_ = command_header::create(id_e::ASSIGN_CLIENT_ACK_ID, length, _client),
                                           .payload_ = std::move(payload)};

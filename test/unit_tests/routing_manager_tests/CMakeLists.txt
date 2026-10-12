@@ -10,6 +10,7 @@ set(TEST_SRCS
     ut_routing_client_state_machine.cpp
     ut_local_service_table.cpp
     ut_local_offering_table.cpp
+    ut_session_tracker.cpp
 )
 
 add_executable(

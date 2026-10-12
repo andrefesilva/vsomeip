@@ -308,6 +308,7 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
                 auto its_service = bithelper::read_uint16_be(&its_message_data[VSOMEIP_SERVICE_POS_MIN]);
                 auto its_method = bithelper::read_uint16_be(&its_message_data[VSOMEIP_METHOD_POS_MIN]);
                 auto its_sender = bithelper::read_uint16_be(&its_message_data[VSOMEIP_CLIENT_POS_MIN]);
+                auto its_session = bithelper::read_uint16_be(&its_message_data[VSOMEIP_SESSION_POS_MIN]);
 
                 auto its_instance = its_ipc.instance_;
                 bool is_reliable = its_ipc.reliable_;
@@ -323,6 +324,10 @@ void routing_manager_stub::on_message(const byte_t* _data, length_t _size, const
                                       << " : routing_manager_stub::on_message: isn't allowed to send a request to service/instance/method "
                                       << hex4(its_service) << "/" << hex4(its_instance) << "/" << hex4(its_method) << " ~> Skip message!";
                         return;
+                    }
+                    if (its_session != 0) {
+                        // Update the latest session id used by the client.
+                        sessions_.update(its_sender, its_session);
                     }
                 }
                 uint32_t its_contained_size = bithelper::read_uint32_be(&its_message_data[VSOMEIP_LENGTH_POS_MIN]);
@@ -600,9 +605,13 @@ void routing_manager_stub::on_register_application(client_t _client, const boost
     }
 #endif // !VSOMEIP_DISABLE_SECURITY
 
+    // Get this clients starting session id.
+    auto session = sessions_.track(_client);
+
     // Requester policies are bundled with the ack (instead of being sent beforehand via
     // UPDATE_SECURITY_POLICY_INT_ID) so the client's id is already assigned
-    auto its_ack_command = protocol::create_assign_client_ack_cmd(VSOMEIP_ROUTING_CLIENT, _client, std::move(its_requester_policy_updates));
+    auto its_ack_command =
+            protocol::create_assign_client_ack_cmd(VSOMEIP_ROUTING_CLIENT, _client, session, std::move(its_requester_policy_updates));
     if (auto ep = find_local_routing_endpoint(_client); ep) {
         if (!ep->send(its_ack_command)) {
             // send() already logged why (queue full, oversized message, ...). It can drop the ack

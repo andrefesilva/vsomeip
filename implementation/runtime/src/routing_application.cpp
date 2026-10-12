@@ -225,12 +225,19 @@ session_t routing_application::get_session([[maybe_unused]] bool _is_request) {
     }
 
     std::scoped_lock its_lock{mtx_};
-    if (0 == ++session_) {
+    auto const its_session = session_++;
+    if (0 == session_) {
         // Smallest allowed session identifier
         session_ = 1;
     }
 
-    return session_;
+    return its_session;
+}
+
+void routing_application::set_session(session_t _session) {
+    std::scoped_lock its_lock{mtx_};
+    // Session id 0 is not allowed.
+    session_ = (_session == 0) ? 1 : _session;
 }
 
 void routing_application::on_availability(service_t _service, instance_t _instance, [[maybe_unused]] availability_state_e _state,

@@ -26,7 +26,11 @@
 #include <vsomeip/vsomeip.hpp>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdlib>
+#include <future>
+#include <memory>
+#include <set>
 
 namespace vsomeip_v3::testing {
 static std::string const routingmanager_name_{"routingmanagerd"};
@@ -455,6 +459,76 @@ TEST_F(test_client_lifecycle, request_reply_routingd) {
 
     ASSERT_TRUE(routingmanagerd_->message_record_.wait_for_last(expected_request_));
     EXPECT_TRUE(client_->message_record_.wait_for_last(expected_reply_));
+}
+
+TEST_F(test_client_lifecycle, restarted_client_uses_new_session_ids_for_requests_pending_on_the_server) {
+    /// 1) the client sends a request, but the server is slow to answer
+    /// 2) the client restarts (same client id) and sends the same request again
+    /// 3) the server answers both
+    /// the client must be able to tell the stale response from the fresh one, which requires that the
+    /// two incarnations do not use the same session id.
+    ///
+    /// Note: requests go directly from the client to the server, so it is the router handing out a
+    /// new starting session on re-registration (and not it observing the traffic) that is exercised.
+
+    struct gate {
+        std::promise<void> release_;
+        std::shared_future<void> released_{release_.get_future().share()};
+        std::atomic<int> calls_{0};
+    };
+    auto const slow_server = std::make_shared<gate>();
+
+    start_apps([this, slow_server] {
+        server_->answer_request(request_, [slow_server]() -> std::vector<unsigned char> {
+            if (slow_server->calls_++ == 0) {
+                // Bounded, so an early assertion failure in the test cannot leave this dispatcher blocked forever.
+                slow_server->released_.wait_for(common::scaled_timeout(std::chrono::seconds(5)));
+                return {0x1};
+            }
+            return {0x2};
+        });
+    });
+    client_->request_service(service_instance_);
+    ASSERT_TRUE(await_service());
+
+    TEST_LOG << "[step] first incarnation sends a request the server does not answer yet";
+    client_->send_request(request_);
+    ASSERT_TRUE(server_->message_record_.wait_for_any(message_checker{client_session{0x3490, 1}, service_instance_, method_,
+                                                                      vsomeip::message_type_e::MT_REQUEST, std::vector<unsigned char>{}}));
+
+    TEST_LOG << "[step] restarting the client";
+    stop_client(client_name_);
+    create_app(client_name_);
+    start_client_app();
+    client_->request_service(service_instance_);
+    ASSERT_TRUE(await_service());
+
+    TEST_LOG << "[step] second incarnation sends the same request";
+    client_->send_request(request_);
+    ASSERT_TRUE(await_connection(client_name_, server_name_));
+    ASSERT_TRUE(wait_for_command(client_name_, server_name_, protocol::id_e::SEND_ID, socket_role::server));
+
+    TEST_LOG << "[step] server answers both requests";
+    slow_server->release_.set_value();
+
+    // Sessions of the messages of the given type, which were exchanged with the restarted client.
+    auto const sessions_of = [this](std::vector<message> const& _messages, vsomeip::message_type_e _type) {
+        std::set<vsomeip::session_t> sessions;
+        for (auto const& m : _messages) {
+            if (m.client_session_.client_ == 0x3490 && m.service_instance_ == service_instance_ && m.method_ == method_
+                && m.message_type_ == _type) {
+                sessions.insert(m.client_session_.session_);
+            }
+        }
+        return sessions;
+    };
+
+    EXPECT_TRUE(server_->message_record_.wait_for_any([&](std::vector<message> const& _m) {
+        return sessions_of(_m, vsomeip::message_type_e::MT_REQUEST).size() == 2;
+    })) << "both incarnations used the same session id for their request";
+    EXPECT_TRUE(client_->message_record_.wait_for_any([&](std::vector<message> const& _m) {
+        return sessions_of(_m, vsomeip::message_type_e::MT_RESPONSE).size() == 2;
+    })) << "the client cannot tell the stale response from the fresh one";
 }
 
 TEST_F(test_client_lifecycle, the_server_sends_subscribe_ack_when_the_routing_info_is_late) {

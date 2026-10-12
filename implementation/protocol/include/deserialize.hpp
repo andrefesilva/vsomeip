@@ -346,7 +346,7 @@ inline uint32_t deserialize(std::vector<update_security_policy_data>& _out, unsi
 }
 
 inline uint32_t deserialize(assign_client_ack_data& _out, unsigned char const* _mem, uint32_t _size) {
-    return parse(_mem, _size, _out.assigned_, _out.policies_);
+    return parse(_mem, _size, _out.assigned_, _out.session_, _out.policies_);
 }
 
 inline uint32_t deserialize(std::vector<std::pair<uid_t, gid_t>>& _out, unsigned char const* _mem, uint32_t _size) {
