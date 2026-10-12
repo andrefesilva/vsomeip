@@ -524,7 +524,14 @@ void application_impl::stop() {
                     subscription_dispatch_order_.clear();
                 }
                 if (routing_app_) {
-                    routing_app_->stop();
+                    // the router's routing endpoints are torn down through their own cleanup
+                    // handlers, so the io context has to keep running until they report back
+                    routing_app_->stop().then([this, inner_weak_self = weak_from_this()] {
+                        if (auto inner_self = inner_weak_self.lock(); inner_self) {
+                            io_.stop();
+                        }
+                    });
+                    return;
                 }
 
                 io_.stop();

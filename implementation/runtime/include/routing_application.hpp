@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../routing/include/routing_manager_host.hpp"
+#include "../../utility/include/async.hpp"
 
 #include "../../security/include/policy_manager_impl.hpp"
 #include "../../security/include/security.hpp"
@@ -50,7 +51,7 @@ public:
     ~routing_application();
 
     void start() const;
-    void stop() const;
+    async::hook stop() const;
 
     void set_routing_state(routing_state_internal_e _routing_state) const;
     bool update_service_configuration(service_t _service, instance_t _instance, uint16_t _port, bool _reliable, bool _magic_cookies_enabled,

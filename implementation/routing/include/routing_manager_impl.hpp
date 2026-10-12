@@ -36,6 +36,7 @@
 #include "../../endpoints/include/abstract_netlink_connector.hpp"
 #include "../../service_discovery/include/service_discovery_host.hpp"
 #include "../../endpoints/include/endpoint_manager_impl.hpp"
+#include "../../utility/include/async.hpp"
 #include "../../endpoints/include/local_endpoint.hpp"
 
 namespace vsomeip_v3 {
@@ -73,7 +74,9 @@ public:
 
     void init();
     void start();
-    void stop();
+    /// The routing endpoints are torn down through their own cleanup handlers, so the teardown is
+    /// not done when this returns: the returned hook completes once it is.
+    async::hook stop();
 
     bool offer_service(client_t _client, service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor);
 

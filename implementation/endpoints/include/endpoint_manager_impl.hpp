@@ -14,6 +14,7 @@
 #include "../include/local_endpoint.hpp"
 #include "../include/endpoint_definition.hpp"
 #include "../../utility/include/service_instance_map.hpp"
+#include "../../utility/include/async.hpp"
 #include "../../protocol/include/command_types.hpp"
 #include "vsomeip/primitive_types.hpp"
 
@@ -111,11 +112,14 @@ public:
     void suspend();
     void resume();
     void start();
-    void stop();
+    /// The routing endpoints are torn down through their own cleanup handlers, so the teardown is
+    /// not done when this returns: the returned hook completes once it is.
+    /// Flushes every routing endpoint and completes once no routing endpoint remains.
+    /// A flush that overruns is escalated to a cleanup request.
+    async::hook stop();
 
     std::shared_ptr<local_endpoint> find_routing_endpoint(client_t _client) const;
     void remove_routing_endpoint(client_t _client);
-    void clear_routing_endpoints();
 
     /**
      * drops all routing_endpoints having a peer address equal to @param _address
@@ -127,6 +131,11 @@ public:
     void add_local_routing_endpoint(std::shared_ptr<local_endpoint> _ep);
 
 private:
+    /// Arms on_routing_endpoints_cleaned_ and drops the pending connections
+    async::hook flush_routing_endpoints();
+    /// Continuation of stop(), once every routing endpoint has been torn down.
+    void finish_stop();
+
     std::shared_ptr<boardnet_endpoint> find_remote_client(service_t _service, instance_t _instance, major_version_t _major, bool _reliable);
     std::shared_ptr<boardnet_endpoint> create_remote_client(service_t _service, instance_t _instance, major_version_t _major,
                                                             bool _reliable);
@@ -189,6 +198,9 @@ private:
     mutable std::mutex routing_endpoint_mtx_;
     std::unordered_map<client_t, std::shared_ptr<local_endpoint>> routing_endpoints_;
     std::unordered_map<client_t, std::shared_ptr<local_endpoint>> pending_routing_endpoints_;
+    // armed by flush_routing_endpoints(), fired by remove_routing_endpoint() once the last routing
+    // endpoint is gone
+    async::trigger on_routing_endpoints_cleaned_;
 };
 
 } // namespace vsomeip_v3
