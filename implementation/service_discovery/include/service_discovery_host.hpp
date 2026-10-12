@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 #include <optional>
 #include <chrono>
 
@@ -27,6 +28,14 @@ class remote_subscription;
 
 namespace sd {
 
+/// Outcome of service_discovery_host::add_routing_info().
+struct add_routing_info_result_t {
+    /// The state of the offer, as evaluated against the routing info under the routing manager's lock.
+    endpoint_manager_impl::remote_offer_state state_;
+    /// Already established endpoints the caller must report via service_discovery::on_endpoint_connected().
+    std::vector<std::shared_ptr<boardnet_endpoint>> connected_endpoints_;
+};
+
 class service_discovery_host {
 public:
     virtual ~service_discovery_host() { }
@@ -46,10 +55,11 @@ public:
     virtual bool send_via_sd(const std::shared_ptr<endpoint_definition>& _target, const byte_t* _data, uint32_t _size,
                              uint16_t _sd_port) = 0;
 
-    virtual void add_routing_info(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, ttl_t _ttl,
-                                  const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
-                                  const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
-                                  const endpoint_manager_impl::remote_offer_state& _state) = 0;
+    /// Evaluates the offer against the current routing info and adds/updates it accordingly.
+    virtual add_routing_info_result_t add_routing_info(service_t _service, instance_t _instance, major_version_t _major,
+                                                       minor_version_t _minor, ttl_t _ttl,
+                                                       const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
+                                                       const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port) = 0;
 
     /**
      * @param _reason the disconnect reason that triggered the removal, if any.
@@ -58,12 +68,15 @@ public:
                                   bool _has_unreliable, bool _trigger_availability,
                                   std::optional<disconnect_reason_e> _reason = std::nullopt) = 0;
 
-    virtual void update_routing_info(std::chrono::milliseconds _elapsed) = 0;
+    /// @return false if the routing info is currently being modified and the check must be retried.
+    virtual bool update_routing_info(std::chrono::milliseconds _elapsed) = 0;
 
-    virtual void is_remote_service_known(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                                         const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
-                                         const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
-                                         endpoint_manager_impl::remote_offer_state& _state) = 0;
+    /// @return true if routing info for the remote service is currently known.
+    virtual bool has_remote_routing_info(service_t _service, instance_t _instance, major_version_t _major) const = 0;
+
+    /// @return the client endpoint the routing info of the remote service currently uses, without creating one.
+    virtual std::shared_ptr<boardnet_endpoint> get_remote_client_endpoint(service_t _service, instance_t _instance, major_version_t _major,
+                                                                          bool _reliable) const = 0;
 
     virtual void on_inbound_unsubscribe(std::shared_ptr<remote_subscription>& _subscription) = 0;
 

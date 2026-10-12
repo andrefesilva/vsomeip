@@ -159,17 +159,16 @@ public:
 
     std::shared_ptr<boardnet_endpoint> create_service_discovery_endpoint(const std::string& _address, uint16_t _port, bool _reliable);
     void init_routing_info();
-    void add_routing_info(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, ttl_t _ttl,
-                          const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
-                          const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
-                          const endpoint_manager_impl::remote_offer_state& _state);
+    sd::add_routing_info_result_t add_routing_info(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
+                                                   ttl_t _ttl, const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
+                                                   const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port);
     void del_routing_info(service_t _service, instance_t _instance, major_version_t _major, bool _has_reliable, bool _has_unreliable,
                           bool _trigger_availability, std::optional<disconnect_reason_e> _reason = std::nullopt);
-    void update_routing_info(std::chrono::milliseconds _elapsed);
-    void is_remote_service_known(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                                 const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
-                                 const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
-                                 endpoint_manager_impl::remote_offer_state& _state);
+    /// @return false if the routing info is currently being modified and the check must be retried.
+    bool update_routing_info(std::chrono::milliseconds _elapsed);
+    bool has_remote_routing_info(service_t _service, instance_t _instance, major_version_t _major) const;
+    std::shared_ptr<boardnet_endpoint> get_remote_client_endpoint(service_t _service, instance_t _instance, major_version_t _major,
+                                                                  bool _reliable) const;
 
     // Handle remote (inbound, boardnet-originated) subscriptions
     void on_inbound_subscribe(std::shared_ptr<remote_subscription>& _subscription);
@@ -208,6 +207,28 @@ public:
     void register_routing_state_handler(const routing_state_handler_t& _handler);
     void sd_acceptance_enabled(const boost::asio::ip::address& _address, const port_range_t& _range, bool _reliable);
 
+private:
+    /// An expired remote offer, with the remote port it was reachable through and the client endpoints it was used by.
+    struct expired_offer_t {
+        versioned_service_instance_t offer_;
+        port_t port_;
+        std::shared_ptr<boardnet_endpoint> reliable_;
+        std::shared_ptr<boardnet_endpoint> unreliable_;
+    };
+    using expired_offers_t = std::vector<expired_offer_t>;
+
+    // Callers hold remote_routing_info_mutex_.
+    void del_routing_info_unlocked(service_t _service, instance_t _instance, major_version_t _major, bool _has_reliable,
+                                   bool _has_unreliable, bool _trigger_availability,
+                                   std::optional<disconnect_reason_e> _reason = std::nullopt);
+    void expire_subscriptions_unlocked(const boost::asio::ip::address& _address, const port_range_t& _range, bool _reliable);
+    [[nodiscard]] expired_offers_t expire_services_unlocked(const boost::asio::ip::address& _address, const port_range_t& _range,
+                                                            bool _reliable);
+    /// Cleans up the service discovery state of the expired offers. Must be called without holding remote_routing_info_mutex_.
+    void forget_expired_offers(const expired_offers_t& _expired_offers, const boost::asio::ip::address& _address,
+                               const port_range_t& _range, bool _reliable) const;
+
+public:
     void on_resend_provided_events_response(pending_remote_offer_id_t _id);
     client_t find_local_provider(service_t _service, instance_t _instance, major_version_t _major);
     std::set<client_t> find_local_clients(service_t _service, instance_t _instance, major_version_t _major);
@@ -517,6 +538,9 @@ private:
 
     versioned_services_t services_remote_;
     mutable std::mutex services_remote_mutex_;
+    // Serializes every add/delete of remote routing info (offers, ttl expiration, sd acceptance expiration)
+    // and the creation of remote client endpoints.
+    std::mutex remote_routing_info_mutex_;
     versioned_services_t services_;
     mutable std::mutex services_mutex_;
 

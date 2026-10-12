@@ -517,9 +517,11 @@ std::shared_ptr<security> routing_manager_stub::get_security() const {
 }
 
 void routing_manager_stub::on_deregister_application(client_t _client) {
-
-    std::unique_lock its_lock{offerings_mutex_};
-    const auto services_to_report = offered_services_.remove_all_for_client(_client);
+    std::vector<local_offering_table::entry> services_to_report;
+    {
+        std::scoped_lock const guard{offerings_mutex_};
+        services_to_report = offered_services_.remove_all_for_client(_client);
+    }
 
     host_->remove_pending_requests(pending_request_removal_type_e::BOTH, _client);
 
