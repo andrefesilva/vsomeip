@@ -303,8 +303,9 @@ void local_endpoint::stop_internal(std::unique_lock<std::mutex>& lock, bool _due
     if (state_ == state_e::STOPPED) {
         return;
     }
+    assert(!cleanup_handler_);
     if (cleanup_handler_) {
-        VSOMEIP_WARNING_P << "Endpoint was stopped outside its cleanup handler";
+        VSOMEIP_ERROR_P << "Local endpoint was stopped outside its cleanup handler";
     }
     if (connect_debounce_) {
         connect_debounce_->stop();

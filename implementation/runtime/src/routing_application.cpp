@@ -54,8 +54,8 @@ void routing_application::start() const {
     routing_->start();
 }
 
-void routing_application::stop() const {
-    routing_->stop();
+async::hook routing_application::stop() const {
+    return routing_->stop();
 }
 
 void routing_application::set_routing_state(routing_state_internal_e _routing_state) const {

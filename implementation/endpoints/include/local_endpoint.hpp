@@ -117,13 +117,15 @@ private:
  *
  * State machine:
  * @code
- * INIT       -> CONNECTING (connect initiated)
- * CONNECTING -> CONNECTED  (connection established)
- * CONNECTING -> INIT       (retry after timeout/failure)
- * CONNECTING -> FAILED     (max retries exhausted)
- * CONNECTED  -> FAILED     (I/O error or cleanup_handler triggered with an error)
- * FAILED     -> STOPPED    (cleanup via cleanup_handler with an error)
- * *          -> STOPPED    (explicit stop, potentially called via the cleanup_handler without an error)
+ * INIT           -> CONNECTING   (connect initiated)
+ * CONNECTING     -> CONNECTED    (connection established)
+ * CONNECTING     -> INIT         (retry after timeout/failure)
+ * CONNECTING     -> FAILED       (max retries exhausted)
+ * CONNECTED      -> FAILED       (I/O error)
+ * *              -> FAILED       (cleanup was requested)
+ * FAILED         -> STOPPED      (stopped from the cleanup handler)
+ * INIT/CONNECTED -> STOPPED      (stopped from the cleanup handler when flushing, skipping FAILED)
+ * *              -> STOPPED      (explicit stop, for endpoints without a cleanup handler)
  * @endcode
  *
  * Roles:

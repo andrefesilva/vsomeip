@@ -49,11 +49,29 @@ void endpoint_manager_impl::start() {
     auxiliary_context_.start();
 }
 
-void endpoint_manager_impl::stop() {
+async::hook endpoint_manager_impl::stop() {
     VSOMEIP_INFO_P << "called";
 
-    clear_routing_endpoints();
+    auto when_flushed = flush_routing_endpoints();
+    // When the flush does not finish within 500ms, request the cleanup of the routing endpoints
+    auto when_flush_complete = when_flushed.when_not_within(std::chrono::milliseconds(500), [weak_self = weak_from_this()] {
+        VSOMEIP_WARNING << "emi::stop: Routing endpoints were not flushed within time. Requesting their cleanup";
+        if (auto self = weak_self.lock(); self) {
+            std::scoped_lock const lock{self->routing_endpoint_mtx_};
+            for (auto const& [id, ep] : self->routing_endpoints_) {
+                ep->request_cleanup(true);
+            }
+        }
+    });
+    // When the endpoints are flushed the stop can be finished
+    return when_flush_complete.then([weak_self = weak_from_this()] {
+        if (auto self = weak_self.lock(); self) {
+            self->finish_stop();
+        }
+    });
+}
 
+void endpoint_manager_impl::finish_stop() {
     // stop boardnet endpoints
     std::vector<std::shared_ptr<boardnet_endpoint>> endpoints;
 
@@ -1366,6 +1384,10 @@ void endpoint_manager_impl::remove_routing_endpoint(client_t _client) {
             // (because of the locked mtx), therefore the pending set remains untouched
             pending_routing_endpoints_.erase(it);
         }
+        if (on_routing_endpoints_cleaned_ && routing_endpoints_.empty()) {
+            on_routing_endpoints_cleaned_.fire();
+            on_routing_endpoints_cleaned_ = {};
+        }
     }
 
     // on_register_application must run for the now-installed endpoint, mirroring add_local_routing_endpoint. Must happen outside the
@@ -1375,17 +1397,25 @@ void endpoint_manager_impl::remove_routing_endpoint(client_t _client) {
     }
 }
 
-void endpoint_manager_impl::clear_routing_endpoints() {
-    VSOMEIP_INFO_P << " ";
+async::hook endpoint_manager_impl::flush_routing_endpoints() {
     std::scoped_lock const lock{routing_endpoint_mtx_};
-    for (auto const& [id, ep] : routing_endpoints_) {
-        ep->stop(false);
-    }
+    on_routing_endpoints_cleaned_ = async::trigger(io_);
+    // dropped before the flushes below, as remove_routing_endpoint() would otherwise promote
     for (auto const& [id, ep] : pending_routing_endpoints_) {
-        ep->stop(true); // never "started", but the socket needs to be stopped anyhow
+        ep->stop(true); // never "started", so no cleanup handler was ever registered
     }
-    routing_endpoints_.clear();
     pending_routing_endpoints_.clear();
+    for (auto const& [id, ep] : routing_endpoints_) {
+        // graceful, so that whatever is still queued reaches the clients: the endpoint invokes its
+        // own cleanup handler once its queue has drained, which is what removes it from here
+        ep->start_flushing();
+    }
+    auto ret = on_routing_endpoints_cleaned_.get_hook();
+    if (routing_endpoints_.empty()) {
+        on_routing_endpoints_cleaned_.fire();
+        on_routing_endpoints_cleaned_ = {};
+    }
+    return ret;
 }
 
 void endpoint_manager_impl::suspend() {

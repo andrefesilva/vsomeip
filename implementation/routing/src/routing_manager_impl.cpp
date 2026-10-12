@@ -229,7 +229,7 @@ void routing_manager_impl::start() {
     VSOMEIP_INFO << VSOMEIP_INTERNAL_ROUTING_READY_MESSAGE;
 }
 
-void routing_manager_impl::stop() {
+async::hook routing_manager_impl::stop() {
 #if defined(__linux__)
     {
         std::scoped_lock its_lock{memory_log_timer_mutex_};
@@ -260,9 +260,11 @@ void routing_manager_impl::stop() {
 
     stub_->stop();
 
-    ep_mgr_impl_->stop();
-
-    utility::reset_client_ids(configuration_->get_network());
+    return ep_mgr_impl_->stop().then([weak_self = weak_from_this()] {
+        if (auto self = weak_self.lock(); self) {
+            utility::reset_client_ids(self->configuration_->get_network());
+        }
+    });
 }
 
 bool routing_manager_impl::is_local_client(client_t _client) const {
