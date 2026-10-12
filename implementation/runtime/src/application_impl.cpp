@@ -179,65 +179,56 @@ bool application_impl::init() {
         }
     }
 
-    std::shared_ptr<configuration> its_configuration = get_configuration();
-    if (its_configuration) {
-        VSOMEIP_INFO << "Initializing vsomeip (" VSOMEIP_VERSION ") application \"" << name_ << "\".";
-        client_ = its_configuration->get_id(name_);
+    VSOMEIP_INFO << "Initializing vsomeip (" VSOMEIP_VERSION ") application \"" << name_ << "\".";
+    client_ = configuration_->get_id(name_);
 
-        // Max dispatchers is the configured maximum number of dispatchers and
-        // the main dispatcher
-        max_dispatchers_ = its_configuration->get_max_dispatchers(name_) + 1;
-        max_dispatch_time_ = its_configuration->get_max_dispatch_time(name_);
+    // Max dispatchers is the configured maximum number of dispatchers and
+    // the main dispatcher
+    max_dispatchers_ = configuration_->get_max_dispatchers(name_) + 1;
+    max_dispatch_time_ = configuration_->get_max_dispatch_time(name_);
 
-        has_session_handling_ = its_configuration->has_session_handling(name_);
-        if (!has_session_handling_) {
-            VSOMEIP_INFO << "Application: " << name_ << " has session handling switched off!";
-        }
-
-        // Tracing
-        trace_connector_ = std::make_shared<trace::connector_impl>(its_configuration->get_trace());
-
-        if (is_routing_manager_host_) {
-            VSOMEIP_INFO << "Instantiating routing manager [Host].";
-            const diagnosis_t its_diagnosis = configuration_->get_diagnosis_address();
-            const diagnosis_t its_diagnosis_mask = configuration_->get_diagnosis_mask();
-
-            VSOMEIP_INFO << "Client IDs start at 0x" << hex4(utility::get_client_id_base(its_diagnosis, its_diagnosis_mask))
-                         << " (diagnosis 0x" << hex2(static_cast<uint8_t>(its_diagnosis)) << ", mask 0x" << hex4(its_diagnosis_mask)
-                         << ").";
-            if (client_ == VSOMEIP_CLIENT_UNSET) {
-                client_ = utility::get_client_id_base(its_diagnosis, its_diagnosis_mask);
-                utility::request_client_id(configuration_, name_, client_);
-            }
-            routing_app_ = std::make_unique<routing_application>(io_, configuration_, name_, policy_manager_, security_, trace_connector_);
-        }
-        VSOMEIP_INFO << "Instantiating routing manager [Proxy].";
-        routing_ = std::make_shared<routing_manager_client>(this, client_side_logging_, client_side_logging_filter_, trace_connector_);
-
-        routing_->init();
-
-        VSOMEIP_INFO << "Application(" << (name_ != "" ? name_ : "unnamed") << ", " << hex4(client_) << ") is initialized ("
-                     << max_dispatchers_ << ", " << max_dispatch_time_ << ").";
-
-        is_initialized_ = true;
+    has_session_handling_ = configuration_->has_session_handling(name_);
+    if (!has_session_handling_) {
+        VSOMEIP_INFO << "Application: " << name_ << " has session handling switched off!";
     }
 
-    if (configuration_) {
-        auto its_plugins = configuration_->get_plugins(name_);
-        auto its_app_plugin_info = its_plugins.find(plugin_type_e::APPLICATION_PLUGIN);
-        if (its_app_plugin_info != its_plugins.end()) {
-            for (auto its_library : its_app_plugin_info->second) {
-                auto its_application_plugin = plugin_manager_->get_plugin(plugin_type_e::APPLICATION_PLUGIN, its_library);
-                if (its_application_plugin) {
-                    VSOMEIP_INFO << "Client 0x" << hex4(get_client()) << " Loading plug-in library: " << its_library << " succeeded!";
-                    std::dynamic_pointer_cast<application_plugin>(its_application_plugin)
-                            ->on_application_state_change(name_, application_plugin_state_e::STATE_INITIALIZED);
-                }
+    // Tracing
+    trace_connector_ = std::make_shared<trace::connector_impl>(configuration_->get_trace());
+
+    if (is_routing_manager_host_) {
+        VSOMEIP_INFO << "Instantiating routing manager [Host].";
+        const diagnosis_t its_diagnosis = configuration_->get_diagnosis_address();
+        const diagnosis_t its_diagnosis_mask = configuration_->get_diagnosis_mask();
+
+        VSOMEIP_INFO << "Client IDs start at 0x" << hex4(utility::get_client_id_base(its_diagnosis, its_diagnosis_mask)) << " (diagnosis 0x"
+                     << hex2(static_cast<uint8_t>(its_diagnosis)) << ", mask 0x" << hex4(its_diagnosis_mask) << ").";
+        if (client_ == VSOMEIP_CLIENT_UNSET) {
+            client_ = utility::get_client_id_base(its_diagnosis, its_diagnosis_mask);
+            utility::request_client_id(configuration_, name_, client_);
+        }
+        routing_app_ = std::make_unique<routing_application>(io_, configuration_, name_, policy_manager_, security_, trace_connector_);
+    }
+
+    VSOMEIP_INFO << "Instantiating routing manager [Proxy].";
+    routing_ = std::make_shared<routing_manager_client>(this, client_side_logging_, client_side_logging_filter_, trace_connector_);
+    routing_->init();
+
+    VSOMEIP_INFO << "Application(" << (name_ != "" ? name_ : "unnamed") << ", " << hex4(client_) << ") is initialized (" << max_dispatchers_
+                 << ", " << max_dispatch_time_ << ").";
+
+    is_initialized_ = true;
+
+    auto its_plugins = configuration_->get_plugins(name_);
+    auto its_app_plugin_info = its_plugins.find(plugin_type_e::APPLICATION_PLUGIN);
+    if (its_app_plugin_info != its_plugins.end()) {
+        for (auto its_library : its_app_plugin_info->second) {
+            auto its_application_plugin = plugin_manager_->get_plugin(plugin_type_e::APPLICATION_PLUGIN, its_library);
+            if (its_application_plugin) {
+                VSOMEIP_INFO << "Client 0x" << hex4(get_client()) << " Loading plug-in library: " << its_library << " succeeded!";
+                std::dynamic_pointer_cast<application_plugin>(its_application_plugin)
+                        ->on_application_state_change(name_, application_plugin_state_e::STATE_INITIALIZED);
             }
         }
-    } else {
-        std::cerr << "Configuration module could not be loaded!" << std::endl;
-        std::exit(EXIT_FAILURE);
     }
 
     VSOMEIP_INFO_P << "End of init, application \"" << name_ << "\" (" << hex4(client_) << ")";
@@ -537,11 +528,8 @@ void application_impl::stop() {
                 io_.stop();
             }
         };
-        if (routing_) {
-            routing_->stop().then(finalize_stop);
-        } else {
-            finalize_stop();
-        }
+
+        routing_->stop().then(finalize_stop);
     });
 }
 
