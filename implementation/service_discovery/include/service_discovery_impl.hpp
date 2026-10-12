@@ -74,6 +74,9 @@ public:
                    const std::shared_ptr<eventgroupinfo>& _info);
     void unsubscribe(service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup, client_t _client);
     void unsubscribe_all(service_t _service, instance_t _instance, major_version_t _major);
+    bool unsubscribe_all_if_expired(service_t _service, instance_t _instance, major_version_t _major,
+                                    const std::shared_ptr<boardnet_endpoint>& _expired_reliable,
+                                    const std::shared_ptr<boardnet_endpoint>& _expired_unreliable);
     void unsubscribe_all_on_suspend();
     void reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major);
 
@@ -237,6 +240,13 @@ private:
 
     reliability_type_e get_remote_offer_type(service_t _service, instance_t _instance) const;
 
+    entry_data_t create_expired_stop_subscribe_entry(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
+                                                     const std::shared_ptr<subscription>& _subscription,
+                                                     const std::shared_ptr<boardnet_endpoint>& _expired_reliable,
+                                                     const std::shared_ptr<boardnet_endpoint>& _expired_unreliable);
+
+    void update_eventgroup_reliability(service_t _service, instance_t _instance, major_version_t _major, reliability_type_e _offer_type,
+                                       const std::string& _service_address);
     bool update_remote_offer_type(service_t _service, instance_t _instance, reliability_type_e _offer_type,
                                   const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
                                   const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
@@ -393,7 +403,6 @@ private:
     sd_acceptance_handler_t sd_acceptance_handler_;
 
     std::mutex offer_mutex_;
-    std::mutex check_ttl_mutex_;
 
     boost::asio::steady_timer suspend_stop_offer_watchdog_;
     std::mutex suspend_stop_offer_mutex_;

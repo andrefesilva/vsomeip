@@ -349,7 +349,11 @@ void routing_manager_impl::request_service(client_t _client, service_t _service,
         // itself already picks one when _major is ANY_MAJOR) rather than forwarding a
         // possibly-ANY_MAJOR _major -- keeps endpoint_manager_impl::remote_services_
         // consistently keyed by a concrete major.
-        ep_mgr_impl_->find_or_create_remote_client(_service, _instance, its_info->get_major());
+        {
+            // Serialize the endpoint creation with the add/delete of routing info.
+            std::scoped_lock its_lock{remote_routing_info_mutex_};
+            ep_mgr_impl_->find_or_create_remote_client(_service, _instance, its_info->get_major());
+        }
     } else if (!configuration_->is_local_service(_service, _instance)) {
         if (discovery_) {
             discovery_->request_service(_service, _instance, _major, _minor, DEFAULT_TTL);
@@ -1662,26 +1666,37 @@ void routing_manager_impl::remove_local(client_t _client) {
     ep_mgr_impl_->remove_routing_endpoint(_client);
 }
 
-void routing_manager_impl::is_remote_service_known(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                                                   const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
-                                                   const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
-                                                   endpoint_manager_impl::remote_offer_state& _state) {
-    ep_mgr_impl_->is_remote_service_known(_service, _instance, _major, _minor, _reliable_address, _reliable_port, _unreliable_address,
-                                          _unreliable_port, _state);
-}
+sd::add_routing_info_result_t
+routing_manager_impl::add_routing_info(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor, ttl_t _ttl,
+                                       const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
+                                       const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port) {
+    sd::add_routing_info_result_t its_result;
+    auto& its_state = its_result.state_;
 
-void routing_manager_impl::add_routing_info(service_t _service, instance_t _instance, major_version_t _major, minor_version_t _minor,
-                                            ttl_t _ttl, const boost::asio::ip::address& _reliable_address, uint16_t _reliable_port,
-                                            const boost::asio::ip::address& _unreliable_address, uint16_t _unreliable_port,
-                                            const endpoint_manager_impl::remote_offer_state& _state) {
+    std::scoped_lock its_lock{remote_routing_info_mutex_};
+
+    // Decide upon the offer under the lock, so that it can not interleave with an expiration of the routing info.
+    ep_mgr_impl_->is_remote_service_known(_service, _instance, _major, _minor, _reliable_address, _reliable_port, _unreliable_address,
+                                          _unreliable_port, its_state);
+    if (its_state.drop_offer) {
+        return its_result;
+    }
 
     if (is_suspended()) {
         VSOMEIP_INFO_P << "We are suspended --> do nothing.";
-        return;
+        return its_result;
     }
 
-    const bool must_clear_reliable = _state.reliable_removed;
-    const bool must_clear_unreliable = _state.unreliable_removed;
+    // If an ECU offers the same service/instance with completely
+    // different endpoints, delete the old routing info and re-add it
+    if (its_state.endpoints_changed && !its_state.reliable_known && !its_state.unreliable_known) {
+        VSOMEIP_WARNING_P << "Endpoints changed for [" << hex4(_service) << "." << hex4(_instance)
+                          << "] and none of the previous endpoints are still known - updating routing info";
+        del_routing_info_unlocked(_service, _instance, _major, true, true, true);
+    }
+
+    const bool must_clear_reliable = its_state.reliable_removed;
+    const bool must_clear_unreliable = its_state.unreliable_removed;
 
     // Update the changed endpoints
     if (must_clear_reliable) {
@@ -1720,12 +1735,12 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
                         << "." << _minor << "] on port " << ((_reliable_port != ILLEGAL_PORT) ? _reliable_port : _unreliable_port)
                         << " offered previously on this node: [" << hex4(_service) << "." << hex4(_instance) << "."
                         << static_cast<uint32_t>(its_info->get_major()) << "." << its_info->get_minor() << "]";
-        return;
+        return its_result;
     } else {
         its_info->set_ttl(_ttl);
     }
 
-    if (_state.endpoints_changed) {
+    if (its_state.endpoints_changed) {
         if (must_clear_reliable) {
             its_info->set_endpoint(nullptr, true);
         }
@@ -1736,10 +1751,10 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
 
     bool udp_inserted(false);
     // Add endpoint(s) if necessary
-    if (_reliable_port != ILLEGAL_PORT && !_state.reliable_known) {
+    if (_reliable_port != ILLEGAL_PORT && !its_state.reliable_known) {
         std::shared_ptr<endpoint_definition> endpoint_def_tcp =
                 endpoint_definition::get(_reliable_address, _reliable_port, true, _service, _instance);
-        if (_unreliable_port != ILLEGAL_PORT && !_state.unreliable_known) {
+        if (_unreliable_port != ILLEGAL_PORT && !its_state.unreliable_known) {
             std::shared_ptr<endpoint_definition> endpoint_def_udp =
                     endpoint_definition::get(_unreliable_address, _unreliable_port, false, _service, _instance);
             ep_mgr_impl_->add_remote_service_info(_service, _instance, _major, endpoint_def_tcp, endpoint_def_udp);
@@ -1762,7 +1777,7 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
                 }
             }
         }
-    } else if (_reliable_port != ILLEGAL_PORT && _state.reliable_known) {
+    } else if (_reliable_port != ILLEGAL_PORT && its_state.reliable_known) {
         // has_requester() locks requested_services_mutex_ internally and releases it before returning; the
         // stub calls below re-enter the host under that same mutex, so it must not be held across them.
         if (has_requester(_service, _instance, _major, _minor)) {
@@ -1771,9 +1786,7 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
                 // Check establishment and offer atomically to avoid a spurious re-offer racing a concurrent disconnect.
                 if (stub_->offer_service_if_established(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(),
                                                         its_info->get_minor(), ep)) {
-                    if (discovery_) {
-                        discovery_->on_endpoint_connected(_service, _instance, its_info->get_major(), ep);
-                    }
+                    its_result.connected_endpoints_.push_back(ep);
                 }
             } else {
                 // no endpoint yet, but requested -> create one
@@ -1788,7 +1801,7 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
         }
     }
 
-    if (_unreliable_port != ILLEGAL_PORT && !_state.unreliable_known) {
+    if (_unreliable_port != ILLEGAL_PORT && !its_state.unreliable_known) {
         if (!udp_inserted) {
             std::shared_ptr<endpoint_definition> endpoint_def =
                     endpoint_definition::get(_unreliable_address, _unreliable_port, false, _service, _instance);
@@ -1801,11 +1814,11 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
                 }
             }
         }
-    } else if (_unreliable_port != ILLEGAL_PORT && _state.unreliable_known) {
+    } else if (_unreliable_port != ILLEGAL_PORT && its_state.unreliable_known) {
         // has_requester() locks requested_services_mutex_ internally and releases it before returning; the
         // stub calls below re-enter the host under that same mutex, so it must not be held across them.
         if (has_requester(_service, _instance, _major, _minor)) {
-            if (_reliable_port == ILLEGAL_PORT && !_state.reliable_known
+            if (_reliable_port == ILLEGAL_PORT && !its_state.reliable_known
                 && !stub_->contained_in_routing_info(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(),
                                                      its_info->get_minor())) {
                 auto ep = its_info->get_endpoint(false);
@@ -1813,9 +1826,7 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
                     // Check establishment and offer atomically to avoid a spurious re-offer racing a concurrent disconnect.
                     if (stub_->offer_service_if_established(VSOMEIP_ROUTING_CLIENT, _service, _instance, its_info->get_major(),
                                                             its_info->get_minor(), ep)) {
-                        if (discovery_) {
-                            discovery_->on_endpoint_connected(_service, _instance, its_info->get_major(), ep);
-                        }
+                        its_result.connected_endpoints_.push_back(ep);
                     } else {
                         ep->start_if_closed();
                     }
@@ -1828,10 +1839,19 @@ void routing_manager_impl::add_routing_info(service_t _service, instance_t _inst
             }
         }
     }
+
+    return its_result;
 }
 
 void routing_manager_impl::del_routing_info(service_t _service, instance_t _instance, major_version_t _major, bool _has_reliable,
                                             bool _has_unreliable, bool _trigger_availability, std::optional<disconnect_reason_e> _reason) {
+    std::scoped_lock its_lock{remote_routing_info_mutex_};
+    del_routing_info_unlocked(_service, _instance, _major, _has_reliable, _has_unreliable, _trigger_availability, _reason);
+}
+
+void routing_manager_impl::del_routing_info_unlocked(service_t _service, instance_t _instance, major_version_t _major, bool _has_reliable,
+                                                     bool _has_unreliable, bool _trigger_availability,
+                                                     std::optional<disconnect_reason_e> _reason) {
 
     std::shared_ptr<serviceinfo> its_info(find_service(_service, _instance, _major));
     if (!its_info) {
@@ -1864,17 +1884,8 @@ void routing_manager_impl::del_routing_info(service_t _service, instance_t _inst
                 }
             }
         }
-    }
 
-    for (const auto& e : its_events) {
-        if (e->is_set()) {
-            VSOMEIP_INFO_P << "Unsetting payload for [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(e->get_event()) << "]";
-        }
-        e->unset_payload(true);
-    }
-
-    {
-        std::scoped_lock its_lock{remote_subscription_state_mutex_};
+        std::scoped_lock its_state_lock{remote_subscription_state_mutex_};
         std::set<std::tuple<service_t, instance_t, major_version_t, eventgroup_t, client_t>> its_invalid;
 
         for (const auto& its_state : remote_subscription_state_) {
@@ -1889,13 +1900,22 @@ void routing_manager_impl::del_routing_info(service_t _service, instance_t _inst
         }
     }
 
+    for (const auto& e : its_events) {
+        if (e->is_set()) {
+            VSOMEIP_INFO_P << "Unsetting payload for [" << hex4(_service) << "." << hex4(_instance) << "." << hex4(e->get_event()) << "]";
+        }
+        e->unset_payload(true);
+    }
+
+    // Clear the remote service info before the client endpoints: send() creates client endpoints without holding
+    // remote_routing_info_mutex_, and must not recreate one from the remote service info in between.
     if (_has_reliable) {
-        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, true, _reason);
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, _major, true);
+        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, true, _reason);
     }
     if (_has_unreliable) {
-        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, false, _reason);
         ep_mgr_impl_->clear_remote_service_info(_service, _instance, _major, false);
+        ep_mgr_impl_->clear_client_endpoints(_service, _instance, _major, false, _reason);
     }
 
     ep_mgr_impl_->clear_multicast_endpoints(_service, _instance, _major);
@@ -1909,40 +1929,74 @@ void routing_manager_impl::del_routing_info(service_t _service, instance_t _inst
     }
 }
 
-void routing_manager_impl::update_routing_info(std::chrono::milliseconds _elapsed) {
-    std::vector<versioned_service_instance_t> its_expired_offers;
-
+bool routing_manager_impl::update_routing_info(std::chrono::milliseconds _elapsed) {
+    expired_offers_t its_expired_offers;
     {
-        std::scoped_lock its_lock{services_remote_mutex_};
-        for (const auto& [service, instances] : services_remote_) {
-            for (const auto& [instance, majors] : instances) {
-                for (const auto& [major, info] : majors) {
-                    ttl_t its_ttl = info->get_ttl();
-                    if (its_ttl < DEFAULT_TTL) { // do not touch "forever"
-                        std::chrono::milliseconds precise_ttl = info->get_precise_ttl();
-                        if (precise_ttl.count() < _elapsed.count() || precise_ttl.count() == 0) {
-                            info->set_ttl(0);
-                            its_expired_offers.push_back({service, instance, major});
-                        } else {
-                            std::chrono::milliseconds its_new_ttl(precise_ttl - _elapsed);
-                            info->set_precise_ttl(its_new_ttl);
+        // Do not stall the ttl timer behind a running add/delete of routing info, the caller retries shortly.
+        std::unique_lock its_lock{remote_routing_info_mutex_, std::try_to_lock};
+        if (!its_lock.owns_lock()) {
+            return false;
+        }
+
+        {
+            std::scoped_lock its_remote_lock{services_remote_mutex_};
+            for (const auto& [service, instances] : services_remote_) {
+                for (const auto& [instance, majors] : instances) {
+                    for (const auto& [major, info] : majors) {
+                        ttl_t its_ttl = info->get_ttl();
+                        if (its_ttl < DEFAULT_TTL) { // do not touch "forever"
+                            std::chrono::milliseconds precise_ttl = info->get_precise_ttl();
+                            if (precise_ttl.count() < _elapsed.count() || precise_ttl.count() == 0) {
+                                info->set_ttl(0);
+                                // The endpoints are captured before del_routing_info_unlocked() drops them.
+                                its_expired_offers.push_back(
+                                        {{service, instance, major}, ANY_PORT, info->get_endpoint(true), info->get_endpoint(false)});
+                            } else {
+                                std::chrono::milliseconds its_new_ttl(precise_ttl - _elapsed);
+                                info->set_precise_ttl(its_new_ttl);
+                            }
                         }
                     }
                 }
             }
         }
+
+        for (const auto& its_expired : its_expired_offers) {
+            const auto& [service, instance, major] = its_expired.offer_;
+            del_routing_info_unlocked(service, instance, major, true, true, true);
+            VSOMEIP_INFO_P << "Update_routing_info: elapsed=" << _elapsed.count() << " : delete service/instance " << hex4(service) << "."
+                           << hex4(instance);
+        }
     }
 
-    for (const auto& [service, instance, major] : its_expired_offers) {
-        if (discovery_) {
-            discovery_->unsubscribe_all(service, instance, major);
-            // go to Initial Wait Phase
-            discovery_->reset_request_sent_counter(service, instance, major);
+    // Service discovery is only called without holding remote_routing_info_mutex_, see its declaration.
+    // An offer processed in between may have re-added the service, then its new subscriptions are kept.
+    if (discovery_) {
+        for (const auto& its_expired : its_expired_offers) {
+            const auto& [service, instance, major] = its_expired.offer_;
+            if (discovery_->unsubscribe_all_if_expired(service, instance, major, its_expired.reliable_, its_expired.unreliable_)) {
+                // go to Initial Wait Phase
+                discovery_->reset_request_sent_counter(service, instance, major);
+            }
         }
-        del_routing_info(service, instance, major, true, true, true);
-        VSOMEIP_INFO_P << "Update_routing_info: elapsed=" << _elapsed.count() << " : delete service/instance " << hex4(service) << "."
-                       << hex4(instance);
     }
+    return true;
+}
+
+bool routing_manager_impl::has_remote_routing_info(service_t _service, instance_t _instance, major_version_t _major) const {
+    std::scoped_lock its_lock{services_remote_mutex_};
+    if (auto found_service = services_remote_.find(_service); found_service != services_remote_.end()) {
+        if (auto found_instance = found_service->second.find(_instance); found_instance != found_service->second.end()) {
+            return found_instance->second.count(_major) > 0;
+        }
+    }
+    return false;
+}
+
+std::shared_ptr<boardnet_endpoint> routing_manager_impl::get_remote_client_endpoint(service_t _service, instance_t _instance,
+                                                                                    major_version_t _major, bool _reliable) const {
+    const auto its_info = find_service(_service, _instance, _major);
+    return its_info ? its_info->get_endpoint(_reliable) : nullptr;
 }
 
 void routing_manager_impl::expire_services(const boost::asio::ip::address& _address) {
@@ -1950,7 +2004,17 @@ void routing_manager_impl::expire_services(const boost::asio::ip::address& _addr
 }
 
 void routing_manager_impl::expire_services(const boost::asio::ip::address& _address, const port_range_t& _range, bool _reliable) {
-    std::vector<versioned_service_instance_t> its_expired_offers;
+    expired_offers_t its_expired_offers;
+    {
+        std::scoped_lock its_lock{remote_routing_info_mutex_};
+        its_expired_offers = expire_services_unlocked(_address, _range, _reliable);
+    }
+    forget_expired_offers(its_expired_offers, _address, _range, _reliable);
+}
+
+routing_manager_impl::expired_offers_t routing_manager_impl::expire_services_unlocked(const boost::asio::ip::address& _address,
+                                                                                      const port_range_t& _range, bool _reliable) {
+    expired_offers_t its_expired_offers;
 
     const bool expire_all = _range.is_any();
 
@@ -1966,28 +2030,43 @@ void routing_manager_impl::expire_services(const boost::asio::ip::address& _addr
                 if (its_client_endpoint) {
                     if ((expire_all || _range.contains(its_client_endpoint->get_remote_port()))
                         && its_client_endpoint->get_remote_address(its_address) && its_address == _address) {
-                        if (discovery_) {
-                            discovery_->unsubscribe_all(service, instance, major);
-                            if (!expire_all) {
-                                discovery_->remove_remote_offer_type_by_ip(_address, its_client_endpoint->get_remote_port(), _reliable);
-                            }
-                        }
-                        its_expired_offers.push_back({service, instance, major});
+                        // The endpoints are captured before del_routing_info_unlocked() drops them.
+                        its_expired_offers.push_back({{service, instance, major},
+                                                      its_client_endpoint->get_remote_port(),
+                                                      info->get_endpoint(true),
+                                                      info->get_endpoint(false)});
                     }
                 }
             }
         }
     }
 
-    // Remove all offers for the given IP address if the port range is ANY_PORT. Otherwise, only remove the offers for the given port.
-    if (expire_all && discovery_) {
-        discovery_->remove_remote_offer_type_by_ip(_address, ANY_PORT, _reliable);
+    for (const auto& [its_offer, its_port, its_reliable, its_unreliable] : its_expired_offers) {
+        VSOMEIP_INFO_P << "for address: " << _address << " : delete service/instance " << hex4(its_offer.service) << "."
+                       << hex4(its_offer.instance) << " port [" << _range.start_ << "," << _range.end_ << "] reliability=" << std::boolalpha
+                       << _reliable;
+        del_routing_info_unlocked(its_offer.service, its_offer.instance, its_offer.major, true, true, true);
     }
+    return its_expired_offers;
+}
 
-    for (const auto& [service, instance, major] : its_expired_offers) {
-        VSOMEIP_INFO_P << "for address: " << _address << " : delete service/instance " << hex4(service) << "." << hex4(instance)
-                       << " port [" << _range.start_ << "," << _range.end_ << "] reliability=" << std::boolalpha << _reliable;
-        del_routing_info(service, instance, major, true, true, true);
+void routing_manager_impl::forget_expired_offers(const expired_offers_t& _expired_offers, const boost::asio::ip::address& _address,
+                                                 const port_range_t& _range, bool _reliable) const {
+    // Service discovery is only called without holding remote_routing_info_mutex_.
+    // An offer processed in between may have re-added the service, then its new subscriptions are kept.
+    if (!discovery_) {
+        return;
+    }
+    const bool expire_all = _range.is_any();
+    for (const auto& [its_offer, its_port, its_reliable, its_unreliable] : _expired_offers) {
+        if (discovery_->unsubscribe_all_if_expired(its_offer.service, its_offer.instance, its_offer.major, its_reliable, its_unreliable)
+            && !expire_all) {
+            discovery_->remove_remote_offer_type_by_ip(_address, its_port, _reliable);
+        }
+    }
+    // Remove all offers for the given IP address if the port range is ANY_PORT. Otherwise, only remove the offers for the given port.
+    if (expire_all) {
+        discovery_->remove_remote_offer_type_by_ip(_address, ANY_PORT, _reliable);
     }
 }
 
@@ -1996,6 +2075,12 @@ void routing_manager_impl::expire_subscriptions(const boost::asio::ip::address& 
 }
 
 void routing_manager_impl::expire_subscriptions(const boost::asio::ip::address& _address, const port_range_t& _range, bool _reliable) {
+    std::scoped_lock its_lock{remote_routing_info_mutex_};
+    expire_subscriptions_unlocked(_address, _range, _reliable);
+}
+
+void routing_manager_impl::expire_subscriptions_unlocked(const boost::asio::ip::address& _address, const port_range_t& _range,
+                                                         bool _reliable) {
     std::stringstream log_header;
     log_header << "{remote=" << _address << "}: ";
 
@@ -2060,18 +2145,19 @@ void routing_manager_impl::init_routing_info() {
 
         if (its_reliable_port != ILLEGAL_PORT || its_unreliable_port != ILLEGAL_PORT) {
 
-            endpoint_manager_impl::remote_offer_state its_offer_state;
-            ep_mgr_impl_->is_remote_service_known(i.first, i.second, DEFAULT_MAJOR, DEFAULT_MINOR, its_address, its_reliable_port,
-                                                  its_address, its_unreliable_port, its_offer_state);
-
-            add_routing_info(i.first, i.second, DEFAULT_MAJOR, DEFAULT_MINOR, DEFAULT_TTL, its_address, its_reliable_port, its_address,
-                             its_unreliable_port, its_offer_state);
+            const auto its_result = add_routing_info(i.first, i.second, DEFAULT_MAJOR, DEFAULT_MINOR, DEFAULT_TTL, its_address,
+                                                     its_reliable_port, its_address, its_unreliable_port);
+            if (discovery_) {
+                for (const auto& its_endpoint : its_result.connected_endpoints_) {
+                    discovery_->on_endpoint_connected(i.first, i.second, DEFAULT_MAJOR, its_endpoint);
+                }
+            }
 
             if (its_reliable_port != ILLEGAL_PORT) {
-                ep_mgr_impl_->find_or_create_remote_client(i.first, i.second, DEFAULT_MAJOR, true);
+                find_or_create_remote_client(i.first, i.second, DEFAULT_MAJOR, true);
             }
             if (its_unreliable_port != ILLEGAL_PORT) {
-                ep_mgr_impl_->find_or_create_remote_client(i.first, i.second, DEFAULT_MAJOR, false);
+                find_or_create_remote_client(i.first, i.second, DEFAULT_MAJOR, false);
             }
         }
     }
@@ -2205,6 +2291,18 @@ void routing_manager_impl::on_ack_outbound_subscribe(client_t _client, service_t
     // (insert_subscription/handle_subscription_state)
     std::unique_lock its_lock{event_registration_mutex_};
     if (auto its_eventgroup = find_eventgroup(_service, _instance, _major, _eventgroup); its_eventgroup) {
+        // Without a subscriber, the acknowledged subscription was removed in the meantime, e.g. by an expiration of
+        // the service while the acknowledgement was in flight. Recording it would acknowledge the next subscription
+        // before the remote side has it.
+        const client_t subscriber = (_client == VSOMEIP_ROUTING_CLIENT) ? ANY_CLIENT : _client;
+        const auto its_events = its_eventgroup->get_events();
+        if (std::none_of(its_events.begin(), its_events.end(),
+                         [&](const auto& its_event) { return its_event->has_subscriber(_eventgroup, subscriber); })) {
+            VSOMEIP_WARNING_P << "Ignoring acknowledgement of a removed subscription [" << hex4(_service) << "." << hex4(_instance) << "."
+                              << hex4(_eventgroup) << "] for client " << hex4(_client);
+            return;
+        }
+
         {
             std::scoped_lock its_inner_lock{remote_subscription_state_mutex_};
             const auto its_tuple = std::make_tuple(_service, _instance, _major, _eventgroup, _client);
@@ -2270,6 +2368,8 @@ void routing_manager_impl::on_ack_inbound_subscribe(client_t _client, service_t 
 
 std::shared_ptr<boardnet_endpoint> routing_manager_impl::find_or_create_remote_client(service_t _service, instance_t _instance,
                                                                                       major_version_t _major, bool _reliable) {
+    // Serialize the endpoint creation with the add/delete of routing info.
+    std::scoped_lock its_lock{remote_routing_info_mutex_};
     return ep_mgr_impl_->find_or_create_remote_client(_service, _instance, _major, _reliable);
 }
 
@@ -3450,8 +3550,14 @@ void routing_manager_impl::register_routing_state_handler(const routing_state_ha
 }
 
 void routing_manager_impl::sd_acceptance_enabled(const boost::asio::ip::address& _address, const port_range_t& _range, bool _reliable) {
-    expire_subscriptions(_address, _range, _reliable);
-    expire_services(_address, _range, _reliable);
+    // Expire subscriptions and services atomically with respect to the processing of offers and ttl checks.
+    expired_offers_t its_expired_offers;
+    {
+        std::scoped_lock its_lock{remote_routing_info_mutex_};
+        expire_subscriptions_unlocked(_address, _range, _reliable);
+        its_expired_offers = expire_services_unlocked(_address, _range, _reliable);
+    }
+    forget_expired_offers(its_expired_offers, _address, _range, _reliable);
 }
 
 void routing_manager_impl::memory_log_timer_cbk(boost::system::error_code const& _error) {
@@ -3653,22 +3759,30 @@ void routing_manager_impl::service_endpoint_disconnected(service_t _service, ins
     // reboot-checked the peer (whose first SD message would then close that endpoint and drop queued data).
     // UDP errors carry no session semantics and are left to the SD TTL.
     if (_reason == disconnect_reason_e::CONNECTION_LOST && _endpoint && _endpoint->is_reliable()) {
-        if (discovery_) {
-            discovery_->unsubscribe_all(_service, _instance, _major);
+        // As for the expirations: delete the routing info under remote_routing_info_mutex_ first, capturing the client
+        // endpoints before they are dropped, then clean up the service discovery state without holding it.
+        std::shared_ptr<boardnet_endpoint> its_reliable, its_unreliable;
+        {
+            std::scoped_lock its_lock{remote_routing_info_mutex_};
             if (auto its_info = find_service(_service, _instance, _major); its_info) {
-                for (const bool is_reliable : {true, false}) {
-                    if (auto its_client_endpoint = std::dynamic_pointer_cast<client_endpoint>(its_info->get_endpoint(is_reliable));
-                        its_client_endpoint) {
-                        boost::asio::ip::address its_address;
-                        if (its_client_endpoint->get_remote_address(its_address)) {
-                            discovery_->remove_remote_offer_type_by_ip(its_address, its_client_endpoint->get_remote_port(), is_reliable);
-                        }
+                its_reliable = its_info->get_endpoint(true);
+                its_unreliable = its_info->get_endpoint(false);
+            }
+            del_routing_info_unlocked(_service, _instance, _major, true, true, true, _reason);
+        }
+        // An offer processed in between may have re-added the service, then its new subscriptions are kept.
+        if (discovery_ && discovery_->unsubscribe_all_if_expired(_service, _instance, _major, its_reliable, its_unreliable)) {
+            for (const auto& its_endpoint : {its_reliable, its_unreliable}) {
+                if (auto its_client_endpoint = std::dynamic_pointer_cast<client_endpoint>(its_endpoint); its_client_endpoint) {
+                    boost::asio::ip::address its_address;
+                    if (its_client_endpoint->get_remote_address(its_address)) {
+                        discovery_->remove_remote_offer_type_by_ip(its_address, its_client_endpoint->get_remote_port(),
+                                                                   its_endpoint->is_reliable());
                     }
                 }
             }
             discovery_->reset_request_sent_counter(_service, _instance, _major);
         }
-        del_routing_info(_service, _instance, _major, true, true, true, _reason);
         return;
     }
 
@@ -4490,9 +4604,9 @@ bool routing_manager_impl::is_subscribe_to_any_event_allowed(const vsomeip_sec_c
         for (const auto& e : its_eventgroup->get_events()) {
             if (VSOMEIP_SEC_OK != get_security()->is_client_allowed_to_access_member(_sec_client, _service, _instance, e->get_event())) {
                 VSOMEIP_ERROR << "vSomeIP Security: Client 0x" << hex4(_client)
-                              << " : routing_manager_impl::is_subscribe_to_any_event_allowed: "
-                              << "subscribes to service/instance/event " << hex4(_service) << "/" << hex4(_instance) << "/"
-                              << hex4(e->get_event()) << " which violates the security policy!";
+                              << " : routing_manager_impl::is_subscribe_to_any_event_allowed: " << "subscribes to service/instance/event "
+                              << hex4(_service) << "/" << hex4(_instance) << "/" << hex4(e->get_event())
+                              << " which violates the security policy!";
                 is_allowed = false;
                 break;
             }

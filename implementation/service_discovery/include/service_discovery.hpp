@@ -38,6 +38,10 @@ public:
     virtual void unsubscribe(service_t _service, instance_t _instance, major_version_t _major, eventgroup_t _eventgroup,
                              client_t _client) = 0;
     virtual void unsubscribe_all(service_t _service, instance_t _instance, major_version_t _major) = 0;
+    /// Like unsubscribe_all(), for a service whose routing info expired
+    virtual bool unsubscribe_all_if_expired(service_t _service, instance_t _instance, major_version_t _major,
+                                            const std::shared_ptr<boardnet_endpoint>& _expired_reliable,
+                                            const std::shared_ptr<boardnet_endpoint>& _expired_unreliable) = 0;
     virtual void unsubscribe_all_on_suspend() = 0;
     virtual void reset_request_sent_counter(service_t _service, instance_t _instance, major_version_t _major) = 0;
 

@@ -51,6 +51,19 @@ namespace vsomeip_v3 {
 
 namespace sd {
 
+const char* reliability_to_str(reliability_type_e _type) {
+    switch (_type) {
+    case reliability_type_e::RT_RELIABLE:
+        return "RT_RELIABLE";
+    case reliability_type_e::RT_UNRELIABLE:
+        return "RT_UNRELIABLE";
+    case reliability_type_e::RT_BOTH:
+        return "RT_BOTH";
+    default:
+        return "RT_UNKNOWN";
+    }
+}
+
 service_discovery_impl::service_discovery_impl(service_discovery_host* _host, const std::shared_ptr<configuration>& _configuration) :
     io_(_host->get_io()), host_(_host), configuration_(_configuration), port_(VSOMEIP_SD_DEFAULT_PORT), reliable_(false),
     serializer_(std::make_shared<serializer>(configuration_->get_buffer_shrink_threshold())),
@@ -475,6 +488,72 @@ void service_discovery_impl::unsubscribe_all(service_t _service, instance_t _ins
     }
 
     serialize_and_send(its_current_message, its_address);
+}
+
+bool service_discovery_impl::unsubscribe_all_if_expired(service_t _service, instance_t _instance, major_version_t _major,
+                                                        const std::shared_ptr<boardnet_endpoint>& _expired_reliable,
+                                                        const std::shared_ptr<boardnet_endpoint>& _expired_unreliable) {
+    auto its_current_message = std::make_shared<message_impl>();
+    boost::asio::ip::address its_address;
+    bool is_offered_again{false};
+
+    {
+        std::scoped_lock its_lock(subscribed_mutex_);
+        // Offers are processed under subscribed_mutex_ (see on_message()), so a re-offer can not re-add the
+        // routing info between this check and the cleanup below.
+        is_offered_again = host_->has_remote_routing_info(_service, _instance, _major);
+        if (is_suspended_) {
+            VSOMEIP_WARNING_P << "Ignoring unsubscription from all eventgroups of [" << hex4(_service) << "." << hex4(_instance)
+                              << "] as we are suspended";
+            return !is_offered_again;
+        }
+        if (auto found_si = subscribed_.find({_service, _instance, _major}); found_si != subscribed_.end()) {
+            for (const auto& [its_eventgroup_id, its_subscription] : found_si->second) {
+                auto its_data = create_expired_stop_subscribe_entry(_service, _instance, its_eventgroup_id, its_subscription,
+                                                                    _expired_reliable, _expired_unreliable);
+                if (its_data.entry_) {
+                    get_subscription_address(_expired_reliable, _expired_unreliable, its_address);
+                    its_current_message->add_entry_data(its_data.entry_, its_data.options_);
+                }
+            }
+            if (is_offered_again) {
+                // The subscriptions already moved to the endpoints of the new offer, only the expired ones are stopped.
+                VSOMEIP_INFO_P << "Keeping subscriptions of [" << hex4(_service) << "." << hex4(_instance) << "." << hex2(_major)
+                               << "] as it has been offered again";
+            } else {
+                found_si->second.clear();
+            }
+        }
+    }
+
+    serialize_and_send(its_current_message, its_address);
+    return !is_offered_again;
+}
+
+entry_data_t service_discovery_impl::create_expired_stop_subscribe_entry(service_t _service, instance_t _instance, eventgroup_t _eventgroup,
+                                                                         const std::shared_ptr<subscription>& _subscription,
+                                                                         const std::shared_ptr<boardnet_endpoint>& _expired_reliable,
+                                                                         const std::shared_ptr<boardnet_endpoint>& _expired_unreliable) {
+    // The subscription may already point to the endpoints of a re-offer (or to none), so stop the ports it was sent
+    // from instead. Unless the routing info of a re-offer uses that port again, as that would stop the new subscription.
+    // This may even be the expired endpoint itself, as a client endpoint stays alive while it is shared with other
+    // services reachable through the same remote port.
+    // Offers are processed under subscribed_mutex_, so no Subscribe can be sent from a port that is not yet in use here.
+    auto is_in_use = [&](const std::shared_ptr<boardnet_endpoint>& _expired, bool _reliable) {
+        if (!_expired) {
+            return false;
+        }
+        const auto its_current = host_->get_remote_client_endpoint(_service, _instance, _subscription->get_major(), _reliable);
+        return its_current && its_current->get_local_port() == _expired->get_local_port();
+    };
+    auto its_expired = std::make_shared<subscription>(_subscription->get_major(), _subscription->is_selective(), 0,
+                                                      is_in_use(_expired_reliable, true) ? nullptr : _expired_reliable,
+                                                      is_in_use(_expired_unreliable, false) ? nullptr : _expired_unreliable);
+    for (const auto& [its_client, _] : _subscription->get_clients()) {
+        its_expired->add_client(its_client, subscription_state_e::ST_NOT_ACKNOWLEDGED);
+    }
+    return create_eventgroup_entry(_service, _instance, _eventgroup, its_expired,
+                                   get_eventgroup_reliability(_service, _instance, _eventgroup, _subscription));
 }
 
 void service_discovery_impl::unsubscribe_all_on_suspend() {
@@ -931,7 +1010,6 @@ void service_discovery_impl::insert_subscription_ack(const std::shared_ptr<remot
 // Interface boardnet_endpoint_host
 void service_discovery_impl::on_message(const byte_t* _data, length_t _length, const boost::asio::ip::address& _sender,
                                         bool _is_multicast) {
-    std::scoped_lock its_lock(check_ttl_mutex_);
     std::scoped_lock its_session_lock(sessions_received_mutex_);
     std::scoped_lock its_subscribed_lock(subscribed_mutex_);
 
@@ -1319,19 +1397,6 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
         return s.str();
     };
 
-    auto reliability_to_str = [](reliability_type_e _type) {
-        switch (_type) {
-        case reliability_type_e::RT_RELIABLE:
-            return "RT_RELIABLE";
-        case reliability_type_e::RT_UNRELIABLE:
-            return "RT_UNRELIABLE";
-        case reliability_type_e::RT_BOTH:
-            return "RT_BOTH";
-        default:
-            return "RT_UNKNOWN";
-        }
-    };
-
     reliability_type_e offer_type = reliability_type_e::RT_UNKNOWN;
     if (_reliable_port != ILLEGAL_PORT && _unreliable_port != ILLEGAL_PORT && !_reliable_address.is_unspecified()
         && !_unreliable_address.is_unspecified()) {
@@ -1359,14 +1424,6 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
     // stop sending find service in repetition phase
     update_request(_service, _instance, _major);
 
-    endpoint_manager_impl::remote_offer_state its_offer_state;
-    host_->is_remote_service_known(_service, _instance, _major, _minor, _reliable_address, _reliable_port, _unreliable_address,
-                                   _unreliable_port, its_offer_state);
-
-    if (its_offer_state.drop_offer) {
-        return;
-    }
-
     // return if the registered sd_acceptance handler returned false
     // and for the provided port sd_acceptance is necessary
     if (_sd_ac_state.sd_acceptance_required_ && !_sd_ac_state.accept_entries_
@@ -1378,32 +1435,18 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
         return;
     }
 
-    // If an ECU offers the same service/instance with completely
-    // different endpoints, delete the old routing info and re-add it
-    if (its_offer_state.endpoints_changed && (!its_offer_state.reliable_known && !its_offer_state.unreliable_known)) {
-        VSOMEIP_WARNING_P << "Endpoints changed for [" << hex4(_service) << "." << hex4(_instance)
-                          << "] and none of the previous endpoints are still known - updating routing info";
-        host_->del_routing_info(_service, _instance, _major, true, true, true);
+    // The routing manager evaluates the offer under its lock, everything below acts on that same result. As offers are
+    // processed under subscribed_mutex_, an expiration of the routing info is only cleaned up here once this is done.
+    const auto its_result =
+            host_->add_routing_info(_service, _instance, _major, _minor, _ttl * get_ttl_factor(_service, _instance, ttl_factor_offers_),
+                                    _reliable_address, _reliable_port, _unreliable_address, _unreliable_port);
+    if (its_result.state_.drop_offer) {
+        return;
     }
 
     if (update_remote_offer_type(_service, _instance, offer_type, _reliable_address, _reliable_port, _unreliable_address, _unreliable_port,
-                                 _received_via_multicast, its_offer_state.endpoints_changed)) {
-        VSOMEIP_WARNING_P << "Offer type changed [" << hex4(_service) << "." << hex4(_instance) << "]";
-        // Only update eventgroup reliability type if it was initially unknown
-        auto its_eventgroups = host_->get_subscribed_eventgroups(_service, _instance, _major);
-        for (auto eg : its_eventgroups) {
-            auto its_info = host_->find_eventgroup(_service, _instance, _major, eg);
-            if (its_info) {
-                if (its_info->is_reliability_auto_mode()) {
-                    if (offer_type != reliability_type_e::RT_UNKNOWN && offer_type != its_info->get_reliability()) {
-                        VSOMEIP_ERROR_P << "Eventgroup reliability type changed for eventgroup " << hex4(eg) << ", "
-                                        << service_address_str() << " from " << reliability_to_str(its_info->get_reliability()) << " to "
-                                        << reliability_to_str(offer_type);
-                        its_info->set_reliability(offer_type);
-                    }
-                }
-            }
-        }
+                                 _received_via_multicast, its_result.state_.endpoints_changed)) {
+        update_eventgroup_reliability(_service, _instance, _major, offer_type, service_address_str());
     }
 
     const bool was_previously_offered_by_unicast =
@@ -1471,8 +1514,26 @@ void service_discovery_impl::process_offerservice_serviceentry(service_t _servic
         }
     }
 
-    host_->add_routing_info(_service, _instance, _major, _minor, _ttl * get_ttl_factor(_service, _instance, ttl_factor_offers_),
-                            _reliable_address, _reliable_port, _unreliable_address, _unreliable_port, its_offer_state);
+    // Needs the offer type and eventgroup reliability updated above.
+    for (const auto& its_endpoint : its_result.connected_endpoints_) {
+        on_endpoint_connected(_service, _instance, _major, its_endpoint);
+    }
+}
+
+void service_discovery_impl::update_eventgroup_reliability(service_t _service, instance_t _instance, major_version_t _major,
+                                                           reliability_type_e _offer_type, const std::string& _service_address) {
+    VSOMEIP_WARNING_P << "Offer type changed [" << hex4(_service) << "." << hex4(_instance) << "." << hex2(_major) << "]";
+    // Only update eventgroup reliability type if it was initially unknown
+    for (auto eg : host_->get_subscribed_eventgroups(_service, _instance, _major)) {
+        auto its_info = host_->find_eventgroup(_service, _instance, _major, eg);
+        if (its_info && its_info->is_reliability_auto_mode()) {
+            if (_offer_type != reliability_type_e::RT_UNKNOWN && _offer_type != its_info->get_reliability()) {
+                VSOMEIP_ERROR_P << "Eventgroup reliability type changed for eventgroup " << hex4(eg) << ", " << _service_address << " from "
+                                << reliability_to_str(its_info->get_reliability()) << " to " << reliability_to_str(_offer_type);
+                its_info->set_reliability(_offer_type);
+            }
+        }
+    }
 }
 
 void service_discovery_impl::process_findservice_serviceentry(service_t _service, instance_t _instance, major_version_t _major,
@@ -2298,13 +2359,10 @@ void service_discovery_impl::stop_ttl_timer() {
 void service_discovery_impl::check_ttl(const boost::system::error_code& _error) {
     if (!_error) {
         int timeout{0};
-        {
-            std::unique_lock its_lock(check_ttl_mutex_, std::try_to_lock);
-            if (its_lock.owns_lock()) {
-                host_->update_routing_info(ttl_timer_runtime_);
-            } else {
-                timeout = VSOMEIP_MINIMUM_CHECK_TTL_TIMEOUT;
-            }
+        // Skipped while the routing manager modifies its routing info, e.g. while an offer is being added.
+        // A ttl check may thus run in between the entries of one SD message.
+        if (!host_->update_routing_info(ttl_timer_runtime_)) {
+            timeout = VSOMEIP_MINIMUM_CHECK_TTL_TIMEOUT;
         }
         start_ttl_timer(timeout);
     }
