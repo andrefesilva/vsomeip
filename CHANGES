@@ -1,6 +1,98 @@
 Changes
 =======
 
+v3.8.1
+
+- global
+  - Adjusted sanitizer compile options
+  - Log "Security configuration is active." only once
+  - Turned the logger configuration into a singleton
+  - Enabled the debug build preset
+  - Improved several log messages
+  - Fixed logging performed inside lambdas
+  - Edited additional log messages for clarity
+  - Fixed the build for gtest 1.18
+  - Fixed a plugin manager memory leak
+  - Avoided allocation in the hex4_list utility
+  - Dropped the Wireshark vsomeip dissector plugin
+
+- configuration
+  - Cleaned up shared_ptr ownership on the configuration plugin
+  - Omit its_key when empty
+  - Changed the multicast option threshold default
+
+- application
+  - Dropped the per-handler availability state
+  - Renamed members to improve readability
+  - Improved the maximum number of dispatchers logging
+  - Prevent a crash when the process terminates early
+  - Minor cleanup
+
+- routing
+  - Use the registration client id for every command
+  - Bundle assign_client ack and send-requester policies
+  - Add multi-major aggregate offering support
+  - Split rmc::on_message into two stages
+  - Use the sent major version instead of deducing it
+  - Remove service_key in favor of versioned_service_instance_t
+  - Fix selective subscription expiration
+  - Aggregate consumption across multiple major versions
+  - Remove routing_info_ from the routing manager stub
+  - Reject subscriptions for unknown eventgroups
+  - Remove dead routing code
+  - Clean up routing includes
+  - Forward events and fields per major from a single ECU
+  - Differentiate inbound vs. outbound subscriptions
+  - Serialize routing info
+  - Add session id tracking
+
+- endpoints
+  - Synchronous error handling for endpoint validity
+  - Drop remote offers on connection break
+  - Add peer identity resolution to security client updates
+  - Fix a race condition in the UDP server endpoint
+  - Clean up unnecessary UDP server endpoint state
+  - Drop SO_RCVTIMEO, SO_SNDTIMEO and IP_PKTINFO socket options
+  - Drop the SO_BROADCAST socket option
+  - Start the read loop after the multicast join
+  - Disable setsockopt(SO_RCVBUF) by default
+  - Block consumer endpoint creation after app stop
+  - Router-side changes for endpoint validity
+
+- service discovery
+  - Clean up remote_subscription_ack
+  - Rework multicast rejoin
+  - Let the subscription send time decide StopSubscribe/Subscribe
+  - Clean up remote_subscription
+  - Fix expired subscription spin after SD reboot detection
+  - Further remote_subscription cleanup
+
+- tests
+  - Fix test_multiversion_support with fake sockets
+  - Fix a self-deadlock in the fake socket manager
+  - Fix a fake socket manager deadlock
+  - Add availability callback count tests
+  - Fix suspend_resume_test due to a stale subscription
+  - Isolate tests per run on the slave side
+  - Work around fake_socket_test logging
+  - Enable chaining data_pipes for fake sockets
+  - Fix big_payload_test_external_random
+  - Add a trace-level global config for fake socket tests
+  - Fix flaky test_queue_limit with fake sockets
+  - Fix condition notify in the restart routing test
+  - Increase test_boardnet robustness
+  - Enable previously skipped fake_socket_tests
+  - Prevent unnecessary logs in the usei unit test
+  - Add selective events coverage to fake_socket_tests
+  - Remove StopSubSub workarounds from tests
+  - Fix an exclusive_events notification race in the multiversion test
+  - Wait for both subscriptions in the multicast eventgroup test
+  - Skip the initial delay test in test_sd_protocol
+  - Fix the SD protocol tests
+  - Deduplicate fixture boilerplate in multiversion tests
+  - Fix the e2e tests
+  - Fix sends_stop_offer_after_find
+
 v3.8.0
 
 - global
