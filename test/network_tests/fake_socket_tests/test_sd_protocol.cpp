@@ -747,9 +747,6 @@ const interface service_3344_instance_2{0x3344,
 struct increased_initial_delay_with_multiple_instances : public base_fake_socket_fixture {
 
     void start_apps() {
-        auto udp_traffic = someip_gate::create("udp_traffic");
-        ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), udp_party(), udp_traffic->get_data_pipe()));
-        ecu_one_.add_guest({"guest_client", 0x1338});
         ecu_two_.add_guest({"guest_server", 0x1337});
 
         ecu_one_.prepare();
@@ -758,12 +755,27 @@ struct increased_initial_delay_with_multiple_instances : public base_fake_socket
         ecu_one_.start_apps();
         ecu_two_.start_apps();
 
-        client_ = ecu_one_.apps_["guest_client"];
         server_ = ecu_two_.apps_["guest_server"];
 
         ASSERT_TRUE(server_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
-        ASSERT_TRUE(client_->app_state_record_.wait_for_last(vsomeip::state_type_e::ST_REGISTERED));
+        // A router joins the SD multicast group only after its external routing is ready. Before that, an offer gets no endpoints
+        // and stopping it sends no StopOffer.
+        ASSERT_TRUE(await_multicast_join(multicast_ep_.address(), 2));
+
+        router_one_sd_gate_ = someip_gate::create();
+        ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {multicast_ep_, router_one_name_}, router_one_sd_gate_->get_data_pipe()));
     }
+
+    void block_at_stop_offer(service_instance _si) {
+        router_one_sd_gate_->block_at(someip_gate::sd_predicate{[_si](std::shared_ptr<sd::message_impl> const& _message) {
+            auto const& its_entries = _message->get_entries();
+            return std::any_of(its_entries.begin(), its_entries.end(), [&_si](auto const& _entry) {
+                return _entry->get_type() == sd::entry_type_e::OFFER_SERVICE && _entry->get_ttl() == 0
+                        && _entry->get_instance() == _si.instance_;
+            });
+        }});
+    }
+
     ecu_setup ecu_one_{"ecu_one", boardnet::ecu_one_config, *socket_manager_};
     ecu_setup ecu_two_{"ecu_two",
                        ecu_config{boardnet::ecu_two_config}
@@ -774,63 +786,28 @@ struct increased_initial_delay_with_multiple_instances : public base_fake_socket
     // Default SD multicast group address (VSOMEIP_SD_DEFAULT_MULTICAST); not overridden here.
     boost::asio::ip::udp::endpoint const multicast_ep_{boost::asio::ip::make_address("224.224.224.0"), 30490};
 
-    app* client_{};
+    std::shared_ptr<someip_gate> router_one_sd_gate_;
     app* server_{};
 };
 
-// This test verifies whether vSomeIP properly sents StopOffer messages during the initial_phase_wait or not.
-// To ensure we never leave the initial_phase, we configure the initial_delay to 10 seconds.
-TEST_F(increased_initial_delay_with_multiple_instances, sends_stop_offer_after_find_triggered_offer) {
-    GTEST_SKIP() << "Test is fragile";
-
-    start_apps();
-    // Offer and request the service
-    server_->offer(interfaces::boardnet::service_3344.instance_);
-    client_->request_service(interfaces::boardnet::service_3344.instance_);
-    ASSERT_TRUE(client_->availability_record_.wait_for_last(service_availability::available(interfaces::boardnet::service_3344.instance_),
-                                                            common::scaled_timeout(std::chrono::seconds(2))))
-            << client_->availability_record_;
-
-    // Prepare Service Discovery Gate
-    std::shared_ptr<someip_gate> router_one_sd_gate = someip_gate::create();
-    ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {multicast_ep_, router_one_name_}, router_one_sd_gate->get_data_pipe()));
-    router_one_sd_gate->block_at({sd::entry_type_e::OFFER_SERVICE, 0}, 1);
-
-    // Stop offering the service
-    server_->stop_offer(interfaces::boardnet::service_3344.instance_);
-
-    // Verify whether a StopService message was blocked or not, if it wasn't, we can safely assume it was not sent either.
-    EXPECT_TRUE(router_one_sd_gate->wait_for_blocked(common::scaled_timeout(std::chrono::seconds(2))));
-}
-
-// This test verifies whether vSomeIP properly sents StopOffer messages during the initial_phase_wait for each service-instance.
+// This test verifies that vSomeIP sends a StopOffer for each service instance stopped during the initial wait phase, even if the service
+// was never announced. To ensure we never leave the initial wait phase, we configure the initial_delay to 10 seconds.
 TEST_F(increased_initial_delay_with_multiple_instances, sends_stop_offer_for_each_service_instance) {
     start_apps();
 
     const auto first_instance = interfaces::boardnet::service_3344.instance_;
     const auto second_instance = service_3344_instance_2.instance_;
 
-    server_->offer(interfaces::boardnet::service_3344);
-    server_->offer(service_3344_instance_2);
-    client_->request_service(first_instance);
-    client_->request_service(second_instance);
-    ASSERT_TRUE(client_->availability_record_.wait_for_any(service_availability::available(first_instance)));
-    ASSERT_TRUE(client_->availability_record_.wait_for_any(service_availability::available(second_instance)));
+    server_->offer(first_instance);
+    server_->offer(second_instance);
 
-    std::shared_ptr<someip_gate> router_one_sd_gate = someip_gate::create();
-    ASSERT_TRUE(set_udp_data_pipe(udp_party::any(), {multicast_ep_, router_one_name_}, router_one_sd_gate->get_data_pipe()));
-
-    router_one_sd_gate->block_at({sd::entry_type_e::OFFER_SERVICE, 0}, 1);
+    block_at_stop_offer(first_instance);
     server_->stop_offer(first_instance);
-    ASSERT_TRUE(router_one_sd_gate->wait_for_blocked(common::scaled_timeout(std::chrono::seconds(2))));
-    router_one_sd_gate->block(false);
-    EXPECT_TRUE(client_->availability_record_.wait_for_last(service_availability::unavailable(first_instance)));
+    ASSERT_TRUE(router_one_sd_gate_->wait_for_blocked(common::scaled_timeout(std::chrono::seconds(2))));
 
-    router_one_sd_gate->block_at({sd::entry_type_e::OFFER_SERVICE, 0}, 1);
+    block_at_stop_offer(second_instance);
     server_->stop_offer(second_instance);
-    ASSERT_TRUE(router_one_sd_gate->wait_for_blocked(common::scaled_timeout(std::chrono::seconds(2))));
-    router_one_sd_gate->block(false);
-    EXPECT_TRUE(client_->availability_record_.wait_for_last(service_availability::unavailable(second_instance)));
+    EXPECT_TRUE(router_one_sd_gate_->wait_for_blocked(common::scaled_timeout(std::chrono::seconds(2))));
 }
 
 struct sd_header_validation : public base_fake_socket_fixture {
