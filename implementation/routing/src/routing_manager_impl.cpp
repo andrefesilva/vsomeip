@@ -1073,7 +1073,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
                                       const boost::asio::ip::address& _remote_address, port_t _remote_port, bool _is_multicast) {
 
     auto remote_str = [&_length, &_remote_address, &_remote_port, &_is_multicast]() {
-        // e.g., "160.48.199.99:30490 [multicast], len 128"
+        // e.g., "127.0.0.2:30490 [multicast], len 128"
         // only for errors
         std::stringstream s;
         s << _remote_address.to_string() << ":" << _remote_port << (_is_multicast ? " [multicast]" : "") << ", len " << _length;
@@ -1094,7 +1094,7 @@ void routing_manager_impl::on_message(const byte_t* _data, length_t _length, boa
     const major_version_t its_major = _data[VSOMEIP_INTERFACE_VERSION_POS];
 
     auto message_str = [&remote_str, &its_service, &its_method, &its_client, &its_session]() {
-        // e.g., "160.48.199.99:30490 [multicast], len 128, [1020.8001:6101.0001]"
+        // e.g., "127.0.0.2:30490 [multicast], len 128, [1020.8001:6101.0001]"
         // also only for errors
         std::stringstream s;
         s << remote_str() << ", [" << hex4(its_service) << "." << hex4(its_method) << ":" << hex4(its_client) << "." << hex4(its_session)

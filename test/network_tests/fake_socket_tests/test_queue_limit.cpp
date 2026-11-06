@@ -121,7 +121,7 @@ struct test_queue_limit_helper : public base_fake_socket_fixture {
     // Local bind endpoint of ecu_two's UDP server endpoint (the service's
     // unreliable port). Stalling its outgoing processing keeps the batched
     // notifications from draining.
-    boost::asio::ip::udp::endpoint const ecu_two_data_ep_{boost::asio::ip::make_address("160.48.199.99"), 30501};
+    boost::asio::ip::udp::endpoint const ecu_two_data_ep_{boost::asio::ip::make_address("127.0.0.2"), 30501};
 
     std::map<std::string, app*> apps_;
     std::set<std::string> env_vars_;
