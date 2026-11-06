@@ -1461,7 +1461,7 @@ private:
 };
 
 /**
- * NTWALL-1304: an UNSUBSCRIBE / RELEASE_SERVICE / UNREGISTER_EVENT must never carry a client-id
+ * An UNSUBSCRIBE / RELEASE_SERVICE / UNREGISTER_EVENT must never carry a client-id
  * other than the one this registration was established with. The routing manager drops any
  * mismatch as a security violation, silently and with no NACK, so the client believes it
  * unsubscribed while the router keeps the subscription and keeps delivering events.

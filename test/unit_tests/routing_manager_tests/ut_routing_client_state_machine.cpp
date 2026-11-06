@@ -44,7 +44,7 @@ TEST_F(routing_client_state_machine_test, happy_path_full_registration) {
 }
 
 // ============================================================================
-// Registered client-id (NTWALL-1304)
+// Registered client-id
 // ============================================================================
 
 TEST_F(routing_client_state_machine_test, client_is_unset_before_the_first_registration) {
